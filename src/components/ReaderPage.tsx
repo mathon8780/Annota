@@ -16,9 +16,16 @@ import {
   Sparkles
 } from "lucide-react";
 import { useAppStore } from "../store/AppStore";
-import type { ArticleNode, GenerationType, SelectionState } from "../types";
+import type {
+  ArticleNode,
+  GenerationType,
+  InlineFormatCommand,
+  InlineMarkType,
+  SelectionState
+} from "../types";
 import { BlockEditor } from "./BlockEditor";
 import { Brand } from "./Brand";
+import { InlineFormattingToolbar } from "./InlineFormattingToolbar";
 import { TopologyPanel } from "./TopologyPanel";
 
 const READING_PATH_DEFAULT_WIDTH = 246;
@@ -64,6 +71,7 @@ export function ReaderPage() {
     cancelGeneration
   } = useAppStore();
   const [selection, setSelection] = useState<SelectionState | null>(null);
+  const [formatCommand, setFormatCommand] = useState<InlineFormatCommand | null>(null);
   const [saveState, setSaveState] = useState("已保存到本机");
   const [fullTopology, setFullTopology] = useState(false);
   const [notice, setNotice] = useState("");
@@ -71,6 +79,7 @@ export function ReaderPage() {
   const [resizingPath, setResizingPath] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const noticeTimer = useRef<number>();
+  const formatCommandSequence = useRef(0);
   const previousArticleRef = useRef<ArticleNode | null>(null);
   const pathResizeRef = useRef<{
     pointerId: number;
@@ -120,6 +129,7 @@ export function ReaderPage() {
 
   useEffect(() => {
     setSelection(null);
+    setFormatCommand(null);
     setSaveState("已保存到本机");
   }, [currentArticle?.id]);
 
@@ -217,6 +227,21 @@ export function ReaderPage() {
     showNotice(`${type === "translate" ? "翻译" : "解释"}任务已加入右侧列表。`);
     setSelection(null);
     window.getSelection()?.removeAllRanges();
+  };
+
+  const applyInlineFormat = (type: InlineMarkType, color?: string) => {
+    if (!selection || selection.start === selection.end) {
+      showNotice("先在正文中选择要设置格式的文字。");
+      return;
+    }
+    formatCommandSequence.current += 1;
+    setFormatCommand({
+      id: formatCommandSequence.current,
+      selection,
+      type,
+      color
+    });
+    setSaveState("保存中…");
   };
 
   const handleFile = async (file?: File) => {
@@ -349,6 +374,10 @@ export function ReaderPage() {
 
         <section className="reader-surface" aria-label="文章阅读区域">
           <div className="article-scroll-region">
+            <InlineFormattingToolbar
+              selection={selection}
+              onFormat={applyInlineFormat}
+            />
             <article
               className="article-column"
               data-motion={articleMotion}
@@ -377,6 +406,7 @@ export function ReaderPage() {
               <BlockEditor
                 articleId={currentArticle.id}
                 blocks={currentArticle.blocks}
+                formatCommand={formatCommand}
                 onChange={(blocks) => updateBlocks(currentArticle.id, blocks)}
                 onSelection={setSelection}
                 onSaveState={setSaveState}

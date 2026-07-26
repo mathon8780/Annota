@@ -70,7 +70,16 @@ export interface GenerationJob {
 export interface SelectionState {
   text: string;
   blockId: string;
+  start: number;
+  end: number;
   rect?: { left: number; top: number; width: number };
+}
+
+export interface InlineFormatCommand {
+  id: number;
+  selection: SelectionState;
+  type: InlineMarkType;
+  color?: string;
 }
 
 export interface AppData {

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
 import { seedData } from "./data/seed";
@@ -11,6 +11,14 @@ function renderApp(clearStorage = true) {
       <App />
     </AppStoreProvider>
   );
+}
+
+async function openFirstNotebook(user: ReturnType<typeof userEvent.setup>) {
+  const notebook = seedData.notebooks[0];
+  await user.click(
+    screen.getByRole("button", { name: `打开笔记：${notebook.title}` })
+  );
+  return seedData.articles[notebook.rootId];
 }
 
 function dispatchPointer(
@@ -176,5 +184,80 @@ describe("Annota core flow", () => {
     expect(explain).toBeEnabled();
     await user.click(explain);
     expect(screen.getByText("正在解释选区")).toBeInTheDocument();
+  });
+
+  it("applies bold formatting to a selection and restores it after reopening the reader", async () => {
+    const user = userEvent.setup();
+    renderApp();
+    const article = await openFirstNotebook(user);
+    const paragraph = article.blocks.find((block) => block.kind === "paragraph")!;
+    const selectedText = paragraph.text.slice(0, 6);
+
+    await user.click(screen.getByText(paragraph.text));
+    const editor = screen.getByLabelText("编辑正文块") as HTMLTextAreaElement;
+    editor.setSelectionRange(0, selectedText.length);
+    fireEvent.select(editor);
+
+    expect(screen.getByRole("button", { name: "加粗" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "斜体" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "删除线" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "下划线" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "加粗" }));
+
+    await waitFor(() => {
+      const stored = JSON.parse(
+        window.localStorage.getItem("annota.desktop.demo.v1") ?? "{}"
+      );
+      expect(stored.articles[article.id].blocks.find(
+        (block: { id: string }) => block.id === paragraph.id
+      ).marks).toEqual([
+        expect.objectContaining({ type: "bold", start: 0, end: selectedText.length })
+      ]);
+    });
+
+    await user.click(screen.getByRole("button", { name: "返回主页" }));
+    await openFirstNotebook(user);
+
+    expect(screen.getByText(selectedText, { selector: ".inline-mark-bold" }))
+      .toBeInTheDocument();
+  });
+
+  it("applies the selected text color without storing HTML", async () => {
+    const user = userEvent.setup();
+    renderApp();
+    const article = await openFirstNotebook(user);
+    const paragraph = article.blocks.find((block) => block.kind === "paragraph")!;
+    const selectedText = paragraph.text.slice(0, 4);
+
+    await user.click(screen.getByText(paragraph.text));
+    const editor = screen.getByLabelText("编辑正文块") as HTMLTextAreaElement;
+    editor.setSelectionRange(0, selectedText.length);
+    fireEvent.select(editor);
+
+    fireEvent.change(screen.getByLabelText("文字颜色"), {
+      target: { value: "#2563eb" }
+    });
+    await user.click(screen.getByRole("button", { name: "应用文字颜色" }));
+    await waitFor(() => {
+      const stored = JSON.parse(
+        window.localStorage.getItem("annota.desktop.demo.v1") ?? "{}"
+      );
+      expect(stored.articles[article.id].blocks.find(
+        (block: { id: string }) => block.id === paragraph.id
+      ).marks).toEqual([
+        expect.objectContaining({
+          type: "textColor",
+          color: "#2563eb",
+          start: 0,
+          end: selectedText.length
+        })
+      ]);
+    });
+
+    const coloredText = document.querySelector(".inline-mark-text-color");
+    expect(coloredText).not.toBeNull();
+    expect(coloredText).toHaveTextContent(selectedText.trim());
+    expect(coloredText).toHaveStyle({ color: "#2563eb" });
+    expect(paragraph.text).not.toContain("<span");
   });
 });
