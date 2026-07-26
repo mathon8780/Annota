@@ -32,6 +32,17 @@ const READING_PATH_DEFAULT_WIDTH = 246;
 const READING_PATH_MIN_WIDTH = 190;
 const READING_PATH_MAX_WIDTH = 420;
 const READING_PATH_STORAGE_KEY = "annota:reading-path-width";
+const READER_INTERACTIVE_TARGETS = [
+  "button",
+  "a",
+  "input",
+  "textarea",
+  "select",
+  "[contenteditable='true']",
+  "[role='separator']",
+  ".reading-block",
+  ".inline-formatting-toolbar"
+].join(", ");
 
 function clampReadingPathWidth(width: number) {
   return Math.min(READING_PATH_MAX_WIDTH, Math.max(READING_PATH_MIN_WIDTH, Math.round(width)));
@@ -72,6 +83,7 @@ export function ReaderPage() {
   } = useAppStore();
   const [selection, setSelection] = useState<SelectionState | null>(null);
   const [formatCommand, setFormatCommand] = useState<InlineFormatCommand | null>(null);
+  const [editorResetVersion, setEditorResetVersion] = useState(0);
   const [saveState, setSaveState] = useState("已保存到本机");
   const [fullTopology, setFullTopology] = useState(false);
   const [notice, setNotice] = useState("");
@@ -244,6 +256,17 @@ export function ReaderPage() {
     setSaveState("保存中…");
   };
 
+  const handleReaderSurfacePointerDown = (event: ReactPointerEvent<HTMLElement>) => {
+    const target = event.target;
+    if (!(target instanceof Element) || target.closest(READER_INTERACTIVE_TARGETS)) {
+      return;
+    }
+    setSelection(null);
+    setFormatCommand(null);
+    setEditorResetVersion((version) => version + 1);
+    window.getSelection()?.removeAllRanges();
+  };
+
   const handleFile = async (file?: File) => {
     if (!file) return;
     const result = importPackage(await file.text(), file.name);
@@ -372,7 +395,11 @@ export function ReaderPage() {
           <span aria-hidden="true"></span>
         </div>
 
-        <section className="reader-surface" aria-label="文章阅读区域">
+        <section
+          className="reader-surface"
+          aria-label="文章阅读区域"
+          onPointerDown={handleReaderSurfacePointerDown}
+        >
           <div className="article-scroll-region">
             <InlineFormattingToolbar
               selection={selection}
@@ -407,6 +434,7 @@ export function ReaderPage() {
                 articleId={currentArticle.id}
                 blocks={currentArticle.blocks}
                 formatCommand={formatCommand}
+                resetVersion={editorResetVersion}
                 onChange={(blocks) => updateBlocks(currentArticle.id, blocks)}
                 onSelection={setSelection}
                 onSaveState={setSaveState}
@@ -494,25 +522,6 @@ export function ReaderPage() {
           </aside>
         </section>
       </main>
-
-      {selection?.rect && (
-        <div
-          className="selection-toolbar"
-          style={{
-            left: Math.min(window.innerWidth - 250, Math.max(16, selection.rect.left + selection.rect.width / 2 - 110)),
-            top: Math.max(70, selection.rect.top - 52)
-          }}
-        >
-          <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => runGeneration("explain")}>
-            <MessageSquareText aria-hidden="true" size={14} />
-            解释
-          </button>
-          <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => runGeneration("translate")}>
-            <Languages aria-hidden="true" size={14} />
-            翻译
-          </button>
-        </div>
-      )}
 
       <TopologyPanel
         articles={data.articles}

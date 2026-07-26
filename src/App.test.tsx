@@ -236,6 +236,36 @@ describe("Annota core flow", () => {
     expect(editor).toHaveClass("is-focus-visible");
   });
 
+  it("dismisses transient reader interactions from whitespace without blocking controls", async () => {
+    const user = userEvent.setup();
+    const { container } = renderApp();
+    const article = await openFirstNotebook(user);
+    const paragraph = article.blocks.find((block) => block.kind === "paragraph")!;
+
+    await user.click(screen.getByText(paragraph.text));
+    const editor = screen.getByLabelText("编辑正文块") as HTMLTextAreaElement;
+    editor.setSelectionRange(0, 4);
+    fireEvent.select(editor);
+
+    await user.click(screen.getByRole("button", { name: "文字颜色" }));
+    expect(screen.getByRole("dialog", { name: "文字颜色选项" })).toBeInTheDocument();
+    expect(container.querySelector(".selection-toolbar")).not.toBeInTheDocument();
+    expect(screen.getByTitle("解释选中文字")).toBeEnabled();
+
+    fireEvent.pointerDown(container.querySelector(".article-scroll-region")!);
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("dialog", { name: "文字颜色选项" })
+      ).not.toBeInTheDocument();
+      expect(screen.getAllByTitle("先选择正文文字")).toHaveLength(2);
+      screen.getAllByTitle("先选择正文文字").forEach((button) => {
+        expect(button).toBeDisabled();
+      });
+      expect(screen.queryByLabelText("编辑正文块")).not.toBeInTheDocument();
+    });
+  });
+
   it("applies bold formatting to a selection and restores it after reopening the reader", async () => {
     const user = userEvent.setup();
     renderApp();

@@ -26,6 +26,7 @@ interface BlockEditorProps {
   articleId: string;
   blocks: ContentBlock[];
   formatCommand: InlineFormatCommand | null;
+  resetVersion: number;
   onChange: (blocks: ContentBlock[]) => void;
   onSelection: (selection: SelectionState | null) => void;
   onSaveState: (label: string) => void;
@@ -88,6 +89,7 @@ export function BlockEditor({
   articleId,
   blocks,
   formatCommand,
+  resetVersion,
   onChange,
   onSelection,
   onSaveState
@@ -107,7 +109,7 @@ export function BlockEditor({
   useEffect(() => {
     setActiveId(null);
     setFocusedId(null);
-  }, [articleId]);
+  }, [articleId, resetVersion]);
 
   useEffect(() => {
     if (isComposing) return;
