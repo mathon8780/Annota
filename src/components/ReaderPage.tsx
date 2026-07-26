@@ -4,7 +4,6 @@ import {
   ArrowLeft,
   BookOpenText,
   Check,
-  ChevronRight,
   CircleStop,
   Download,
   FileInput,
@@ -130,8 +129,10 @@ export function ReaderPage() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement;
-      const editing = target.matches("textarea, input") || target.isContentEditable;
+      const target = event.target;
+      const editing =
+        target instanceof HTMLElement &&
+        (target.matches("textarea, input") || target.isContentEditable);
       if (event.altKey && event.key === "ArrowLeft" && currentArticle?.parentId) {
         event.preventDefault();
         navigateTo(currentArticle.parentId);
@@ -346,124 +347,122 @@ export function ReaderPage() {
           <span aria-hidden="true"></span>
         </div>
 
-        <section className="reader-surface">
-          <article
-            className="article-column"
-            data-motion={articleMotion}
-            key={currentArticle.id}
-          >
-            <header className="article-header">
-              <div className="article-eyebrow">
-                <span>{currentArticle.type}</span>
-                <span>{new Date(currentArticle.updatedAt).toLocaleDateString("zh-CN")}</span>
-              </div>
-              <h1>{currentArticle.title}</h1>
-              <p>{currentArticle.summary}</p>
-              {currentArticle.source && (
+        <section className="reader-surface" aria-label="文章阅读区域">
+          <div className="article-scroll-region">
+            <article
+              className="article-column"
+              data-motion={articleMotion}
+              key={currentArticle.id}
+            >
+              <header className="article-header">
+                <div className="article-eyebrow">
+                  <span>{currentArticle.type}</span>
+                  <span>{new Date(currentArticle.updatedAt).toLocaleDateString("zh-CN")}</span>
+                </div>
+                <h1>{currentArticle.title}</h1>
+                <p>{currentArticle.summary}</p>
+                {currentArticle.source && (
+                  <button
+                    className="source-anchor"
+                    type="button"
+                    onClick={() => navigateTo(currentArticle.source!.parentId)}
+                  >
+                    <ArrowLeft aria-hidden="true" size={15} />
+                    回到来源：“{currentArticle.source.quote.slice(0, 42)}
+                    {currentArticle.source.quote.length > 42 ? "…" : ""}”
+                  </button>
+                )}
+              </header>
+
+              <BlockEditor
+                articleId={currentArticle.id}
+                blocks={currentArticle.blocks}
+                onChange={(blocks) => updateBlocks(currentArticle.id, blocks)}
+                onSelection={setSelection}
+                onSaveState={setSaveState}
+              />
+
+              <footer className="article-footer-nav">
                 <button
-                  className="source-anchor"
                   type="button"
-                  onClick={() => navigateTo(currentArticle.source!.parentId)}
+                  disabled={!currentArticle.parentId}
+                  onClick={() => currentArticle.parentId && navigateTo(currentArticle.parentId)}
                 >
-                  <ArrowLeft aria-hidden="true" size={15} />
-                  回到来源：“{currentArticle.source.quote.slice(0, 42)}
-                  {currentArticle.source.quote.length > 42 ? "…" : ""}”
+                  <ArrowLeft aria-hidden="true" size={16} />
+                  阅读上一级
                 </button>
-              )}
+                <button
+                  type="button"
+                  disabled={currentArticle.id === currentNotebook.rootId}
+                  onClick={() => navigateTo(currentNotebook.rootId)}
+                >
+                  <Home aria-hidden="true" size={16} />
+                  回到主文章
+                </button>
+              </footer>
+            </article>
+          </div>
+
+          <aside className="children-column" aria-label="下一级子文章">
+            <header>
+              <strong>{currentArticle.title} 的子文章</strong>
+              <small>{childNodes.length + activeJobs.length} 个</small>
             </header>
 
-            <BlockEditor
-              articleId={currentArticle.id}
-              blocks={currentArticle.blocks}
-              onChange={(blocks) => updateBlocks(currentArticle.id, blocks)}
-              onSelection={setSelection}
-              onSaveState={setSaveState}
-            />
-
-            <footer className="article-footer-nav">
-              <button
-                type="button"
-                disabled={!currentArticle.parentId}
-                onClick={() => currentArticle.parentId && navigateTo(currentArticle.parentId)}
-              >
-                <ArrowLeft aria-hidden="true" size={16} />
-                阅读上一级
-              </button>
-              <button
-                type="button"
-                disabled={currentArticle.id === currentNotebook.rootId}
-                onClick={() => navigateTo(currentNotebook.rootId)}
-              >
-                <Home aria-hidden="true" size={16} />
-                回到主文章
-              </button>
-            </footer>
-          </article>
-        </section>
-
-        <aside className="children-column" aria-labelledby="children-title">
-          <header>
-            <div>
-              <strong id="children-title">下一级子文章</strong>
-              <span>按来源位置排列</span>
-            </div>
-            <small>{childNodes.length + activeJobs.length}</small>
-          </header>
-
-          <div className="children-list">
-            {activeJobs.map((job) => (
-              <div className="generation-card" key={job.id} role="status">
-                <span className="child-card-icon is-loading">
-                  <LoaderCircle aria-hidden="true" size={17} />
-                </span>
-                <div>
-                  <strong>{job.type === "translate" ? "正在翻译选区" : "正在解释选区"}</strong>
-                  <p>“{job.quote.slice(0, 58)}{job.quote.length > 58 ? "…" : ""}”</p>
-                  <span>{job.status === "queued" ? "排队中" : "正在生成本地演示节点"}</span>
-                </div>
-                <button type="button" onClick={() => cancelGeneration(job.id)}>
-                  <CircleStop aria-hidden="true" size={15} />
-                  取消
-                </button>
-              </div>
-            ))}
-
-            {childNodes.map((child) => (
-              <button
-                className="child-card"
-                type="button"
-                key={child.id}
-                aria-label={`打开子文章：${child.title}`}
-                onClick={() => navigateTo(child.id)}
-              >
-                <span className="child-card-icon">
-                  {child.type === "翻译" ? (
-                    <Languages aria-hidden="true" size={17} />
-                  ) : (
-                    <Sparkles aria-hidden="true" size={17} />
-                  )}
-                </span>
-                <span>
-                  <strong>{child.title}</strong>
-                  <p>{child.summary}</p>
-                  <span className="child-card-meta">
-                    <span>{child.type}</span>
-                    <small>{descendants(child.id, data.articles)} 篇后续</small>
+            <div className="children-list">
+              {activeJobs.map((job) => (
+                <div className="generation-card" key={job.id} role="status">
+                  <span className="child-card-icon is-loading">
+                    <LoaderCircle aria-hidden="true" size={17} />
                   </span>
-                </span>
-                <ChevronRight aria-hidden="true" size={16} />
-              </button>
-            ))}
+                  <div>
+                    <strong>{job.type === "translate" ? "正在翻译选区" : "正在解释选区"}</strong>
+                    <p>“{job.quote.slice(0, 58)}{job.quote.length > 58 ? "…" : ""}”</p>
+                    <span>{job.status === "queued" ? "排队中" : "正在生成本地演示节点"}</span>
+                  </div>
+                  <button type="button" onClick={() => cancelGeneration(job.id)}>
+                    <CircleStop aria-hidden="true" size={15} />
+                    取消
+                  </button>
+                </div>
+              ))}
 
-            {!childNodes.length && !activeJobs.length && (
-              <div className="children-empty">
-                <MessageSquareText aria-hidden="true" size={20} />
-                <strong>还没有下一级文章</strong>
-                <p>在左侧正文中选择一段文字，然后点击顶部“解释”或“翻译”。</p>
-              </div>
-            )}
-          </div>
-        </aside>
+              {childNodes.map((child) => (
+                <button
+                  className="child-card"
+                  type="button"
+                  key={child.id}
+                  aria-label={`打开子文章：${child.title}`}
+                  onClick={() => navigateTo(child.id)}
+                >
+                  <span className="child-card-icon">
+                    {child.type === "翻译" ? (
+                      <Languages aria-hidden="true" size={17} />
+                    ) : (
+                      <Sparkles aria-hidden="true" size={17} />
+                    )}
+                  </span>
+                  <span>
+                    <strong>{child.title}</strong>
+                    <p>{child.summary}</p>
+                    <span className="child-card-meta">
+                      <span>{child.type}</span>
+                      <small>{descendants(child.id, data.articles)} 篇后续</small>
+                    </span>
+                  </span>
+                </button>
+              ))}
+
+              {!childNodes.length && !activeJobs.length && (
+                <div className="children-empty">
+                  <MessageSquareText aria-hidden="true" size={20} />
+                  <strong>还没有下一级文章</strong>
+                  <p>在左侧正文中选择一段文字，然后点击顶部“解释”或“翻译”。</p>
+                </div>
+              )}
+            </div>
+          </aside>
+        </section>
       </main>
 
       {selection?.rect && (

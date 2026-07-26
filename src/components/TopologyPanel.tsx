@@ -1,4 +1,14 @@
-import { useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  type WheelEvent
+} from "react";
 import {
   Focus,
   Maximize2,
@@ -24,6 +34,50 @@ interface Position {
   x: number;
   y: number;
   depth: number;
+}
+
+interface TopologySize {
+  width: number;
+  height: number;
+}
+
+type ResizeEdge = "left" | "top" | "top-left";
+
+const TOPOLOGY_DEFAULT_SIZE = { width: 420, height: 322 };
+const TOPOLOGY_MIN_SIZE = { width: 280, height: 220 };
+const TOPOLOGY_MAX_SIZE = { width: 720, height: 560 };
+const TOPOLOGY_SIZE_STORAGE_KEY = "annota:topology-size";
+const TOPOLOGY_NODE_WIDTH = 164;
+const TOPOLOGY_NODE_HEIGHT = 50;
+
+function clampTopologySize(size: TopologySize): TopologySize {
+  const viewportWidth = typeof window === "undefined" ? TOPOLOGY_MAX_SIZE.width : window.innerWidth - 32;
+  const viewportHeight = typeof window === "undefined" ? TOPOLOGY_MAX_SIZE.height : window.innerHeight - 128;
+  const maxWidth = Math.max(
+    TOPOLOGY_MIN_SIZE.width,
+    Math.min(TOPOLOGY_MAX_SIZE.width, viewportWidth)
+  );
+  const maxHeight = Math.max(
+    TOPOLOGY_MIN_SIZE.height,
+    Math.min(TOPOLOGY_MAX_SIZE.height, viewportHeight)
+  );
+  return {
+    width: Math.min(maxWidth, Math.max(TOPOLOGY_MIN_SIZE.width, Math.round(size.width))),
+    height: Math.min(maxHeight, Math.max(TOPOLOGY_MIN_SIZE.height, Math.round(size.height)))
+  };
+}
+
+function readStoredTopologySize(): TopologySize {
+  if (typeof window === "undefined") return TOPOLOGY_DEFAULT_SIZE;
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(TOPOLOGY_SIZE_STORAGE_KEY) ?? "null");
+    if (Number.isFinite(stored?.width) && Number.isFinite(stored?.height)) {
+      return clampTopologySize(stored);
+    }
+  } catch {
+    // Invalid local preferences fall back to the stable default.
+  }
+  return clampTopologySize(TOPOLOGY_DEFAULT_SIZE);
 }
 
 function buildLayout(articles: Record<string, ArticleNode>, rootId: string) {
@@ -64,9 +118,20 @@ export function TopologyPanel({
   const [scale, setScale] = useState(0.78);
   const [pan, setPan] = useState({ x: 8, y: 12 });
   const [pinned, setPinned] = useState(false);
+  const [size, setSize] = useState(readStoredTopologySize);
+  const [resizing, setResizing] = useState(false);
   const drag = useRef<{ id: number; startX: number; startY: number; x: number; y: number } | null>(
     null
   );
+  const resize = useRef<{
+    id: number;
+    edge: ResizeEdge;
+    startX: number;
+    startY: number;
+    width: number;
+    height: number;
+  } | null>(null);
+  const panelRef = useRef<HTMLElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
 
   const byId = useMemo(
@@ -76,18 +141,45 @@ export function TopologyPanel({
 
   const zoom = (next: number) => setScale(Math.max(0.42, Math.min(1.7, next)));
 
-  const focusCurrent = () => {
+  const focusCurrent = useCallback(() => {
     const position = byId[currentId];
     const viewport = viewportRef.current;
     if (!position || !viewport) return;
-    const nextScale = fullScreen ? 1 : 0.9;
-    setScale(nextScale);
     setPan({
-      x: viewport.clientWidth / 2 - (position.x + 76) * nextScale,
-      y: viewport.clientHeight / 2 - (position.y + 24) * nextScale
+      x: viewport.clientWidth / 2 - (position.x + TOPOLOGY_NODE_WIDTH / 2) * scale,
+      y: viewport.clientHeight / 2 - (position.y + TOPOLOGY_NODE_HEIGHT / 2) * scale
     });
     setPinned(true);
-  };
+  }, [byId, currentId, scale]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target;
+      const editing =
+        target instanceof HTMLElement &&
+        (target.matches("textarea, input, select") || target.isContentEditable);
+      if (
+        event.key.toLocaleLowerCase() !== "f" ||
+        event.ctrlKey ||
+        event.altKey ||
+        event.metaKey ||
+        editing
+      ) {
+        return;
+      }
+      const panel = panelRef.current;
+      const topologyVisible =
+        fullScreen ||
+        pinned ||
+        Boolean(panel?.matches(":hover")) ||
+        Boolean(panel?.contains(document.activeElement));
+      if (!topologyVisible) return;
+      event.preventDefault();
+      focusCurrent();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [focusCurrent, fullScreen, pinned]);
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
@@ -98,7 +190,7 @@ export function TopologyPanel({
       x: pan.x,
       y: pan.y
     };
-    event.currentTarget.setPointerCapture(event.pointerId);
+    event.currentTarget.setPointerCapture?.(event.pointerId);
     event.currentTarget.classList.add("is-dragging");
   };
 
@@ -113,6 +205,9 @@ export function TopologyPanel({
   const stopDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
     drag.current = null;
     event.currentTarget.classList.remove("is-dragging");
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture?.(event.pointerId);
+    }
   };
 
   const handleWheel = (event: WheelEvent<HTMLDivElement>) => {
@@ -120,11 +215,134 @@ export function TopologyPanel({
     zoom(scale * Math.exp(-event.deltaY * 0.0012));
   };
 
+  const setAndStoreSize = (nextSize: TopologySize) => {
+    const clamped = clampTopologySize(nextSize);
+    setSize(clamped);
+    window.localStorage.setItem(TOPOLOGY_SIZE_STORAGE_KEY, JSON.stringify(clamped));
+  };
+
+  const startResize = (event: ReactPointerEvent<HTMLDivElement>, edge: ResizeEdge) => {
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    resize.current = {
+      id: event.pointerId,
+      edge,
+      startX: event.clientX,
+      startY: event.clientY,
+      width: size.width,
+      height: size.height
+    };
+    setPinned(true);
+    setResizing(true);
+  };
+
+  const sizeFromPointer = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const active = resize.current;
+    if (!active || active.id !== event.pointerId) return null;
+    const changesWidth = active.edge === "left" || active.edge === "top-left";
+    const changesHeight = active.edge === "top" || active.edge === "top-left";
+    return clampTopologySize({
+      width: changesWidth ? active.width + active.startX - event.clientX : active.width,
+      height: changesHeight ? active.height + active.startY - event.clientY : active.height
+    });
+  };
+
+  const moveResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const nextSize = sizeFromPointer(event);
+    if (nextSize) setSize(nextSize);
+  };
+
+  const stopResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const nextSize = event.type === "pointercancel" ? size : sizeFromPointer(event);
+    if (!nextSize) return;
+    resize.current = null;
+    setResizing(false);
+    setAndStoreSize(nextSize);
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture?.(event.pointerId);
+    }
+  };
+
+  const handleResizeKeyDown = (
+    event: ReactKeyboardEvent<HTMLDivElement>,
+    dimension: "width" | "height"
+  ) => {
+    const step = event.shiftKey ? 24 : 8;
+    let nextSize: TopologySize | null = null;
+    if (dimension === "width") {
+      if (event.key === "ArrowLeft") nextSize = { ...size, width: size.width + step };
+      if (event.key === "ArrowRight") nextSize = { ...size, width: size.width - step };
+      if (event.key === "Home") nextSize = { ...size, width: TOPOLOGY_MIN_SIZE.width };
+      if (event.key === "End") nextSize = { ...size, width: TOPOLOGY_MAX_SIZE.width };
+    } else {
+      if (event.key === "ArrowUp") nextSize = { ...size, height: size.height + step };
+      if (event.key === "ArrowDown") nextSize = { ...size, height: size.height - step };
+      if (event.key === "Home") nextSize = { ...size, height: TOPOLOGY_MIN_SIZE.height };
+      if (event.key === "End") nextSize = { ...size, height: TOPOLOGY_MAX_SIZE.height };
+    }
+    if (!nextSize) return;
+    event.preventDefault();
+    setPinned(true);
+    setAndStoreSize(nextSize);
+  };
+
   const panel = (
     <aside
-      className={`topology-panel${pinned ? " is-pinned" : ""}${fullScreen ? " is-fullscreen" : ""}`}
+      ref={panelRef}
+      className={`topology-panel${pinned ? " is-pinned" : ""}${fullScreen ? " is-fullscreen" : ""}${resizing ? " is-resizing" : ""}`}
       aria-label="当前知识树拓扑"
+      style={
+        {
+          "--topology-width": `${size.width}px`,
+          "--topology-height": `${size.height}px`
+        } as CSSProperties
+      }
     >
+      {!fullScreen && (
+        <>
+          <div
+            className="topology-resize-handle is-left"
+            role="separator"
+            aria-label="调整拓扑图宽度"
+            aria-orientation="vertical"
+            aria-valuemin={TOPOLOGY_MIN_SIZE.width}
+            aria-valuemax={TOPOLOGY_MAX_SIZE.width}
+            aria-valuenow={size.width}
+            tabIndex={0}
+            onDoubleClick={() => setAndStoreSize({ ...size, width: TOPOLOGY_DEFAULT_SIZE.width })}
+            onKeyDown={(event) => handleResizeKeyDown(event, "width")}
+            onPointerDown={(event) => startResize(event, "left")}
+            onPointerMove={moveResize}
+            onPointerUp={stopResize}
+            onPointerCancel={stopResize}
+          />
+          <div
+            className="topology-resize-handle is-top"
+            role="separator"
+            aria-label="调整拓扑图高度"
+            aria-orientation="horizontal"
+            aria-valuemin={TOPOLOGY_MIN_SIZE.height}
+            aria-valuemax={TOPOLOGY_MAX_SIZE.height}
+            aria-valuenow={size.height}
+            tabIndex={0}
+            onDoubleClick={() => setAndStoreSize({ ...size, height: TOPOLOGY_DEFAULT_SIZE.height })}
+            onKeyDown={(event) => handleResizeKeyDown(event, "height")}
+            onPointerDown={(event) => startResize(event, "top")}
+            onPointerMove={moveResize}
+            onPointerUp={stopResize}
+            onPointerCancel={stopResize}
+          />
+          <div
+            className="topology-resize-handle is-top-left"
+            aria-hidden="true"
+            onPointerDown={(event) => startResize(event, "top-left")}
+            onPointerMove={moveResize}
+            onPointerUp={stopResize}
+            onPointerCancel={stopResize}
+          />
+        </>
+      )}
       {!fullScreen && (
         <div className="topology-collapsed" aria-hidden="true">
           <Network size={20} />

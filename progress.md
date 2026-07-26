@@ -43,3 +43,36 @@
 - 新 Windows 可执行文件：`src-tauri/target/release/annota.exe`（13,171,200 bytes，SHA256 `7D4B6ED858843CD152808671E2D5FCC7E10CBF6E389F31A3D8B22CEE86EDDB7F`）。
 - 新 NSIS 安装包：`src-tauri/target/release/bundle/nsis/Annota_0.1.0_x64-setup.exe`（6,487,969 bytes，SHA256 `7FB4F04331EED03159D2E421EBCF8402D26E755C14853F49AAE4D95FE10F9911`）。
 - Phase 7 完成；Hallmark 最终自评 P5/H5/E5/S5/R5/V4。当前轮真实浏览器桌面验证通过，移动宽度因浏览器安全策略仅完成代码/构建复核。
+- 开始 Phase 8：确认启动路由恢复、子文章独立网格轨道、拓扑固定尺寸和聚焦时强制缩放是四项需求的直接实现点。
+- 确定保持现有 Workbench/Cobalt 系统，只修改 `AppStore`、阅读器、拓扑组件、样式和自动化测试；不删除生产文件。
+- 已实现默认主页启动、子文章并入阅读 section、拓扑边框缩放与尺寸持久化、`F` 保持缩放聚焦当前节点；类型检查与生产构建首轮通过。
+- Phase 8 首次 Vitest 被已知 Windows 沙箱 `spawn EPERM` 阻断，尚未进入测试断言，转到允许环境复验。
+- 沙箱外 Vitest 的 6 项断言通过，但因阅读器旧键盘监听器未守卫 `window` 事件目标而报告 1 个未处理异常；已定位到 `ReaderPage.tsx` 并补充 HTMLElement 类型守卫。
+- 修复后 `npm run check` 与 Vitest 6/6 通过，无未处理异常。
+- 视觉验证服务器首轮 `Start-Process` 被重复 `Path/PATH` 环境键阻断，未产生监听进程；准备以干净子进程环境重试。
+- `-UseNewEnvironment` 未绕过 PowerShell 的重复键缺陷；第二次仍未启动进程，已切换到不同的 Windows 进程创建接口。
+- Windows `Win32_Process.Create` 被权限策略拒绝，第三种后台启动方案仍未产生监听；不再重试系统进程创建，转为托管已验证构建产物。
+- 受控静态服务上的 1280×720 页面验证通过：重新打开默认落在主页；正文与子文章同属阅读 section；右栏贴边且无横向溢出。
+- 拓扑真实页面宽度调整从 420px 到 444px；缩放到 90% 后按 `F`，当前节点中心误差小于 0.2px，缩放保持 90%。
+- 最终 `npm run check`、Vitest 6/6、`npm run build` 与 `npm run tauri -- build` 全部通过；Tauri 仅输出非阻断的 Windows 导入库链接器提示。
+- 最终 Windows 可执行文件：`src-tauri/target/release/annota.exe`，13,172,224 bytes，SHA256 `B0FB38F4DFD92CFCA585155C3ECDB2634F3EA561637F2447AEE98C47C8416474`。
+- 最终 NSIS 安装包：`src-tauri/target/release/bundle/nsis/Annota_0.1.0_x64-setup.exe`，6,489,579 bytes，SHA256 `88628D5B06B70F3B6B762AA908588F7861F58F0EADFD63D447CA7FB8C5B591C9`。
+- Phase 8 完成；Hallmark 自评 P5/H5/E5/S5/R5/V4，未引入 transition-all、原始颜色/字体值或布局属性过渡。
+- 开始 Phase 9：对照两张用户截图与 `Demo-Note-Main.html`，确认阅读区割裂主要由左右不同底色、右列整高边框和重卡片表面造成。
+- 本轮限定修改阅读区 CSS 与规划记录，不变更文章数据、拓扑交互或路由结构。
+- 已将右栏标题改为“当前文章标题 的子文章 + 数量”，移除卡片尾部多余箭头；可访问名称继续保留“下一级子文章”。
+- 已统一正文与子文章背景，移除右栏整高边界与常态阴影，空状态改为无框左对齐提示。
+- 已把滚动容器上移至整个 `reader-surface`，右侧子文章列在桌面端 sticky；1280×720 下右栏 360px 并准确贴靠右边缘。
+- 最终 `npm run check`、Vitest 6/6、`npm run build` 与 `npm run tauri -- build` 全部通过；Tauri 仅输出既有的 Windows 导入库链接提示。
+- 浏览器实测覆盖 1280×720、320、375、414、768；各尺寸横向溢出为 0，控制台无 error/warn。
+- Phase 9 完成；Hallmark 自评 P5/H5/E5/S5/R5/V4，未新增 `transition-all`、原始颜色/字体值或布局属性过渡。
+- 最新 Windows 可执行文件：`src-tauri/target/release/annota.exe`（13,172,224 bytes，SHA256 `032C90B2EB402105DB824D962307070D9E8ACCE5FD38F6DBF24A733F8BEC731A`）。
+- 最新 NSIS 安装包：`src-tauri/target/release/bundle/nsis/Annota_0.1.0_x64-setup.exe`（6,489,199 bytes，SHA256 `3E11F104F347F5C6FF3C19B52A1C4D1D95A30B4BF4E7D34E5A90D6EE578DC66C`）。
+- 开始 Phase 10：确认主页的重复顶栏来自 `window-titlebar` 与横跨全宽的 `home-topbar`；将保留前者为应用级标题栏，并把去掉重复品牌入口后的主页工具栏移动到 `home-main` 正上方。
+- 已完成主页 DOM 与网格结构调整，移除重复品牌按钮；`npm run check` 通过，Vitest 首次运行被 Windows 沙箱 `spawn EPERM` 阻断。
+- 沙箱外 Vitest 6/6 通过，`npm run build` 通过。
+- 应用内浏览器已验证 1280×720 主页的两级标题栏层次，以及 320/375/414/768 响应式布局；各宽度无横向溢出，浏览器控制台无 warning/error。
+- Phase 10 最终 `npm run check`、Vitest 6/6、`npm run build` 与 `npm run tauri -- build` 全部通过；Tauri 仅输出既有的 Windows 导入库链接提示。
+- 最新 Windows 可执行文件：`src-tauri/target/release/annota.exe`（13,172,224 bytes，SHA256 `1C2B604DD5FB81E28C7F9BF14E0AF4B4CF3AB8CA655EB8CD4581FDBF53509246`）。
+- 最新 NSIS 安装包：`src-tauri/target/release/bundle/nsis/Annota_0.1.0_x64-setup.exe`（6,486,888 bytes，SHA256 `C087A7696C370471354BBDA5500D2750ED8E0B6283849E426268E928415FC26E`）。
+- Hallmark 最终自评 P5/H5/E5/S5/R5/V4；未引入原始颜色、字体值、`transition-all` 或布局属性过渡。

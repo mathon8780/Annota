@@ -1,10 +1,11 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
+import { seedData } from "./data/seed";
 import { AppStoreProvider } from "./store/AppStore";
 
-function renderApp() {
-  window.localStorage.clear();
+function renderApp(clearStorage = true) {
+  if (clearStorage) window.localStorage.clear();
   return render(
     <AppStoreProvider>
       <App />
@@ -12,16 +13,40 @@ function renderApp() {
   );
 }
 
-function dispatchPointer(target: Element, type: string, pointerId: number, clientX: number) {
+function dispatchPointer(
+  target: Element,
+  type: string,
+  pointerId: number,
+  clientX: number,
+  clientY = 0
+) {
   const event = new Event(type, { bubbles: true, cancelable: true });
   Object.defineProperties(event, {
     pointerId: { value: pointerId },
-    clientX: { value: clientX }
+    clientX: { value: clientX },
+    clientY: { value: clientY }
   });
   fireEvent(target, event);
 }
 
 describe("Annota core flow", () => {
+  it("always starts on the home page even when the last session ended in the reader", () => {
+    window.localStorage.clear();
+    window.localStorage.setItem(
+      "annota.desktop.demo.v1",
+      JSON.stringify({
+        ...seedData,
+        currentNotebookId: seedData.notebooks[0].id,
+        currentArticleId: seedData.notebooks[0].rootId
+      })
+    );
+
+    renderApp(false);
+
+    expect(screen.getByRole("heading", { name: "继续生长你的知识树" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "文章阅读区域" })).not.toBeInTheDocument();
+  });
+
   it("opens a recent notebook in the reader and returns home", async () => {
     const user = userEvent.setup();
     const { container } = renderApp();
@@ -31,15 +56,25 @@ describe("Annota core flow", () => {
     expect(screen.getByRole("button", { name: "最小化窗口" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "最大化窗口" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "关闭窗口" })).toBeInTheDocument();
+    const homeContent = container.querySelector(".home-content");
+    expect(homeContent?.firstElementChild).toHaveClass("home-topbar");
+    expect(homeContent?.querySelector(".home-topbar + .home-main")).toBeInTheDocument();
+    expect(container.querySelector(".home-workspace > .home-topbar")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "返回花园概览" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /打开笔记：ECS 架构/ }));
 
     expect(
       screen.getByRole("heading", { name: "ECS 架构：从数据布局到系统调度" })
     ).toBeInTheDocument();
-    expect(screen.getByText("下一级子文章")).toBeInTheDocument();
+    expect(screen.getByText("ECS 架构：从数据布局到系统调度 的子文章")).toBeInTheDocument();
     expect(container.querySelector(".route-stage")).not.toHaveAttribute("data-motion");
     expect(container.querySelector(".article-column")).toHaveAttribute("data-motion", "settle");
     expect(container.querySelector(".reader-breadcrumbs")).not.toBeInTheDocument();
+    const readerSurface = screen.getByRole("region", { name: "文章阅读区域" });
+    expect(
+      within(readerSurface).getByRole("complementary", { name: "下一级子文章" })
+    ).toBeInTheDocument();
+    expect(container.querySelector(".reader-workspace > .children-column")).not.toBeInTheDocument();
     expect(screen.getByRole("separator", { name: "调整阅读路径宽度" })).toHaveAttribute(
       "aria-valuenow",
       "246"
@@ -72,6 +107,43 @@ describe("Annota core flow", () => {
 
     expect(separator).toHaveAttribute("aria-valuenow", "326");
     expect(window.localStorage.getItem("annota:reading-path-width")).toBe("326");
+  });
+
+  it("resizes the topology from its border and focuses without changing zoom", async () => {
+    const user = userEvent.setup();
+    const { container } = renderApp();
+    await user.click(screen.getByRole("button", { name: /打开笔记：ECS 架构/ }));
+
+    const panel = screen.getByRole("complementary", { name: "当前知识树拓扑" });
+    const viewport = container.querySelector(".topology-viewport") as HTMLDivElement;
+    Object.defineProperties(viewport, {
+      clientWidth: { configurable: true, value: 420 },
+      clientHeight: { configurable: true, value: 224 }
+    });
+
+    const scene = container.querySelector(".topology-scene") as HTMLDivElement;
+    const collapsedTransform = scene.style.transform;
+    fireEvent.keyDown(window, { key: "f" });
+    expect(scene.style.transform).toBe(collapsedTransform);
+
+    await user.click(screen.getByRole("button", { name: "固定拓扑" }));
+    const widthHandle = screen.getByRole("separator", { name: "调整拓扑图宽度" });
+    dispatchPointer(widthHandle, "pointerdown", 2, 500, 280);
+    dispatchPointer(widthHandle, "pointermove", 2, 420, 280);
+    dispatchPointer(widthHandle, "pointerup", 2, 420, 280);
+
+    expect(widthHandle).toHaveAttribute("aria-valuenow", "500");
+    expect(window.localStorage.getItem("annota:topology-size")).toBe(
+      JSON.stringify({ width: 500, height: 322 })
+    );
+
+    await user.click(screen.getByRole("button", { name: "放大拓扑" }));
+    const transformBeforeFocus = scene.style.transform;
+    fireEvent.keyDown(window, { key: "f" });
+
+    expect(scene.style.transform).not.toBe(transformBeforeFocus);
+    expect(scene.style.transform).toMatch(/scale\(0\.9\)$/);
+    expect(panel).toHaveClass("is-pinned");
   });
 
   it("filters recent notebook cards", async () => {

@@ -18,7 +18,6 @@ import {
 } from "lucide-react";
 import { useAppStore } from "../store/AppStore";
 import type { Notebook } from "../types";
-import { Brand } from "./Brand";
 
 interface HomePageProps {
   onOpenSearch: () => void;
@@ -104,32 +103,6 @@ export function HomePage({ onOpenSearch }: HomePageProps) {
 
   return (
     <div className="home-app">
-      <header className="home-topbar">
-        <button className="brand-button" type="button" aria-label="返回花园概览">
-          <Brand />
-        </button>
-        <button className="global-search-trigger" type="button" onClick={onOpenSearch}>
-          <Search aria-hidden="true" size={17} />
-          <span>搜索标题、正文与标签</span>
-          <kbd>Ctrl K</kbd>
-        </button>
-        <div className="home-top-actions">
-          <span className="local-status">
-            <span aria-hidden="true"></span>
-            本地工作区
-          </span>
-          <button
-            className="icon-button"
-            type="button"
-            title="设置将在后续阶段接入"
-            onClick={() => setNotice("设置入口已预留；本轮聚焦主页与阅读器任务流。")}
-          >
-            <Settings2 aria-hidden="true" size={18} />
-            <span className="sr-only">打开设置</span>
-          </button>
-        </div>
-      </header>
-
       <main className="home-workspace">
         <aside className="home-sidebar" aria-label="主页导航">
           <nav>
@@ -179,7 +152,31 @@ export function HomePage({ onOpenSearch }: HomePageProps) {
           </div>
         </aside>
 
-        <section className="home-main">
+        <div className="home-content">
+          <header className="home-topbar">
+            <button className="global-search-trigger" type="button" onClick={onOpenSearch}>
+              <Search aria-hidden="true" size={17} />
+              <span>搜索标题、正文与标签</span>
+              <kbd>Ctrl K</kbd>
+            </button>
+            <div className="home-top-actions">
+              <span className="local-status">
+                <span aria-hidden="true"></span>
+                本地工作区
+              </span>
+              <button
+                className="icon-button"
+                type="button"
+                title="设置将在后续阶段接入"
+                onClick={() => setNotice("设置入口已预留；本轮聚焦主页与阅读器任务流。")}
+              >
+                <Settings2 aria-hidden="true" size={18} />
+                <span className="sr-only">打开设置</span>
+              </button>
+            </div>
+          </header>
+
+          <section className="home-main">
           <div className="home-intro">
             <div>
               <p className="context-line">周日，7 月 26 日</p>
@@ -298,8 +295,9 @@ export function HomePage({ onOpenSearch }: HomePageProps) {
                 </button>
               </div>
             )}
+            </section>
           </section>
-        </section>
+        </div>
       </main>
 
       <dialog

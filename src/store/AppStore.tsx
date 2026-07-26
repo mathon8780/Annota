@@ -43,7 +43,12 @@ function loadInitialData(): AppData {
     if (!raw) return cloneSeed();
     const parsed = JSON.parse(raw) as AppData;
     if (!Array.isArray(parsed.notebooks) || !parsed.articles) return cloneSeed();
-    return { ...parsed, jobs: [] };
+    return {
+      ...parsed,
+      jobs: [],
+      currentNotebookId: null,
+      currentArticleId: null
+    };
   } catch {
     return cloneSeed();
   }
