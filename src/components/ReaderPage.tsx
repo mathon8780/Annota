@@ -41,6 +41,7 @@ const READER_INTERACTIVE_TARGETS = [
   "[contenteditable='true']",
   "[role='separator']",
   ".reading-block",
+  ".document-editor",
   ".inline-formatting-toolbar"
 ].join(", ");
 

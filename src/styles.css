@@ -1619,28 +1619,43 @@ kbd {
   cursor: pointer;
 }
 
-.block-editor {
+.block-editor,
+.document-editor {
   padding-top: var(--space-8);
   font-family: var(--font-reading);
 }
 
-.content-block {
-  min-width: 0;
-  position: relative;
+.document-editor {
+  color: var(--color-ink-soft);
+  caret-color: var(--color-accent);
+  outline: none;
 }
 
-.reading-block {
+.document-editor:focus,
+.document-editor:focus-visible {
+  outline: none;
+}
+
+.document-block {
   min-width: 0;
   margin: 0 0 var(--space-5);
   padding: var(--space-1) var(--space-2);
   overflow-wrap: anywhere;
-  color: var(--color-ink-soft);
-  border-radius: var(--radius-sm);
+  color: inherit;
+  background: transparent;
+  border: 0;
+  outline: 0;
   font-size: var(--text-base);
   font-weight: 400;
   line-height: 1.95;
   white-space: pre-wrap;
   cursor: text;
+}
+
+.document-block:empty::before {
+  color: var(--color-muted-soft);
+  content: attr(data-placeholder);
+  pointer-events: none;
 }
 
 .inline-mark-bold {
@@ -1658,7 +1673,9 @@ kbd {
   -webkit-box-decoration-break: clone;
 }
 
-h2.reading-block {
+.document-block[data-block-kind="h1"],
+.document-block[data-block-kind="h2"],
+.document-block[data-block-kind="h3"] {
   margin-top: var(--space-10);
   margin-bottom: var(--space-4);
   color: var(--color-ink);
@@ -1670,7 +1687,7 @@ h2.reading-block {
   line-height: 1.35;
 }
 
-blockquote.reading-block {
+.document-block[data-block-kind="quote"] {
   margin: var(--space-6) 0;
   padding: var(--space-4) var(--space-5);
   color: var(--color-ink);
@@ -1679,46 +1696,6 @@ blockquote.reading-block {
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
   font-family: var(--font-body);
   line-height: 1.75;
-}
-
-.block-edit-shell {
-  margin: var(--space-2) 0 var(--space-5);
-  position: relative;
-}
-
-.block-edit-shell textarea {
-  width: 100%;
-  min-height: 72px;
-  padding: var(--space-5) var(--space-4) var(--space-4);
-  resize: vertical;
-  overflow: hidden;
-  color: var(--color-ink);
-  background: var(--color-paper-solid);
-  border: var(--rule-thin) solid var(--color-rule);
-  border-radius: var(--radius-sm);
-  outline: var(--rule-focus) solid transparent;
-  outline-offset: 1px;
-  font-family: var(--font-reading);
-  font-size: var(--text-base);
-  line-height: 1.85;
-  transition:
-    border-color var(--dur-fast) var(--ease-out),
-    outline-color var(--dur-fast) var(--ease-out);
-}
-
-.block-edit-shell textarea.is-focus-visible {
-  border-color: var(--color-accent);
-  outline-color: var(--color-focus);
-}
-
-.add-block-button {
-  min-height: 44px;
-  padding: 0 var(--space-3);
-  color: var(--color-muted);
-  background: transparent;
-  border: var(--rule-thin) dashed var(--color-rule-strong);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
 }
 
 .article-footer-nav {
@@ -2399,10 +2376,6 @@ blockquote.reading-block {
   }
 
   .command-result:hover {
-    background: var(--color-paper-soft);
-  }
-
-  .reading-block:hover {
     background: var(--color-paper-soft);
   }
 

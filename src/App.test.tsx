@@ -37,6 +37,36 @@ function dispatchPointer(
   fireEvent(target, event);
 }
 
+function setDocumentSelection(block: Element, start: number, end: number) {
+  const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+  const points: Array<{ node: Text; start: number; end: number }> = [];
+  let offset = 0;
+  while (walker.nextNode()) {
+    const node = walker.currentNode as Text;
+    points.push({ node, start: offset, end: offset + node.data.length });
+    offset += node.data.length;
+  }
+  const locate = (position: number) => {
+    const point =
+      points.find((candidate) => position <= candidate.end) ??
+      points[points.length - 1];
+    if (!point) throw new Error("Cannot select text in an empty document block.");
+    return {
+      node: point.node,
+      offset: Math.min(point.node.data.length, Math.max(0, position - point.start))
+    };
+  };
+  const from = locate(start);
+  const to = locate(end);
+  const range = document.createRange();
+  range.setStart(from.node, from.offset);
+  range.setEnd(to.node, to.offset);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+  fireEvent.mouseUp(block);
+}
+
 describe("Annota core flow", () => {
   it("always starts on the home page even when the last session ended in the reader", () => {
     window.localStorage.clear();
@@ -173,18 +203,11 @@ describe("Annota core flow", () => {
 
   it("enables generation after a single-block selection and shows a placeholder job", async () => {
     const user = userEvent.setup();
-    renderApp();
-    await user.click(screen.getByRole("button", { name: /打开笔记：ECS 架构/ }));
-
-    await user.click(
-      screen.getByText(
-        "ECS 将对象拆成实体标识、纯数据组件与批量处理数据的系统。它不是简单地把类拆成三个目录，而是重新安排数据在内存中的组织方式与处理顺序。"
-      )
-    );
-
-    const editor = screen.getByLabelText("编辑正文块") as HTMLTextAreaElement;
-    editor.setSelectionRange(0, 12);
-    fireEvent.select(editor);
+    const { container } = renderApp();
+    const article = await openFirstNotebook(user);
+    const paragraph = article.blocks.find((block) => block.kind === "paragraph")!;
+    const block = container.querySelector(`[data-block-id="${paragraph.id}"]`)!;
+    setDocumentSelection(block, 0, 12);
 
     const explain = screen.getByTitle("解释选中文字");
     expect(explain).toBeEnabled();
@@ -192,48 +215,46 @@ describe("Annota core flow", () => {
     expect(screen.getByText("正在解释选区")).toBeInTheDocument();
   });
 
-  it("shows the paragraph frame only while its textarea owns focus", async () => {
+  it("keeps the article in one seamless editable surface", async () => {
+    const user = userEvent.setup();
+    const { container } = renderApp();
+    const article = await openFirstNotebook(user);
+    const editor = screen.getByRole("textbox", { name: "编辑文章正文" });
+    const block = container.querySelector(
+      `[data-block-id="${article.blocks[0].id}"]`
+    )!;
+
+    expect(editor).toHaveAttribute("contenteditable", "true");
+    expect(container.querySelector("textarea")).not.toBeInTheDocument();
+
+    await user.click(block);
+
+    expect(container.querySelector(".block-edit-shell")).not.toBeInTheDocument();
+    expect(container.querySelector(".is-focus-visible")).not.toBeInTheDocument();
+  });
+
+  it("autosaves text edited in the seamless document", async () => {
     const user = userEvent.setup();
     const { container } = renderApp();
     const article = await openFirstNotebook(user);
     const paragraph = article.blocks.find((block) => block.kind === "paragraph")!;
+    const block = container.querySelector(
+      `[data-block-id="${paragraph.id}"]`
+    ) as HTMLElement;
 
-    await user.click(screen.getByText(paragraph.text));
-    const editor = screen.getByLabelText("编辑正文块") as HTMLTextAreaElement;
+    block.textContent = `${paragraph.text}新增内容`;
+    fireEvent.input(block);
 
-    await waitFor(() => expect(editor).toHaveFocus());
-    expect(editor).toHaveClass("is-focus-visible");
-    expect(container.querySelector(".block-tools")).not.toBeInTheDocument();
-
-    editor.setSelectionRange(0, 4);
-    fireEvent.select(editor);
-    await user.click(screen.getByRole("button", { name: "文字颜色" }));
-
-    expect(editor).not.toHaveFocus();
-    expect(editor).not.toHaveClass("is-focus-visible");
-    expect(screen.getByLabelText("编辑正文块")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "文字颜色：黄色" }));
     await waitFor(() => {
       const stored = JSON.parse(
         window.localStorage.getItem("annota.desktop.demo.v1") ?? "{}"
       );
-      expect(stored.articles[article.id].blocks.find(
-        (block: { id: string }) => block.id === paragraph.id
-      ).marks).toEqual([
-        expect.objectContaining({
-          type: "textColor",
-          color: "#ca8a04",
-          start: 0,
-          end: 4
-        })
-      ]);
+      expect(
+        stored.articles[article.id].blocks.find(
+          (candidate: { id: string }) => candidate.id === paragraph.id
+        ).text
+      ).toBe(`${paragraph.text}新增内容`);
     });
-    expect(screen.getByLabelText("编辑正文块")).toBeInTheDocument();
-
-    await user.click(editor);
-    expect(editor).toHaveFocus();
-    expect(editor).toHaveClass("is-focus-visible");
   });
 
   it("dismisses transient reader interactions from whitespace without blocking controls", async () => {
@@ -241,11 +262,8 @@ describe("Annota core flow", () => {
     const { container } = renderApp();
     const article = await openFirstNotebook(user);
     const paragraph = article.blocks.find((block) => block.kind === "paragraph")!;
-
-    await user.click(screen.getByText(paragraph.text));
-    const editor = screen.getByLabelText("编辑正文块") as HTMLTextAreaElement;
-    editor.setSelectionRange(0, 4);
-    fireEvent.select(editor);
+    const block = container.querySelector(`[data-block-id="${paragraph.id}"]`)!;
+    setDocumentSelection(block, 0, 4);
 
     await user.click(screen.getByRole("button", { name: "文字颜色" }));
     expect(screen.getByRole("dialog", { name: "文字颜色选项" })).toBeInTheDocument();
@@ -262,21 +280,19 @@ describe("Annota core flow", () => {
       screen.getAllByTitle("先选择正文文字").forEach((button) => {
         expect(button).toBeDisabled();
       });
-      expect(screen.queryByLabelText("编辑正文块")).not.toBeInTheDocument();
+      expect(screen.getByRole("textbox", { name: "编辑文章正文" })).not.toHaveFocus();
+      expect(window.getSelection()?.rangeCount).toBe(0);
     });
   });
 
   it("applies bold formatting to a selection and restores it after reopening the reader", async () => {
     const user = userEvent.setup();
-    renderApp();
+    const { container } = renderApp();
     const article = await openFirstNotebook(user);
     const paragraph = article.blocks.find((block) => block.kind === "paragraph")!;
     const selectedText = paragraph.text.slice(0, 6);
-
-    await user.click(screen.getByText(paragraph.text));
-    const editor = screen.getByLabelText("编辑正文块") as HTMLTextAreaElement;
-    editor.setSelectionRange(0, selectedText.length);
-    fireEvent.select(editor);
+    const block = container.querySelector(`[data-block-id="${paragraph.id}"]`)!;
+    setDocumentSelection(block, 0, selectedText.length);
 
     expect(screen.getByRole("button", { name: "加粗" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "斜体" })).toBeEnabled();
@@ -304,15 +320,12 @@ describe("Annota core flow", () => {
 
   it("applies the selected text color without storing HTML", async () => {
     const user = userEvent.setup();
-    renderApp();
+    const { container } = renderApp();
     const article = await openFirstNotebook(user);
     const paragraph = article.blocks.find((block) => block.kind === "paragraph")!;
     const selectedText = paragraph.text.slice(0, 4);
-
-    await user.click(screen.getByText(paragraph.text));
-    const editor = screen.getByLabelText("编辑正文块") as HTMLTextAreaElement;
-    editor.setSelectionRange(0, selectedText.length);
-    fireEvent.select(editor);
+    const block = container.querySelector(`[data-block-id="${paragraph.id}"]`)!;
+    setDocumentSelection(block, 0, selectedText.length);
 
     await user.click(screen.getByRole("button", { name: "文字颜色" }));
     await user.click(screen.getByRole("button", { name: "文字颜色：蓝色" }));
@@ -344,15 +357,12 @@ describe("Annota core flow", () => {
 
   it("offers preset and custom colors in mutually exclusive menus", async () => {
     const user = userEvent.setup();
-    renderApp();
+    const { container } = renderApp();
     const article = await openFirstNotebook(user);
     const paragraph = article.blocks.find((block) => block.kind === "paragraph")!;
     const selectedText = paragraph.text.slice(0, 5);
-
-    await user.click(screen.getByText(paragraph.text));
-    const editor = screen.getByLabelText("编辑正文块") as HTMLTextAreaElement;
-    editor.setSelectionRange(0, selectedText.length);
-    fireEvent.select(editor);
+    const block = container.querySelector(`[data-block-id="${paragraph.id}"]`)!;
+    setDocumentSelection(block, 0, selectedText.length);
 
     await user.click(screen.getByRole("button", { name: "文字颜色" }));
     expect(screen.getByRole("button", { name: "文字颜色：黄色" })).toBeInTheDocument();

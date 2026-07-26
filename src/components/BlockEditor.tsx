@@ -1,13 +1,13 @@
 import {
   Fragment,
   useEffect,
-  useMemo,
+  useLayoutEffect,
   useRef,
   useState,
   type CSSProperties,
   type CompositionEvent,
-  type KeyboardEvent,
-  type MouseEvent
+  type FormEvent,
+  type KeyboardEvent
 } from "react";
 import type {
   ContentBlock,
@@ -16,11 +16,16 @@ import type {
   SelectionState
 } from "../types";
 import {
-  mergeBlockMarks,
-  splitBlockMarks,
   toggleInlineMark,
   transformMarksForTextChange
 } from "../utils/inlineMarks";
+
+interface EditorRange {
+  blockId: string;
+  start: number;
+  end: number;
+  text: string;
+}
 
 interface BlockEditorProps {
   articleId: string;
@@ -37,7 +42,7 @@ function markClassName(mark: InlineMark) {
 }
 
 function renderInlineText(block: ContentBlock) {
-  if (!block.text) return "空段落";
+  if (!block.text) return null;
   const marks = (block.marks ?? []).filter(
     (mark) => mark.start < block.text.length && mark.end > 0 && mark.end > mark.start
   );
@@ -85,6 +90,72 @@ function renderInlineText(block: ContentBlock) {
   });
 }
 
+function findBlockElement(node: Node | null, root: HTMLElement) {
+  const element = node instanceof Element ? node : node?.parentElement;
+  const block = element?.closest<HTMLElement>("[data-block-id]") ?? null;
+  return block && root.contains(block) ? block : null;
+}
+
+function offsetWithin(block: HTMLElement, node: Node, offset: number) {
+  const range = document.createRange();
+  range.selectNodeContents(block);
+  range.setEnd(node, offset);
+  return range.toString().length;
+}
+
+function readEditorRange(root: HTMLElement): EditorRange | null {
+  const selection = window.getSelection();
+  if (!selection?.rangeCount) return null;
+  const range = selection.getRangeAt(0);
+  const startBlock = findBlockElement(range.startContainer, root);
+  const endBlock = findBlockElement(range.endContainer, root);
+  if (!startBlock || startBlock !== endBlock) return null;
+  return {
+    blockId: startBlock.dataset.blockId ?? "",
+    start: offsetWithin(startBlock, range.startContainer, range.startOffset),
+    end: offsetWithin(startBlock, range.endContainer, range.endOffset),
+    text: range.toString()
+  };
+}
+
+function pointAtOffset(block: HTMLElement, requestedOffset: number) {
+  const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+  let remaining = Math.max(0, requestedOffset);
+  let lastText: Text | null = null;
+  while (walker.nextNode()) {
+    const node = walker.currentNode as Text;
+    lastText = node;
+    if (remaining <= node.data.length) {
+      return { node: node as Node, offset: remaining };
+    }
+    remaining -= node.data.length;
+  }
+  if (lastText) {
+    return { node: lastText as Node, offset: lastText.data.length };
+  }
+  return { node: block as Node, offset: 0 };
+}
+
+function restoreEditorRange(
+  root: HTMLElement,
+  blockId: string,
+  start: number,
+  end: number
+) {
+  const block = Array.from(root.querySelectorAll<HTMLElement>("[data-block-id]"))
+    .find((candidate) => candidate.dataset.blockId === blockId);
+  if (!block) return;
+  const from = pointAtOffset(block, start);
+  const to = pointAtOffset(block, end);
+  const range = document.createRange();
+  range.setStart(from.node, from.offset);
+  range.setEnd(to.node, to.offset);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+  root.focus({ preventScroll: true });
+}
+
 export function BlockEditor({
   articleId,
   blocks,
@@ -95,21 +166,22 @@ export function BlockEditor({
   onSaveState
 }: BlockEditorProps) {
   const [draft, setDraft] = useState(blocks);
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [focusedId, setFocusedId] = useState<string | null>(null);
   const [isComposing, setIsComposing] = useState(false);
   const timer = useRef<number>();
-  const textareas = useRef<Record<string, HTMLTextAreaElement | null>>({});
+  const editorRef = useRef<HTMLDivElement>(null);
   const handledFormatCommand = useRef(0);
+  const pendingRange = useRef<EditorRange | null>(null);
 
   useEffect(() => {
     setDraft(blocks);
   }, [blocks]);
 
   useEffect(() => {
-    setActiveId(null);
-    setFocusedId(null);
-  }, [articleId, resetVersion]);
+    pendingRange.current = null;
+    onSelection(null);
+    window.getSelection()?.removeAllRanges();
+    editorRef.current?.blur();
+  }, [articleId, onSelection, resetVersion]);
 
   useEffect(() => {
     if (isComposing) return;
@@ -124,15 +196,14 @@ export function BlockEditor({
   }, [blocks, draft, isComposing, onChange, onSaveState]);
 
   useEffect(() => {
-    const textarea = activeId ? textareas.current[activeId] : null;
-    if (!textarea) return;
-    textarea.style.height = "auto";
-    textarea.style.height = `${Math.max(56, textarea.scrollHeight)}px`;
-  }, [activeId, draft]);
-
-  useEffect(() => {
     if (!formatCommand || handledFormatCommand.current === formatCommand.id) return;
     handledFormatCommand.current = formatCommand.id;
+    pendingRange.current = {
+      blockId: formatCommand.selection.blockId,
+      start: formatCommand.selection.start,
+      end: formatCommand.selection.end,
+      text: formatCommand.selection.text
+    };
     setDraft((value) =>
       value.map((block) =>
         block.id === formatCommand.selection.blockId
@@ -150,10 +221,18 @@ export function BlockEditor({
     );
   }, [formatCommand]);
 
-  const activeIndex = useMemo(
-    () => draft.findIndex((block) => block.id === activeId),
-    [activeId, draft]
-  );
+  useLayoutEffect(() => {
+    const nextRange = pendingRange.current;
+    const root = editorRef.current;
+    if (!nextRange || !root) return;
+    pendingRange.current = null;
+    restoreEditorRange(
+      root,
+      nextRange.blockId,
+      nextRange.start,
+      nextRange.end
+    );
+  }, [draft]);
 
   const updateText = (id: string, text: string) => {
     setDraft((value) =>
@@ -163,178 +242,77 @@ export function BlockEditor({
     );
   };
 
+  const syncSelection = () => {
+    const root = editorRef.current;
+    if (!root) return;
+    const range = readEditorRange(root);
+    if (!range || range.start === range.end || !range.text.trim()) {
+      onSelection(null);
+      return;
+    }
+    onSelection(range);
+  };
+
+  const handleInput = (event: FormEvent<HTMLDivElement>) => {
+    if (isComposing) return;
+    const root = event.currentTarget;
+    const block = findBlockElement(event.target as Node, root);
+    const blockId = block?.dataset.blockId;
+    if (!block || !blockId) return;
+    const range = readEditorRange(root);
+    if (range) pendingRange.current = range;
+    updateText(blockId, block.textContent ?? "");
+  };
+
   const commitNow = () => {
     window.clearTimeout(timer.current);
     onChange(draft);
     onSaveState("已保存");
   };
 
-  const splitBlock = (index: number, cursor: number) => {
-    const current = draft[index];
-    const id = `${articleId}-b-${Date.now()}`;
-    const [before, after] = splitBlockMarks(current, cursor);
-    const next: ContentBlock = {
-      ...after,
-      id,
-      kind: current.kind.startsWith("h") ? "paragraph" : current.kind,
-    };
-    setDraft([...draft.slice(0, index), before, next, ...draft.slice(index + 1)]);
-    setActiveId(id);
-    window.setTimeout(() => textareas.current[id]?.focus(), 0);
-  };
-
-  const mergeBackward = (index: number) => {
-    if (index <= 0) return;
-    const previous = draft[index - 1];
-    const current = draft[index];
-    const cursor = previous.text.length;
-    setDraft([
-      ...draft.slice(0, index - 1),
-      mergeBlockMarks(previous, current),
-      ...draft.slice(index + 1)
-    ]);
-    setActiveId(previous.id);
-    window.setTimeout(() => {
-      const textarea = textareas.current[previous.id];
-      textarea?.focus();
-      textarea?.setSelectionRange(cursor, cursor);
-    }, 0);
-  };
-
-  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>, index: number) => {
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if ((event.ctrlKey || event.metaKey) && event.key.toLocaleLowerCase() === "s") {
       event.preventDefault();
       commitNow();
-      return;
-    }
-    if (event.key === "Enter" && !event.shiftKey && !isComposing) {
-      event.preventDefault();
-      splitBlock(index, event.currentTarget.selectionStart);
-      return;
-    }
-    if (
-      event.key === "Backspace" &&
-      event.currentTarget.selectionStart === 0 &&
-      event.currentTarget.selectionEnd === 0
-    ) {
-      event.preventDefault();
-      mergeBackward(index);
     }
   };
 
-  const selectFromReading = (event: MouseEvent<HTMLElement>, blockId: string) => {
-    const selection = window.getSelection();
-    if (!selection || !selection.rangeCount) {
-      onSelection(null);
-      setActiveId(blockId);
-      return;
-    }
-
-    const range = selection.getRangeAt(0);
-    const selectionInsideBlock =
-      event.currentTarget.contains(range.startContainer) &&
-      event.currentTarget.contains(range.endContainer);
-    if (!selectionInsideBlock || range.collapsed || !range.toString().trim()) {
-      onSelection(null);
-      setActiveId(blockId);
-      return;
-    }
-
-    const prefix = range.cloneRange();
-    prefix.selectNodeContents(event.currentTarget);
-    prefix.setEnd(range.startContainer, range.startOffset);
-    const start = prefix.toString().length;
-    const end = start + range.toString().length;
-    const rect = range.getBoundingClientRect();
-    onSelection({
-      text: range.toString(),
-      blockId,
-      start,
-      end,
-      rect: { left: rect.left, top: rect.top, width: rect.width }
-    });
-  };
-
-  const selectFromTextarea = (element: HTMLTextAreaElement, blockId: string) => {
-    const start = element.selectionStart;
-    const end = element.selectionEnd;
-    const text = element.value.slice(start, end);
-    if (!text.trim()) {
-      onSelection(null);
-      return;
-    }
-    const rect = element.getBoundingClientRect();
-    onSelection({
-      text,
-      blockId,
-      start,
-      end,
-      rect: { left: rect.left + Math.min(rect.width * 0.45, 260), top: rect.top, width: 0 }
-    });
-  };
-
-  const handleCompositionEnd = (event: CompositionEvent<HTMLTextAreaElement>) => {
+  const handleCompositionEnd = (event: CompositionEvent<HTMLDivElement>) => {
     setIsComposing(false);
-    updateText(activeId ?? "", event.currentTarget.value);
+    const root = event.currentTarget;
+    const block = findBlockElement(event.target as Node, root);
+    const blockId = block?.dataset.blockId;
+    if (block && blockId) updateText(blockId, block.textContent ?? "");
   };
 
   return (
-    <div className="block-editor" data-testid="block-editor">
-      {draft.map((block, index) => {
-        const active = block.id === activeId;
-        const Element = block.kind === "quote" ? "blockquote" : block.kind.startsWith("h") ? "h2" : "p";
-        return (
-          <div className={`content-block${active ? " is-active" : ""}`} key={block.id}>
-            {active ? (
-              <div className="block-edit-shell">
-                <textarea
-                  ref={(element) => {
-                    textareas.current[block.id] = element;
-                  }}
-                  className={focusedId === block.id ? "is-focus-visible" : undefined}
-                  value={block.text}
-                  aria-label={`编辑${block.kind === "paragraph" ? "正文" : "标题"}块`}
-                  onChange={(event) => updateText(block.id, event.target.value)}
-                  onKeyDown={(event) => handleKeyDown(event, index)}
-                  onSelect={(event) => selectFromTextarea(event.currentTarget, block.id)}
-                  onFocus={() => setFocusedId(block.id)}
-                  onBlur={() =>
-                    setFocusedId((value) => value === block.id ? null : value)
-                  }
-                  onCompositionStart={() => setIsComposing(true)}
-                  onCompositionEnd={handleCompositionEnd}
-                  autoFocus
-                />
-              </div>
-            ) : (
-              <Element
-                className={`reading-block is-${block.kind}`}
-                onMouseUp={(event) => selectFromReading(event, block.id)}
-                tabIndex={0}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") setActiveId(block.id);
-                }}
-                aria-label="点击或按 Enter 编辑此块"
-              >
-                {renderInlineText(block)}
-              </Element>
-            )}
-          </div>
-        );
-      })}
-      {activeIndex < 0 && (
-        <button
-          className="add-block-button"
-          type="button"
-          onClick={() => {
-            const id = `${articleId}-b-${Date.now()}`;
-            setDraft((value) => [...value, { id, kind: "paragraph", text: "" }]);
-            setActiveId(id);
-          }}
+    <div
+      ref={editorRef}
+      className="block-editor document-editor"
+      data-testid="block-editor"
+      contentEditable
+      suppressContentEditableWarning
+      role="textbox"
+      aria-label="编辑文章正文"
+      aria-multiline="true"
+      onInput={handleInput}
+      onMouseUp={syncSelection}
+      onKeyUp={syncSelection}
+      onKeyDown={handleKeyDown}
+      onCompositionStart={() => setIsComposing(true)}
+      onCompositionEnd={handleCompositionEnd}
+    >
+      {draft.map((block) => (
+        <div
+          className="document-block"
+          data-block-id={block.id}
+          data-block-kind={block.kind}
+          data-placeholder={block.text ? undefined : "输入正文"}
+          key={block.id}
         >
-          在文末添加段落
-        </button>
-      )}
+          {renderInlineText(block)}
+        </div>
+      ))}
     </div>
   );
 }
