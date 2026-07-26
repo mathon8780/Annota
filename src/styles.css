@@ -1694,46 +1694,21 @@ blockquote.reading-block {
   overflow: hidden;
   color: var(--color-ink);
   background: var(--color-paper-solid);
-  border: var(--rule-thin) solid var(--color-accent);
+  border: var(--rule-thin) solid var(--color-rule);
   border-radius: var(--radius-sm);
   outline: var(--rule-focus) solid transparent;
   outline-offset: 1px;
   font-family: var(--font-reading);
   font-size: var(--text-base);
   line-height: 1.85;
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    outline-color var(--dur-fast) var(--ease-out);
 }
 
-.block-edit-shell textarea:focus-visible {
+.block-edit-shell textarea.is-focus-visible {
+  border-color: var(--color-accent);
   outline-color: var(--color-focus);
-}
-
-.block-tools {
-  min-height: 34px;
-  padding: 3px;
-  position: absolute;
-  top: -28px;
-  right: var(--space-2);
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  background: var(--color-ink);
-  border-radius: var(--radius-sm);
-  box-shadow: 0 8px 20px var(--color-shadow);
-}
-
-.block-tools button {
-  min-height: 28px;
-  padding: 0 var(--space-2);
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  color: var(--color-accent-ink);
-  background: transparent;
-  border-radius: 4px;
-  font-family: var(--font-body);
-  font-size: 10px;
-  cursor: pointer;
 }
 
 .add-block-button {
@@ -2425,14 +2400,12 @@ blockquote.reading-block {
   .generation-button:hover:not(:disabled),
   .inline-formatting-toolbar button:hover:not(:disabled),
   .topology-actions button:hover,
-  .selection-toolbar button:hover,
-  .block-tools button:hover {
+  .selection-toolbar button:hover {
     color: var(--color-ink);
     background: var(--color-paper-hover);
   }
 
-  .selection-toolbar button:hover,
-  .block-tools button:hover {
+  .selection-toolbar button:hover {
     color: var(--color-accent-ink);
     background: var(--color-ink-soft);
   }

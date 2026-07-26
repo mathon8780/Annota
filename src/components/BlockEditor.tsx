@@ -9,7 +9,6 @@ import {
   type KeyboardEvent,
   type MouseEvent
 } from "react";
-import { Check, Highlighter, Pilcrow } from "lucide-react";
 import type {
   ContentBlock,
   InlineFormatCommand,
@@ -95,6 +94,7 @@ export function BlockEditor({
 }: BlockEditorProps) {
   const [draft, setDraft] = useState(blocks);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [focusedId, setFocusedId] = useState<string | null>(null);
   const [isComposing, setIsComposing] = useState(false);
   const timer = useRef<number>();
   const textareas = useRef<Record<string, HTMLTextAreaElement | null>>({});
@@ -103,6 +103,7 @@ export function BlockEditor({
   useEffect(() => {
     setDraft(blocks);
     setActiveId(null);
+    setFocusedId(null);
   }, [articleId, blocks]);
 
   useEffect(() => {
@@ -267,17 +268,6 @@ export function BlockEditor({
     });
   };
 
-  const cycleKind = (id: string) => {
-    const order: ContentBlock["kind"][] = ["paragraph", "h2", "h3", "quote"];
-    setDraft((value) =>
-      value.map((block) => {
-        if (block.id !== id) return block;
-        const index = order.indexOf(block.kind);
-        return { ...block, kind: order[(index + 1) % order.length] };
-      })
-    );
-  };
-
   const handleCompositionEnd = (event: CompositionEvent<HTMLTextAreaElement>) => {
     setIsComposing(false);
     updateText(activeId ?? "", event.currentTarget.value);
@@ -292,40 +282,20 @@ export function BlockEditor({
           <div className={`content-block${active ? " is-active" : ""}`} key={block.id}>
             {active ? (
               <div className="block-edit-shell">
-                <div className="block-tools" aria-label="当前块工具">
-                  <button type="button" onClick={() => cycleKind(block.id)} title="切换块类型">
-                    <Pilcrow aria-hidden="true" size={14} />
-                    {block.kind === "paragraph" ? "正文" : block.kind.toUpperCase()}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onSaveState("重点样式已记录（演示）")}
-                    title="设置重点"
-                  >
-                    <Highlighter aria-hidden="true" size={14} />
-                    重点
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      commitNow();
-                      setActiveId(null);
-                    }}
-                    title="完成编辑"
-                  >
-                    <Check aria-hidden="true" size={14} />
-                    完成
-                  </button>
-                </div>
                 <textarea
                   ref={(element) => {
                     textareas.current[block.id] = element;
                   }}
+                  className={focusedId === block.id ? "is-focus-visible" : undefined}
                   value={block.text}
                   aria-label={`编辑${block.kind === "paragraph" ? "正文" : "标题"}块`}
                   onChange={(event) => updateText(block.id, event.target.value)}
                   onKeyDown={(event) => handleKeyDown(event, index)}
                   onSelect={(event) => selectFromTextarea(event.currentTarget, block.id)}
+                  onFocus={() => setFocusedId(block.id)}
+                  onBlur={() =>
+                    setFocusedId((value) => value === block.id ? null : value)
+                  }
                   onCompositionStart={() => setIsComposing(true)}
                   onCompositionEnd={handleCompositionEnd}
                   autoFocus

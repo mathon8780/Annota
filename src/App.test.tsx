@@ -192,6 +192,32 @@ describe("Annota core flow", () => {
     expect(screen.getByText("正在解释选区")).toBeInTheDocument();
   });
 
+  it("shows the paragraph frame only while its textarea owns focus", async () => {
+    const user = userEvent.setup();
+    const { container } = renderApp();
+    const article = await openFirstNotebook(user);
+    const paragraph = article.blocks.find((block) => block.kind === "paragraph")!;
+
+    await user.click(screen.getByText(paragraph.text));
+    const editor = screen.getByLabelText("编辑正文块") as HTMLTextAreaElement;
+
+    await waitFor(() => expect(editor).toHaveFocus());
+    expect(editor).toHaveClass("is-focus-visible");
+    expect(container.querySelector(".block-tools")).not.toBeInTheDocument();
+
+    editor.setSelectionRange(0, 4);
+    fireEvent.select(editor);
+    await user.click(screen.getByRole("button", { name: "文字颜色" }));
+
+    expect(editor).not.toHaveFocus();
+    expect(editor).not.toHaveClass("is-focus-visible");
+    expect(screen.getByLabelText("编辑正文块")).toBeInTheDocument();
+
+    await user.click(editor);
+    expect(editor).toHaveFocus();
+    expect(editor).toHaveClass("is-focus-visible");
+  });
+
   it("applies bold formatting to a selection and restores it after reopening the reader", async () => {
     const user = userEvent.setup();
     renderApp();
