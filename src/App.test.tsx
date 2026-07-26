@@ -266,4 +266,21 @@ describe("Annota core flow", () => {
     expect(coloredText).toHaveStyle({ color: "#2563eb" });
     expect(paragraph.text).not.toContain("<span");
   });
+
+  it("opens an empty settings workspace from the bottom of the home sidebar", async () => {
+    const user = userEvent.setup();
+    const { container } = renderApp();
+
+    const settingsButton = screen.getByRole("button", { name: "打开设置" });
+    expect(settingsButton.closest(".home-sidebar-footer")).not.toBeNull();
+    await user.click(settingsButton);
+
+    expect(screen.getByRole("heading", { name: "设置" })).toBeInTheDocument();
+    const settingsCanvas = screen.getByRole("main", { name: "设置内容" });
+    expect(settingsCanvas).toBeEmptyDOMElement();
+    expect(container.querySelector(".home-app")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "返回主页" }));
+    expect(screen.getByRole("heading", { name: "最近笔记" })).toBeInTheDocument();
+  });
 });

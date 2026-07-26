@@ -21,6 +21,7 @@ import type { Notebook } from "../types";
 
 interface HomePageProps {
   onOpenSearch: () => void;
+  onOpenSettings: () => void;
 }
 
 function countDescendants(rootId: string, articles: ReturnType<typeof useAppStore>["data"]["articles"]) {
@@ -49,7 +50,7 @@ function formatDate(value: string) {
   return date.toLocaleDateString("zh-CN", { month: "short", day: "numeric" });
 }
 
-export function HomePage({ onOpenSearch }: HomePageProps) {
+export function HomePage({ onOpenSearch, onOpenSettings }: HomePageProps) {
   const { data, openNotebook, createNotebook, importPackage, resetDemo } = useAppStore();
   const [sortBy, setSortBy] = useState<"time" | "connections">("time");
   const [filter, setFilter] = useState("");
@@ -149,6 +150,10 @@ export function HomePage({ onOpenSearch }: HomePageProps) {
               <Clock3 aria-hidden="true" size={16} />
               重置演示数据
             </button>
+            <button type="button" aria-label="打开设置" onClick={onOpenSettings}>
+              <Settings2 aria-hidden="true" size={16} />
+              设置
+            </button>
           </div>
         </aside>
 
@@ -164,15 +169,6 @@ export function HomePage({ onOpenSearch }: HomePageProps) {
                 <span aria-hidden="true"></span>
                 本地工作区
               </span>
-              <button
-                className="icon-button"
-                type="button"
-                title="设置将在后续阶段接入"
-                onClick={() => setNotice("设置入口已预留；本轮聚焦主页与阅读器任务流。")}
-              >
-                <Settings2 aria-hidden="true" size={18} />
-                <span className="sr-only">打开设置</span>
-              </button>
             </div>
           </header>
 

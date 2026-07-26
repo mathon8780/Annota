@@ -321,7 +321,8 @@ textarea:focus-visible,
 }
 
 .home-app,
-.reader-app {
+.reader-app,
+.settings-app {
   width: 100%;
   min-width: 0;
   height: 100%;
@@ -330,6 +331,62 @@ textarea:focus-visible,
     linear-gradient(var(--color-paper), var(--color-paper)),
     radial-gradient(circle, var(--color-rule) 1px, transparent 1px);
   background-size: auto, 24px 24px;
+}
+
+.settings-app {
+  display: grid;
+  grid-template-rows: 66px minmax(0, 1fr);
+  background: var(--color-paper-solid);
+}
+
+.settings-topbar {
+  min-width: 0;
+  padding: 0 clamp(var(--space-5), 3vw, var(--space-10));
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  border-bottom: var(--rule-thin) solid var(--color-rule);
+  background: var(--color-paper-solid);
+}
+
+.settings-back-button {
+  min-height: 38px;
+  padding: 0 var(--space-3);
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: var(--space-2);
+  color: var(--color-muted);
+  background: transparent;
+  border: var(--rule-thin) solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out);
+}
+
+.settings-heading {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-ink);
+}
+
+.settings-heading h1 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-base);
+  font-style: normal;
+  font-weight: 680;
+  letter-spacing: -0.02em;
+}
+
+.settings-canvas {
+  min-width: 0;
+  min-height: 0;
+  background: var(--color-paper-solid);
 }
 
 .home-topbar,
@@ -2295,6 +2352,7 @@ blockquote.reading-block {
   .icon-button:hover,
   .dimension-list button:hover,
   .home-sidebar-footer button:hover,
+  .settings-back-button:hover,
   .sort-button:hover,
   .generation-button:hover:not(:disabled),
   .inline-formatting-toolbar button:hover:not(:disabled),
@@ -2467,7 +2525,8 @@ blockquote.reading-block {
   }
 
   .home-app,
-  .reader-app {
+  .reader-app,
+  .settings-app {
     height: auto;
     min-height: inherit;
     overflow: visible;

@@ -2,12 +2,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { BookOpenText, CornerDownLeft, Search, X } from "lucide-react";
 import { HomePage } from "./components/HomePage";
 import { ReaderPage } from "./components/ReaderPage";
+import { SettingsPage } from "./components/SettingsPage";
 import { WindowTitleBar } from "./components/WindowTitleBar";
 import { useAppStore } from "./store/AppStore";
 
 export default function App() {
   const { data, currentArticle, openNotebook } = useAppStore();
   const [commandOpen, setCommandOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [query, setQuery] = useState("");
   const commandRef = useRef<HTMLDialogElement>(null);
 
@@ -50,16 +52,26 @@ export default function App() {
     const notebook = data.notebooks.find((item) => item.rootId === rootId);
     if (!notebook) return;
     openNotebook(notebook.id, articleId);
+    setSettingsOpen(false);
     setCommandOpen(false);
     setQuery("");
   };
 
   return (
     <div className="desktop-shell">
-      <WindowTitleBar pageTitle={currentArticle?.title} />
+      <WindowTitleBar pageTitle={settingsOpen ? "设置" : currentArticle?.title} />
       <div className="desktop-content">
         <div className="route-stage">
-          {currentArticle ? <ReaderPage /> : <HomePage onOpenSearch={() => setCommandOpen(true)} />}
+          {settingsOpen ? (
+            <SettingsPage onBack={() => setSettingsOpen(false)} />
+          ) : currentArticle ? (
+            <ReaderPage />
+          ) : (
+            <HomePage
+              onOpenSearch={() => setCommandOpen(true)}
+              onOpenSettings={() => setSettingsOpen(true)}
+            />
+          )}
         </div>
       </div>
 
