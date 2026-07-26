@@ -115,6 +115,12 @@ describe("Annota core flow", () => {
 
     expect(separator).toHaveAttribute("aria-valuenow", "326");
     expect(window.localStorage.getItem("annota:reading-path-width")).toBe("326");
+
+    await user.click(screen.getByRole("button", { name: "返回主页" }));
+    await openFirstNotebook(user);
+
+    expect(screen.getByRole("separator", { name: "调整阅读路径宽度" }))
+      .toHaveAttribute("aria-valuenow", "326");
   });
 
   it("resizes the topology from its border and focuses without changing zoom", async () => {
