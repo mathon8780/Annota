@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ClipboardEvent,
   type CompositionEvent,
   type FormEvent,
   type KeyboardEvent
@@ -16,6 +17,8 @@ import type {
   SelectionState
 } from "../types";
 import {
+  mergeBlockMarks,
+  splitBlockMarks,
   toggleInlineMark,
   transformMarksForTextChange
 } from "../utils/inlineMarks";
@@ -156,6 +159,18 @@ function restoreEditorRange(
   root.focus({ preventScroll: true });
 }
 
+function replaceBlockRange(
+  block: ContentBlock,
+  start: number,
+  end: number,
+  text: string
+) {
+  return transformMarksForTextChange(
+    block,
+    `${block.text.slice(0, start)}${text}${block.text.slice(end)}`
+  );
+}
+
 export function BlockEditor({
   articleId,
   blocks,
@@ -171,6 +186,7 @@ export function BlockEditor({
   const editorRef = useRef<HTMLDivElement>(null);
   const handledFormatCommand = useRef(0);
   const pendingRange = useRef<EditorRange | null>(null);
+  const blockSequence = useRef(0);
 
   useEffect(() => {
     setDraft(blocks);
@@ -270,11 +286,161 @@ export function BlockEditor({
     onSaveState("已保存");
   };
 
+  const createBlockId = () => {
+    blockSequence.current += 1;
+    return `${articleId}-block-${Date.now()}-${blockSequence.current}`;
+  };
+
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if ((event.ctrlKey || event.metaKey) && event.key.toLocaleLowerCase() === "s") {
       event.preventDefault();
       commitNow();
+      return;
     }
+
+    if (isComposing || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) {
+      return;
+    }
+
+    const range = readEditorRange(event.currentTarget);
+    if (!range) return;
+
+    if (event.key === "Enter") {
+      event.preventDefault();
+      const nextBlockId = createBlockId();
+      setDraft((value) => {
+        const blockIndex = value.findIndex((block) => block.id === range.blockId);
+        if (blockIndex < 0) return value;
+        const block = replaceBlockRange(
+          value[blockIndex],
+          range.start,
+          range.end,
+          ""
+        );
+        const [left, right] = splitBlockMarks(block, range.start);
+        const nextBlock: ContentBlock = {
+          ...right,
+          id: nextBlockId,
+          kind: "paragraph"
+        };
+        pendingRange.current = {
+          blockId: nextBlockId,
+          start: 0,
+          end: 0,
+          text: ""
+        };
+        return [
+          ...value.slice(0, blockIndex),
+          left,
+          nextBlock,
+          ...value.slice(blockIndex + 1)
+        ];
+      });
+      onSelection(null);
+      return;
+    }
+
+    if (event.key === "Backspace" && range.start === 0 && range.end === 0) {
+      const blockIndex = draft.findIndex((block) => block.id === range.blockId);
+      if (blockIndex <= 0) return;
+      event.preventDefault();
+      setDraft((value) => {
+        const currentIndex = value.findIndex((block) => block.id === range.blockId);
+        if (currentIndex <= 0) return value;
+        const previous = value[currentIndex - 1];
+        const caretOffset = previous.text.length;
+        const merged = mergeBlockMarks(previous, value[currentIndex]);
+        pendingRange.current = {
+          blockId: previous.id,
+          start: caretOffset,
+          end: caretOffset,
+          text: ""
+        };
+        return [
+          ...value.slice(0, currentIndex - 1),
+          merged,
+          ...value.slice(currentIndex + 1)
+        ];
+      });
+      onSelection(null);
+    }
+  };
+
+  const handlePaste = (event: ClipboardEvent<HTMLDivElement>) => {
+    const range = readEditorRange(event.currentTarget);
+    if (!range) return;
+    const pastedText = event.clipboardData
+      .getData("text/plain")
+      .replace(/\r\n?/g, "\n");
+    const pastedBlockIds = Array.from(
+      { length: pastedText.split("\n").length - 1 },
+      () => createBlockId()
+    );
+    event.preventDefault();
+
+    setDraft((value) => {
+      const blockIndex = value.findIndex((block) => block.id === range.blockId);
+      if (blockIndex < 0) return value;
+      const block = replaceBlockRange(
+        value[blockIndex],
+        range.start,
+        range.end,
+        pastedText
+      );
+
+      if (!pastedText.includes("\n")) {
+        const caretOffset = range.start + pastedText.length;
+        pendingRange.current = {
+          blockId: block.id,
+          start: caretOffset,
+          end: caretOffset,
+          text: ""
+        };
+        return [
+          ...value.slice(0, blockIndex),
+          block,
+          ...value.slice(blockIndex + 1)
+        ];
+      }
+
+      const splitBlocks: ContentBlock[] = [];
+      let remainder = block;
+      let newlineOffset = remainder.text.indexOf("\n");
+      while (newlineOffset >= 0) {
+        const [left, rightWithNewline] = splitBlockMarks(remainder, newlineOffset);
+        splitBlocks.push(left);
+        remainder = transformMarksForTextChange(
+          rightWithNewline,
+          rightWithNewline.text.slice(1)
+        );
+        newlineOffset = remainder.text.indexOf("\n");
+      }
+      splitBlocks.push(remainder);
+
+      const nextBlocks = splitBlocks.map((part, index) =>
+        index === 0
+          ? part
+          : {
+              ...part,
+              id: pastedBlockIds[index - 1],
+              kind: "paragraph" as const
+            }
+      );
+      const finalBlock = nextBlocks[nextBlocks.length - 1];
+      const finalLineLength = pastedText.slice(pastedText.lastIndexOf("\n") + 1).length;
+      pendingRange.current = {
+        blockId: finalBlock.id,
+        start: finalLineLength,
+        end: finalLineLength,
+        text: ""
+      };
+      return [
+        ...value.slice(0, blockIndex),
+        ...nextBlocks,
+        ...value.slice(blockIndex + 1)
+      ];
+    });
+    onSelection(null);
   };
 
   const handleCompositionEnd = (event: CompositionEvent<HTMLDivElement>) => {
@@ -299,6 +465,7 @@ export function BlockEditor({
       onMouseUp={syncSelection}
       onKeyUp={syncSelection}
       onKeyDown={handleKeyDown}
+      onPaste={handlePaste}
       onCompositionStart={() => setIsComposing(true)}
       onCompositionEnd={handleCompositionEnd}
     >

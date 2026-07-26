@@ -257,6 +257,106 @@ describe("Annota core flow", () => {
     });
   });
 
+  it("creates a paragraph block when Enter is pressed", async () => {
+    const user = userEvent.setup();
+    const { container } = renderApp();
+    const article = await openFirstNotebook(user);
+    const paragraph = article.blocks.find((block) => block.kind === "paragraph")!;
+    const splitAt = 6;
+    const editor = screen.getByRole("textbox", { name: "编辑文章正文" });
+    const block = container.querySelector(`[data-block-id="${paragraph.id}"]`)!;
+
+    setDocumentSelection(block, splitAt, splitAt);
+    fireEvent.keyDown(editor, { key: "Enter" });
+
+    await waitFor(() => {
+      const documentBlocks = Array.from(
+        container.querySelectorAll<HTMLElement>(".document-block")
+      );
+      const blockIndex = documentBlocks.findIndex(
+        (candidate) => candidate.dataset.blockId === paragraph.id
+      );
+      expect(documentBlocks).toHaveLength(article.blocks.length + 1);
+      expect(documentBlocks[blockIndex].textContent).toBe(
+        paragraph.text.slice(0, splitAt)
+      );
+      expect(documentBlocks[blockIndex + 1].textContent).toBe(
+        paragraph.text.slice(splitAt)
+      );
+      expect(documentBlocks[blockIndex + 1]).toHaveAttribute(
+        "data-block-kind",
+        "paragraph"
+      );
+    });
+  });
+
+  it("merges with the previous block on Backspace at block start", async () => {
+    const user = userEvent.setup();
+    const { container } = renderApp();
+    const article = await openFirstNotebook(user);
+    const previous = article.blocks[0];
+    const current = article.blocks[1];
+    const editor = screen.getByRole("textbox", { name: "编辑文章正文" });
+    const currentBlock = container.querySelector(
+      `[data-block-id="${current.id}"]`
+    )!;
+
+    setDocumentSelection(currentBlock, 0, 0);
+    fireEvent.keyDown(editor, { key: "Backspace" });
+
+    await waitFor(() => {
+      expect(container.querySelectorAll(".document-block")).toHaveLength(
+        article.blocks.length - 1
+      );
+      expect(
+        container.querySelector(`[data-block-id="${previous.id}"]`)?.textContent
+      ).toBe(`${previous.text}${current.text}`);
+      expect(
+        container.querySelector(`[data-block-id="${current.id}"]`)
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  it("creates paragraph blocks from multiline plain-text paste", async () => {
+    const user = userEvent.setup();
+    const { container } = renderApp();
+    const article = await openFirstNotebook(user);
+    const paragraph = article.blocks.find((block) => block.kind === "paragraph")!;
+    const pasteAt = 4;
+    const editor = screen.getByRole("textbox", { name: "编辑文章正文" });
+    const block = container.querySelector(`[data-block-id="${paragraph.id}"]`)!;
+
+    setDocumentSelection(block, pasteAt, pasteAt);
+    fireEvent.paste(editor, {
+      clipboardData: { getData: () => "第一行\n第二行\n第三行" }
+    });
+
+    await waitFor(() => {
+      const documentBlocks = Array.from(
+        container.querySelectorAll<HTMLElement>(".document-block")
+      );
+      const blockIndex = documentBlocks.findIndex(
+        (candidate) => candidate.dataset.blockId === paragraph.id
+      );
+      expect(documentBlocks).toHaveLength(article.blocks.length + 2);
+      expect(
+        documentBlocks.slice(blockIndex, blockIndex + 3).map((item) => item.textContent)
+      ).toEqual([
+        `${paragraph.text.slice(0, pasteAt)}第一行`,
+        "第二行",
+        `第三行${paragraph.text.slice(pasteAt)}`
+      ]);
+      expect(documentBlocks[blockIndex + 1]).toHaveAttribute(
+        "data-block-kind",
+        "paragraph"
+      );
+      expect(documentBlocks[blockIndex + 2]).toHaveAttribute(
+        "data-block-kind",
+        "paragraph"
+      );
+    });
+  });
+
   it("dismisses transient reader interactions from whitespace without blocking controls", async () => {
     const user = userEvent.setup();
     const { container } = renderApp();
