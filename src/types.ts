@@ -2,11 +2,27 @@ export type BlockKind = "paragraph" | "h1" | "h2" | "h3" | "quote";
 export type GenerationType = "explain" | "translate";
 export type JobStatus = "queued" | "generating" | "failed";
 export type ViewName = "home" | "reader";
+export type InlineMarkType =
+  | "bold"
+  | "italic"
+  | "strikethrough"
+  | "underline"
+  | "textColor"
+  | "backgroundColor";
+
+export interface InlineMark {
+  id: string;
+  type: InlineMarkType;
+  start: number;
+  end: number;
+  color?: string;
+}
 
 export interface ContentBlock {
   id: string;
   kind: BlockKind;
   text: string;
+  marks?: InlineMark[];
 }
 
 export interface ArticleNode {
