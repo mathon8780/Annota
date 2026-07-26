@@ -213,6 +213,24 @@ describe("Annota core flow", () => {
     expect(editor).not.toHaveClass("is-focus-visible");
     expect(screen.getByLabelText("编辑正文块")).toBeInTheDocument();
 
+    await user.click(screen.getByRole("button", { name: "文字颜色：黄色" }));
+    await waitFor(() => {
+      const stored = JSON.parse(
+        window.localStorage.getItem("annota.desktop.demo.v1") ?? "{}"
+      );
+      expect(stored.articles[article.id].blocks.find(
+        (block: { id: string }) => block.id === paragraph.id
+      ).marks).toEqual([
+        expect.objectContaining({
+          type: "textColor",
+          color: "#ca8a04",
+          start: 0,
+          end: 4
+        })
+      ]);
+    });
+    expect(screen.getByLabelText("编辑正文块")).toBeInTheDocument();
+
     await user.click(editor);
     expect(editor).toHaveFocus();
     expect(editor).toHaveClass("is-focus-visible");
@@ -284,6 +302,9 @@ describe("Annota core flow", () => {
       ]);
     });
 
+    await user.click(screen.getByRole("button", { name: "返回主页" }));
+    await openFirstNotebook(user);
+
     const coloredText = document.querySelector(".inline-mark-text-color");
     expect(coloredText).not.toBeNull();
     expect(coloredText).toHaveTextContent(selectedText.trim());
@@ -354,6 +375,9 @@ describe("Annota core flow", () => {
         })
       ]);
     });
+
+    await user.click(screen.getByRole("button", { name: "返回主页" }));
+    await openFirstNotebook(user);
 
     expect(document.querySelector(".inline-mark-background-color"))
       .toHaveStyle({ backgroundColor: "#bfdbfe" });

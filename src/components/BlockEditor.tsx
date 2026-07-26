@@ -102,9 +102,12 @@ export function BlockEditor({
 
   useEffect(() => {
     setDraft(blocks);
+  }, [blocks]);
+
+  useEffect(() => {
     setActiveId(null);
     setFocusedId(null);
-  }, [articleId, blocks]);
+  }, [articleId]);
 
   useEffect(() => {
     if (isComposing) return;
