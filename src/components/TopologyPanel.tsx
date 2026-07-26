@@ -292,13 +292,13 @@ export function TopologyPanel({
       ref={panelRef}
       className={`topology-panel${pinned ? " is-pinned" : ""}${fullScreen ? " is-fullscreen" : ""}${resizing ? " is-resizing" : ""}`}
       aria-label="当前知识树拓扑"
-      style={
-        {
-          "--topology-width": `${size.width}px`,
-          "--topology-height": `${size.height}px`
-        } as CSSProperties
-      }
     >
+      {!fullScreen && (
+        <div className="topology-collapsed" aria-hidden="true">
+          <Network size={20} />
+        </div>
+      )}
+      <div className="topology-content">
       {!fullScreen && (
         <>
           <div
@@ -342,11 +342,6 @@ export function TopologyPanel({
             onPointerCancel={stopResize}
           />
         </>
-      )}
-      {!fullScreen && (
-        <div className="topology-collapsed" aria-hidden="true">
-          <Network size={20} />
-        </div>
       )}
       <header className="topology-header">
         <div>
@@ -460,8 +455,21 @@ export function TopologyPanel({
         <kbd>F</kbd>
         <span>聚焦</span>
       </footer>
+      </div>
     </aside>
   );
 
-  return panel;
+  return (
+    <div
+      className={`topology-shell${fullScreen ? " is-fullscreen" : ""}`}
+      style={
+        {
+          "--topology-width": `${size.width}px`,
+          "--topology-height": `${size.height}px`
+        } as CSSProperties
+      }
+    >
+      {panel}
+    </div>
+  );
 }

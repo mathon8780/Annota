@@ -153,6 +153,46 @@ describe("Annota core flow", () => {
       .toHaveAttribute("aria-valuenow", "326");
   });
 
+  it("separates the topology icon from the content that reveals on hover", async () => {
+    const user = userEvent.setup();
+    renderApp();
+    await user.click(screen.getByRole("button", { name: /打开笔记：ECS 架构/ }));
+
+    const panel = screen.getByRole("complementary", { name: "当前知识树拓扑" });
+    expect(panel.querySelector(":scope > .topology-collapsed")).toBeInTheDocument();
+    expect(panel.querySelector(":scope > .topology-content")).toBeInTheDocument();
+    expect(
+      panel.querySelector(".topology-content > .topology-viewport")
+    ).toBeInTheDocument();
+  });
+
+  it("does not mutate React state when the pointer skims the topology trigger edge", async () => {
+    const user = userEvent.setup();
+    renderApp();
+    await user.click(screen.getByRole("button", { name: /打开笔记：ECS 架构/ }));
+
+    const panel = screen.getByRole("complementary", { name: "当前知识树拓扑" });
+    const shell = panel.parentElement;
+
+    expect(shell).toHaveClass("topology-shell");
+    fireEvent.pointerEnter(panel);
+    expect(shell).not.toHaveClass("is-hovered");
+    fireEvent.pointerLeave(panel);
+    expect(shell).not.toHaveClass("is-hovered");
+  });
+
+  it("elevates the topology shell in fullscreen", async () => {
+    const user = userEvent.setup();
+    renderApp();
+    await user.click(screen.getByRole("button", { name: /打开笔记：ECS 架构/ }));
+
+    const panel = screen.getByRole("complementary", { name: "当前知识树拓扑" });
+    const shell = panel.parentElement;
+
+    await user.click(screen.getByRole("button", { name: "全屏查看拓扑" }));
+    expect(shell).toHaveClass("is-fullscreen");
+  });
+
   it("resizes the topology from its border and focuses without changing zoom", async () => {
     const user = userEvent.setup();
     const { container } = renderApp();

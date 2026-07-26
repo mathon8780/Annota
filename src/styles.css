@@ -1931,12 +1931,26 @@ kbd {
 
 /* Topology */
 
-.topology-panel {
-  width: 50px;
-  height: 50px;
+.topology-shell {
+  width: min(var(--topology-width, 420px), calc(100vw - 32px));
+  height: min(var(--topology-height, 322px), calc(100vh - 128px));
   position: fixed;
   right: var(--space-6);
   bottom: var(--space-8);
+  z-index: 90;
+  pointer-events: none;
+}
+
+.topology-shell.is-fullscreen {
+  z-index: 140;
+}
+
+.topology-panel {
+  width: 50px;
+  height: 50px;
+  position: absolute;
+  right: 0;
+  bottom: 0;
   z-index: 90;
   overflow: hidden;
   color: var(--color-ink);
@@ -1944,20 +1958,28 @@ kbd {
   border: var(--rule-thin) solid var(--color-accent);
   border-radius: var(--radius-pill);
   box-shadow: 0 16px 40px var(--color-shadow);
+  pointer-events: auto;
+  transform-origin: right bottom;
+  transition:
+    width var(--dur-base) var(--ease-out),
+    height var(--dur-base) var(--ease-out),
+    border-radius var(--dur-base) var(--ease-out);
 }
 
-.topology-panel:focus-within,
-.topology-panel:hover,
+.topology-panel:hover:not(.is-fullscreen),
+.topology-shell:focus-within .topology-panel:not(.is-fullscreen),
 .topology-panel.is-pinned,
 .topology-panel.is-resizing {
-  width: min(var(--topology-width, 420px), calc(100vw - 32px));
-  height: min(var(--topology-height, 322px), calc(100vh - 128px));
+  width: 100%;
+  height: 100%;
   border-radius: var(--radius-md);
+  transition-duration: 240ms;
 }
 
 .topology-panel.is-fullscreen {
   width: auto;
   height: auto;
+  position: fixed;
   inset:
     calc(var(--titlebar-height) + 62px)
     0
@@ -1967,6 +1989,7 @@ kbd {
   border: 0;
   border-radius: 0;
   box-shadow: none;
+  transition: none;
   animation: topology-fullscreen-in var(--dur-slow) var(--ease-out) backwards;
 }
 
@@ -1976,19 +1999,50 @@ kbd {
   display: grid;
   place-items: center;
   color: var(--color-accent);
+  opacity: 1;
   pointer-events: none;
-  transition: opacity var(--dur-fast) var(--ease-out);
+  transform: scale(1);
+  transform-origin: center;
+  transition:
+    opacity var(--dur-fast) var(--ease-out) 70ms,
+    transform var(--dur-base) var(--ease-out) 70ms;
 }
 
 .topology-panel:hover .topology-collapsed,
-.topology-panel:focus-within .topology-collapsed,
-.topology-panel.is-pinned .topology-collapsed {
+.topology-shell:focus-within .topology-collapsed,
+.topology-panel.is-pinned .topology-collapsed,
+.topology-panel.is-resizing .topology-collapsed,
+.topology-panel.is-fullscreen .topology-collapsed {
   opacity: 0;
+  transform: scale(0.82);
+  transition-delay: 0ms;
 }
 
-.topology-panel:not(:hover):not(:focus-within):not(.is-pinned):not(.is-fullscreen)
-  > :not(.topology-collapsed) {
+.topology-content {
+  width: 100%;
+  height: 100%;
   opacity: 0;
+  transform: translate3d(6px, 6px, 0) scale(0.985);
+  transform-origin: right bottom;
+  transition:
+    opacity 90ms var(--ease-out),
+    transform 90ms var(--ease-out);
+}
+
+.topology-panel:hover .topology-content,
+.topology-shell:focus-within .topology-content,
+.topology-panel.is-pinned .topology-content,
+.topology-panel.is-resizing .topology-content,
+.topology-panel.is-fullscreen .topology-content {
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity 160ms var(--ease-out) 50ms,
+    transform 190ms var(--ease-out) 50ms;
+}
+
+.topology-panel.is-fullscreen .topology-content {
+  transition: none;
 }
 
 .topology-resize-handle {
@@ -2725,7 +2779,7 @@ kbd {
     display: none;
   }
 
-  .topology-panel {
+  .topology-shell {
     right: var(--space-4);
     bottom: var(--space-4);
   }
@@ -2739,6 +2793,11 @@ kbd {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+
+  .topology-collapsed,
+  .topology-content {
+    transition-delay: 0ms !important;
   }
 
   .article-column[data-motion] {
