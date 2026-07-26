@@ -153,32 +153,47 @@ describe("Annota core flow", () => {
       .toHaveAttribute("aria-valuenow", "326");
   });
 
-  it("separates the topology icon from the content that reveals on hover", async () => {
-    const user = userEvent.setup();
-    renderApp();
-    await user.click(screen.getByRole("button", { name: /打开笔记：ECS 架构/ }));
-
-    const panel = screen.getByRole("complementary", { name: "当前知识树拓扑" });
-    expect(panel.querySelector(":scope > .topology-collapsed")).toBeInTheDocument();
-    expect(panel.querySelector(":scope > .topology-content")).toBeInTheDocument();
-    expect(
-      panel.querySelector(".topology-content > .topology-viewport")
-    ).toBeInTheDocument();
-  });
-
-  it("does not mutate React state when the pointer skims the topology trigger edge", async () => {
+  it("keeps the topology trigger separate from the animated panel", async () => {
     const user = userEvent.setup();
     renderApp();
     await user.click(screen.getByRole("button", { name: /打开笔记：ECS 架构/ }));
 
     const panel = screen.getByRole("complementary", { name: "当前知识树拓扑" });
     const shell = panel.parentElement;
+    const trigger = screen.getByRole("button", { name: "展开文章拓扑" });
 
     expect(shell).toHaveClass("topology-shell");
+    expect(trigger.parentElement).toBe(shell);
+    expect(panel.querySelector(".topology-collapsed")).not.toBeInTheDocument();
+    expect(panel.querySelector(":scope > .topology-content")).toBeInTheDocument();
+    expect(
+      panel.querySelector(".topology-content > .topology-viewport")
+    ).toBeInTheDocument();
+  });
+
+  it("opens from the fixed trigger and closes only after leaving the stable shell", async () => {
+    const user = userEvent.setup();
+    renderApp();
+    await user.click(screen.getByRole("button", { name: /打开笔记：ECS 架构/ }));
+
+    const panel = screen.getByRole("complementary", { name: "当前知识树拓扑" });
+    const shell = panel.parentElement!;
+    const trigger = screen.getByRole("button", { name: "展开文章拓扑" });
+    const viewport = panel.querySelector(".topology-viewport");
+
+    expect(shell).not.toHaveClass("is-open");
     fireEvent.pointerEnter(panel);
-    expect(shell).not.toHaveClass("is-hovered");
-    fireEvent.pointerLeave(panel);
-    expect(shell).not.toHaveClass("is-hovered");
+    expect(shell).not.toHaveClass("is-open");
+
+    fireEvent.pointerEnter(trigger);
+    expect(shell).toHaveClass("is-open");
+    expect(panel.querySelector(".topology-viewport")).toBe(viewport);
+
+    fireEvent.pointerMove(shell);
+    expect(shell).toHaveClass("is-open");
+    fireEvent.pointerLeave(shell);
+    expect(shell).not.toHaveClass("is-open");
+    expect(panel.querySelector(".topology-viewport")).toBe(viewport);
   });
 
   it("elevates the topology shell in fullscreen", async () => {

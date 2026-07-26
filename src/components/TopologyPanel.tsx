@@ -117,6 +117,7 @@ export function TopologyPanel({
   const layout = useMemo(() => buildLayout(articles, rootId), [articles, rootId]);
   const [scale, setScale] = useState(0.78);
   const [pan, setPan] = useState({ x: 8, y: 12 });
+  const [open, setOpen] = useState(false);
   const [pinned, setPinned] = useState(false);
   const [size, setSize] = useState(readStoredTopologySize);
   const [resizing, setResizing] = useState(false);
@@ -171,7 +172,7 @@ export function TopologyPanel({
       const topologyVisible =
         fullScreen ||
         pinned ||
-        Boolean(panel?.matches(":hover")) ||
+        open ||
         Boolean(panel?.contains(document.activeElement));
       if (!topologyVisible) return;
       event.preventDefault();
@@ -179,7 +180,7 @@ export function TopologyPanel({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [focusCurrent, fullScreen, pinned]);
+  }, [focusCurrent, fullScreen, open, pinned]);
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
@@ -289,15 +290,11 @@ export function TopologyPanel({
 
   const panel = (
     <aside
+      id="article-topology-panel"
       ref={panelRef}
       className={`topology-panel${pinned ? " is-pinned" : ""}${fullScreen ? " is-fullscreen" : ""}${resizing ? " is-resizing" : ""}`}
       aria-label="当前知识树拓扑"
     >
-      {!fullScreen && (
-        <div className="topology-collapsed" aria-hidden="true">
-          <Network size={20} />
-        </div>
-      )}
       <div className="topology-content">
       {!fullScreen && (
         <>
@@ -459,9 +456,17 @@ export function TopologyPanel({
     </aside>
   );
 
+  const expanded = open || pinned || resizing || fullScreen;
+
   return (
     <div
-      className={`topology-shell${fullScreen ? " is-fullscreen" : ""}`}
+      className={`topology-shell${expanded ? " is-open" : ""}${fullScreen ? " is-fullscreen" : ""}`}
+      onPointerLeave={() => setOpen(false)}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          setOpen(false);
+        }
+      }}
       style={
         {
           "--topology-width": `${size.width}px`,
@@ -469,6 +474,19 @@ export function TopologyPanel({
         } as CSSProperties
       }
     >
+      {!fullScreen && (
+        <button
+          className="topology-trigger"
+          type="button"
+          aria-label="展开文章拓扑"
+          aria-controls="article-topology-panel"
+          aria-expanded={expanded}
+          onPointerEnter={() => setOpen(true)}
+          onFocus={() => setOpen(true)}
+        >
+          <Network aria-hidden="true" size={20} />
+        </button>
+      )}
       {panel}
     </div>
   );
