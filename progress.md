@@ -1,0 +1,45 @@
+# Progress
+
+## 2026-07-26
+- 已检查外层目录与 `project/`：确认从空目录开始。
+- 已读取 `planning-with-files` 与 `frontend-design` 技能说明。
+- 已开始读取 `hallmark` 规范、产品文档和两个 HTML 原型。
+- 已建立持久化计划、发现记录和进度日志。
+- 已完成需求/原型结构化提取。
+- 已建立 React/Vite/Tauri 2 工程、Cobalt token 系统和 Windows 窗口配置。
+- 已完成主页、全局搜索、导入/新建、阅读路径、块编辑、选区生成、子文章、拓扑和本地持久化。
+- 已添加核心流程测试与 README。
+- `npm install` 成功，安装 190 个包；npm 报告 5 个依赖审计项，尚未执行破坏性 `audit fix --force`。
+- 首轮验证发现 Vitest `spawn EPERM` 沙箱限制与一个 tsconfig 配置冲突；已修复 tsconfig。
+- `npm run check` 与 `npm run build` 已通过；沙箱外 Vitest 2 项核心流程测试已通过。
+- Tauri 首轮检查发现缺少 Windows ICO；已由项目 SVG 生成平台图标，`cargo check` 随后通过。
+- 浏览器已在 1440×900 验证主页、阅读器与全屏拓扑；320/375/414/768 四个宽度均无横向溢出，控制台无错误。
+- 已补充并通过单块选区与生成占位的自动化测试；Vitest 共 3 项通过。
+- 最终 `npm run check`、`npm run build`、`cargo check` 全部通过；生产依赖 `npm audit --omit=dev` 为 0 漏洞。
+- 最终字体改为随包分发的 Noto Sans SC Variable，并重新验证桌面/响应式布局与控制台。
+- Hallmark 预发自评 P5/H4/E4/S5/R5/V4；58 项反模板化检查通过。
+- `npm run tauri build` 成功，生成：
+  - `src-tauri/target/release/annota.exe`
+  - `src-tauri/target/release/bundle/nsis/Annota_0.1.0_x64-setup.exe`
+- NSIS 安装包 SHA256：`C9B2833B403CE976FE09E6C76058A8C1C154E859A0BB8871CE8BA31DAEF8B217`。
+- 开始 Phase 6：确认窗口配置、Tauri capability、页面切换入口与现有 Hallmark/Cobalt 动效约束。
+- Phase 6 第一轮 `npm run check`、`npm run build`、`cargo check` 通过；Vitest 在沙箱内触发已知 `spawn EPERM`，待授权环境复验。
+- 授权环境下 Vitest 3/3 通过；1920×1080 浏览器预览确认自定义标题栏、主页布局与页面进入动画正常且无横向溢出。
+- 1920×1080 阅读器、子文章前进、父文章返回、拓扑全屏均已实测；修复路由 transform 终态造成的全屏拓扑 40px 坐标偏移。
+- 复验确认全屏拓扑 top=102 定位正确；320/375/414/768 响应式无横向溢出，浏览器控制台 0 error/warn。
+- Phase 6 最终 `npm run check`、`npm run build`、Vitest 3/3、Tauri release/NSIS 构建全部通过。
+- 新安装包：`src-tauri/target/release/bundle/nsis/Annota_0.1.0_x64-setup.exe`（6,486,321 bytes）。
+- 新安装包 SHA256：`7D532FBCB948D59412E60FE3FBBC4ADB562361C865BC7DF503808521C6A5974C`。
+- Hallmark 最终自评 P5/H4/E5/S5/R5/V4；58 项检查通过，动效仅使用 transform/opacity 且包含 reduced-motion 降级。
+- 开始 Phase 7：定位到应用级 `.route-stage` 动画、重复顶栏路径、固定 246px 左栏与内层居中双列是三项需求的直接实现点。
+- 确定改为“可调宽左侧路径 + 独立居中正文 + 右贴子文章”的工作区四轨布局，并将文章切换 key/动效下沉到正文列。
+- 已完成应用级路由动画移除、正文局部前进/返回动效、顶栏重复路径移除、可调宽路径分隔线和右贴子文章布局；`npm run check` 与 `npm run build` 通过。
+- Vitest 首次复验遇到已知 Windows 沙箱 `spawn EPERM`，已记录并转到允许环境复验。
+- 沙箱外测试暴露两个测试环境问题：示例子文章标题断言不匹配、jsdom 缺少 Pointer Capture API；均已针对性修正，未改变浏览器中的拖拽行为。
+- 4 项 Vitest 全部通过；拖拽测试同时覆盖方向键调宽与指针从 254px 拖至 326px 的持久化。
+- 应用内浏览器在 1280×720 复验：正文位于独立中央轨道，子文章右边缘等于视口右边缘；顶栏无阅读路径；前进/返回时仅正文列有动画，其他区域动画均为 `none`。
+- 路径宽度从 246px 调至 254px 后，正文轨道左缘和全屏拓扑左缘同步从 254px 调至 262px；浏览器控制台无 error/warn。
+- 最终 `npm run check`、`npm run build`、Vitest 4/4 与 `npm run tauri -- build` 全部通过。
+- 新 Windows 可执行文件：`src-tauri/target/release/annota.exe`（13,171,200 bytes，SHA256 `7D4B6ED858843CD152808671E2D5FCC7E10CBF6E389F31A3D8B22CEE86EDDB7F`）。
+- 新 NSIS 安装包：`src-tauri/target/release/bundle/nsis/Annota_0.1.0_x64-setup.exe`（6,487,969 bytes，SHA256 `7FB4F04331EED03159D2E421EBCF8402D26E755C14853F49AAE4D95FE10F9911`）。
+- Phase 7 完成；Hallmark 最终自评 P5/H5/E5/S5/R5/V4。当前轮真实浏览器桌面验证通过，移动宽度因浏览器安全策略仅完成代码/构建复核。

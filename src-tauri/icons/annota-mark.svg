@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">Annota knowledge tree</title>
+  <rect width="512" height="512" rx="108" fill="#1b2230"/>
+  <path d="M148 154h104v104h112v100H252V258H148z" fill="none" stroke="#f7f9ff" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="148" cy="154" r="42" fill="#4e6fff" stroke="#f7f9ff" stroke-width="18"/>
+  <circle cx="252" cy="258" r="42" fill="#4e6fff" stroke="#f7f9ff" stroke-width="18"/>
+  <circle cx="364" cy="358" r="42" fill="#d99632" stroke="#f7f9ff" stroke-width="18"/>
+</svg>

@@ -1,0 +1,34 @@
+# Dependencies and frontend build output
+/node_modules/
+/dist/
+/.vite/
+/coverage/
+
+# TypeScript/Vite generated files
+*.tsbuildinfo
+/vite.config.js
+/vite.config.d.ts
+/vitest.config.js
+/vitest.config.d.ts
+
+# Rust and Tauri generated output
+/src-tauri/target/
+/src-tauri/gen/
+
+# Environment files and local secrets
+.env
+.env.*
+!.env.example
+
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+*.swo
+
+# Editors and operating systems
+/.idea/
+/.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini

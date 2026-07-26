@@ -1,0 +1,200 @@
+import type { AppData, ArticleNode, ContentBlock, Notebook } from "../types";
+
+const now = new Date("2026-07-26T09:30:00+08:00").toISOString();
+
+const blocks = (prefix: string, items: Array<[ContentBlock["kind"], string]>): ContentBlock[] =>
+  items.map(([kind, text], index) => ({ id: `${prefix}-b${index + 1}`, kind, text }));
+
+const articles: Record<string, ArticleNode> = {
+  "ecs-root": {
+    id: "ecs-root",
+    rootId: "ecs-root",
+    parentId: null,
+    title: "ECS 架构：从数据布局到系统调度",
+    summary: "沿着 Entity、Component 与 System 的职责边界，理解数据导向设计如何影响运行时性能。",
+    type: "主文章",
+    tags: ["ECS", "架构", "游戏开发"],
+    childIds: ["ecs-system", "ecs-component", "ecs-entity"],
+    createdAt: now,
+    updatedAt: now,
+    blocks: blocks("ecs-root", [
+      ["h2", "为什么要把数据与行为拆开"],
+      ["paragraph", "ECS 将对象拆成实体标识、纯数据组件与批量处理数据的系统。它不是简单地把类拆成三个目录，而是重新安排数据在内存中的组织方式与处理顺序。"],
+      ["paragraph", "传统面向对象结构常把状态与方法封装在分散对象中。ECS 更关注一批同类数据怎样连续存储、怎样被同一个 System 访问，以及访问过程中能否保持缓存命中。"],
+      ["quote", "System 的更新存在明确的顺序与可行性要求。依赖同一份数据的系统不能被任意并行，也不适合把高延迟的物理查询混入连续的数据遍历。"],
+      ["h2", "依赖关系决定更新顺序"],
+      ["paragraph", "调度器会根据读写依赖把有前置条件的 System 放到后面，把互不冲突的工作并行化。真正的价值不只是少写代码，而是让数据依赖变得可以检查、排序与优化。"],
+      ["paragraph", "学习 ECS 时，先追踪数据从创建到读取的路径，再分析每个 System 的读写集合，会比背诵 API 更接近架构本质。"]
+    ])
+  },
+  "ecs-system": {
+    id: "ecs-system",
+    rootId: "ecs-root",
+    parentId: "ecs-root",
+    title: "System 的更新顺序与依赖调度",
+    summary: "解释读写依赖、系统分组和并行调度的基本边界。",
+    type: "解释",
+    tags: ["System", "调度", "依赖"],
+    childIds: ["ecs-physics"],
+    createdAt: now,
+    updatedAt: now,
+    source: {
+      parentId: "ecs-root",
+      blockId: "ecs-root-b4",
+      quote: "System 的更新存在明确的顺序与可行性要求。",
+      generationType: "explain"
+    },
+    blocks: blocks("ecs-system", [
+      ["paragraph", "System 调度的核心输入是每个任务声明的读集合与写集合。两个任务只读同一数据时可以并行；只要其中一个写入同一数据，就必须建立先后约束。"],
+      ["h2", "先声明依赖，再决定并行"],
+      ["paragraph", "可行的调度不是靠猜测线程安全，而是让依赖显式化。这样运行时才能构建有向无环图，把无冲突分支交给工作线程。"],
+      ["paragraph", "如果某个 System 依赖上一阶段产生的位置结果，它就必须排在写入位置的 System 之后。顺序是一种数据契约，而不是人为偏好。"]
+    ])
+  },
+  "ecs-physics": {
+    id: "ecs-physics",
+    rootId: "ecs-root",
+    parentId: "ecs-system",
+    title: "为什么物理查询会破坏批处理节奏",
+    summary: "从缓存局部性与同步点理解物理范围检测的代价。",
+    type: "解释",
+    tags: ["物理", "缓存", "同步点"],
+    childIds: [],
+    createdAt: now,
+    updatedAt: now,
+    blocks: blocks("ecs-physics", [
+      ["paragraph", "范围检测与射线查询往往跨越独立的空间结构，并可能等待物理世界完成同步。把它插入连续组件遍历，会让处理器从线性数据访问跳到不连续结构。"],
+      ["paragraph", "更稳定的方式是先批量收集查询请求，在明确的阶段执行，再把结果写回连续缓冲区，供后续 System 消费。"]
+    ])
+  },
+  "ecs-component": {
+    id: "ecs-component",
+    rootId: "ecs-root",
+    parentId: "ecs-root",
+    title: "Component 为什么应该保持纯数据",
+    summary: "从可组合性、序列化与内存布局理解组件边界。",
+    type: "解释",
+    tags: ["Component", "数据布局"],
+    childIds: [],
+    createdAt: now,
+    updatedAt: now,
+    blocks: blocks("ecs-component", [
+      ["paragraph", "Component 负责描述状态而不是执行行为。保持纯数据能让系统按组件组合筛选实体，也让序列化、迁移和批量处理更直接。"]
+    ])
+  },
+  "ecs-entity": {
+    id: "ecs-entity",
+    rootId: "ecs-root",
+    parentId: "ecs-root",
+    title: "Entity 只是稳定标识吗",
+    summary: "区分实体身份、组件集合与对象实例。",
+    type: "解释",
+    tags: ["Entity", "标识"],
+    childIds: [],
+    createdAt: now,
+    updatedAt: now,
+    blocks: blocks("ecs-entity", [
+      ["paragraph", "Entity 通常只是一个带版本的索引。它的意义来自当前关联的组件集合，而不是继承层级或对象方法。"]
+    ])
+  },
+  "attention-root": {
+    id: "attention-root",
+    rootId: "attention-root",
+    parentId: null,
+    title: "从注意力机制到长期记忆",
+    summary: "把线性阅读中的高亮、解释与回顾组织成可回溯的知识路径。",
+    type: "主文章",
+    tags: ["认知", "阅读方法"],
+    childIds: [],
+    createdAt: now,
+    updatedAt: "2026-07-25T21:10:00+08:00",
+    blocks: blocks("attention-root", [
+      ["paragraph", "真正的理解发生在建立连接的时刻。高亮只是入口，围绕疑问形成的解释路径才会成为可以再次进入的长期记忆。"]
+    ])
+  },
+  "llm-root": {
+    id: "llm-root",
+    rootId: "llm-root",
+    parentId: null,
+    title: "大型语言模型的推理边界",
+    summary: "分析长上下文、外部知识与幻觉之间的关系。",
+    type: "主文章",
+    tags: ["AI", "LLM"],
+    childIds: [],
+    createdAt: now,
+    updatedAt: "2026-07-24T17:45:00+08:00",
+    blocks: blocks("llm-root", [
+      ["paragraph", "语言模型生成的是条件概率下的后续文本。检索与引用能提供约束，但不会自动消除推理错误。"]
+    ])
+  },
+  "graph-root": {
+    id: "graph-root",
+    rootId: "graph-root",
+    parentId: null,
+    title: "图数据库 Neo4j 基础概念",
+    summary: "记录节点、关系、属性与 Cypher 查询的入门知识。",
+    type: "主文章",
+    tags: ["Neo4j", "数据库"],
+    childIds: [],
+    createdAt: now,
+    updatedAt: "2026-07-22T11:30:00+08:00",
+    blocks: blocks("graph-root", [
+      ["paragraph", "属性图由节点、带方向的关系与键值属性组成。查询通常围绕模式匹配展开。"]
+    ])
+  }
+};
+
+const notebooks: Notebook[] = [
+  {
+    id: "notebook-ecs",
+    rootId: "ecs-root",
+    title: articles["ecs-root"].title,
+    summary: articles["ecs-root"].summary,
+    tags: articles["ecs-root"].tags,
+    category: "技术学习",
+    updatedAt: now,
+    lastOpenedNodeId: "ecs-root",
+    accent: "cobalt"
+  },
+  {
+    id: "notebook-attention",
+    rootId: "attention-root",
+    title: articles["attention-root"].title,
+    summary: articles["attention-root"].summary,
+    tags: articles["attention-root"].tags,
+    category: "阅读方法",
+    updatedAt: articles["attention-root"].updatedAt,
+    lastOpenedNodeId: "attention-root",
+    accent: "green"
+  },
+  {
+    id: "notebook-llm",
+    rootId: "llm-root",
+    title: articles["llm-root"].title,
+    summary: articles["llm-root"].summary,
+    tags: articles["llm-root"].tags,
+    category: "概念解析",
+    updatedAt: articles["llm-root"].updatedAt,
+    lastOpenedNodeId: "llm-root",
+    accent: "amber"
+  },
+  {
+    id: "notebook-graph",
+    rootId: "graph-root",
+    title: articles["graph-root"].title,
+    summary: articles["graph-root"].summary,
+    tags: articles["graph-root"].tags,
+    category: "数据库",
+    updatedAt: articles["graph-root"].updatedAt,
+    lastOpenedNodeId: "graph-root",
+    accent: "cobalt"
+  }
+];
+
+export const seedData: AppData = {
+  notebooks,
+  articles,
+  jobs: [],
+  currentNotebookId: null,
+  currentArticleId: null
+};
