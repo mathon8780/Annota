@@ -240,10 +240,8 @@ describe("Annota core flow", () => {
     editor.setSelectionRange(0, selectedText.length);
     fireEvent.select(editor);
 
-    fireEvent.change(screen.getByLabelText("文字颜色"), {
-      target: { value: "#2563eb" }
-    });
-    await user.click(screen.getByRole("button", { name: "应用文字颜色" }));
+    await user.click(screen.getByRole("button", { name: "文字颜色" }));
+    await user.click(screen.getByRole("button", { name: "文字颜色：蓝色" }));
     await waitFor(() => {
       const stored = JSON.parse(
         window.localStorage.getItem("annota.desktop.demo.v1") ?? "{}"
@@ -265,6 +263,74 @@ describe("Annota core flow", () => {
     expect(coloredText).toHaveTextContent(selectedText.trim());
     expect(coloredText).toHaveStyle({ color: "#2563eb" });
     expect(paragraph.text).not.toContain("<span");
+  });
+
+  it("offers preset and custom colors in mutually exclusive menus", async () => {
+    const user = userEvent.setup();
+    renderApp();
+    const article = await openFirstNotebook(user);
+    const paragraph = article.blocks.find((block) => block.kind === "paragraph")!;
+    const selectedText = paragraph.text.slice(0, 5);
+
+    await user.click(screen.getByText(paragraph.text));
+    const editor = screen.getByLabelText("编辑正文块") as HTMLTextAreaElement;
+    editor.setSelectionRange(0, selectedText.length);
+    fireEvent.select(editor);
+
+    await user.click(screen.getByRole("button", { name: "文字颜色" }));
+    expect(screen.getByRole("button", { name: "文字颜色：黄色" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "文字颜色：红色" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "文字颜色：绿色" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "文字颜色：蓝色" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "文字颜色：紫色" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "文字颜色：黑色" })).toBeInTheDocument();
+    expect(screen.getByLabelText("自选文字颜色")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "背景标注颜色" }));
+    expect(
+      screen.queryByRole("button", { name: "文字颜色：黄色" })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "背景标注颜色：黄色" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "背景标注颜色：橙色" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "背景标注颜色：绿色" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "背景标注颜色：蓝色" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "背景标注颜色：紫色" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "背景标注颜色：灰色" })
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("自选背景标注颜色")).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: "背景标注颜色：蓝色" })
+    );
+    await waitFor(() => {
+      const stored = JSON.parse(
+        window.localStorage.getItem("annota.desktop.demo.v1") ?? "{}"
+      );
+      expect(stored.articles[article.id].blocks.find(
+        (block: { id: string }) => block.id === paragraph.id
+      ).marks).toEqual([
+        expect.objectContaining({
+          type: "backgroundColor",
+          color: "#bfdbfe",
+          start: 0,
+          end: selectedText.length
+        })
+      ]);
+    });
+
+    expect(document.querySelector(".inline-mark-background-color"))
+      .toHaveStyle({ backgroundColor: "#bfdbfe" });
   });
 
   it("opens an empty settings workspace from the bottom of the home sidebar", async () => {
