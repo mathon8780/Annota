@@ -18,10 +18,13 @@ import {
 } from "lucide-react";
 import { useAppStore } from "../store/AppStore";
 import type { Notebook } from "../types";
+import { SettingsPage } from "./SettingsPage";
 
 interface HomePageProps {
+  settingsOpen: boolean;
   onOpenSearch: () => void;
   onOpenSettings: () => void;
+  onCloseSettings: () => void;
 }
 
 function countDescendants(rootId: string, articles: ReturnType<typeof useAppStore>["data"]["articles"]) {
@@ -50,7 +53,12 @@ function formatDate(value: string) {
   return date.toLocaleDateString("zh-CN", { month: "short", day: "numeric" });
 }
 
-export function HomePage({ onOpenSearch, onOpenSettings }: HomePageProps) {
+export function HomePage({
+  settingsOpen,
+  onOpenSearch,
+  onOpenSettings,
+  onCloseSettings
+}: HomePageProps) {
   const { data, openNotebook, createNotebook, importPackage, resetDemo } = useAppStore();
   const [sortBy, setSortBy] = useState<"time" | "connections">("time");
   const [filter, setFilter] = useState("");
@@ -97,7 +105,7 @@ export function HomePage({ onOpenSearch, onOpenSettings }: HomePageProps) {
   };
 
   const sidebarActions = [
-    { icon: LibraryBig, label: "花园概览", active: true },
+    { icon: LibraryBig, label: "花园概览", active: !settingsOpen },
     { icon: Network, label: "拓扑导航" },
     { icon: History, label: "阅读足迹" }
   ];
@@ -113,7 +121,9 @@ export function HomePage({ onOpenSearch, onOpenSettings }: HomePageProps) {
                 className={`home-nav-item${active ? " is-active" : ""}`}
                 type="button"
                 onClick={() =>
-                  !active &&
+                  label === "花园概览"
+                    ? onCloseSettings()
+                    : !active &&
                   setNotice(
                     label === "拓扑导航"
                       ? "请先打开一篇笔记，再从右下角展开或全屏查看拓扑。"
@@ -150,7 +160,13 @@ export function HomePage({ onOpenSearch, onOpenSettings }: HomePageProps) {
               <Clock3 aria-hidden="true" size={16} />
               重置演示数据
             </button>
-            <button type="button" aria-label="打开设置" onClick={onOpenSettings}>
+            <button
+              className={settingsOpen ? "is-active" : undefined}
+              type="button"
+              aria-label="打开设置"
+              aria-current={settingsOpen ? "page" : undefined}
+              onClick={onOpenSettings}
+            >
               <Settings2 aria-hidden="true" size={16} />
               设置
             </button>
@@ -158,6 +174,10 @@ export function HomePage({ onOpenSearch, onOpenSettings }: HomePageProps) {
         </aside>
 
         <div className="home-content">
+          {settingsOpen ? (
+            <SettingsPage onBack={onCloseSettings} />
+          ) : (
+            <>
           <header className="home-topbar">
             <button className="global-search-trigger" type="button" onClick={onOpenSearch}>
               <Search aria-hidden="true" size={17} />
@@ -293,6 +313,8 @@ export function HomePage({ onOpenSearch, onOpenSettings }: HomePageProps) {
             )}
             </section>
           </section>
+            </>
+          )}
         </div>
       </main>
 

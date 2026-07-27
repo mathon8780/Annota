@@ -578,7 +578,7 @@ describe("Annota core flow", () => {
       .toHaveStyle({ backgroundColor: "#bfdbfe" });
   });
 
-  it("opens an empty settings workspace from the bottom of the home sidebar", async () => {
+  it("opens the categorized settings workspace from the bottom of the home sidebar", async () => {
     const user = userEvent.setup();
     const { container } = renderApp();
 
@@ -587,9 +587,68 @@ describe("Annota core flow", () => {
     await user.click(settingsButton);
 
     expect(screen.getByRole("heading", { name: "设置" })).toBeInTheDocument();
-    const settingsCanvas = screen.getByRole("main", { name: "设置内容" });
-    expect(settingsCanvas).toBeEmptyDOMElement();
-    expect(container.querySelector(".home-app")).not.toBeInTheDocument();
+    const settingsCanvas = screen.getByRole("region", { name: "设置内容" });
+    expect(container.querySelector(".home-app")).toBeInTheDocument();
+    expect(settingsCanvas).toHaveClass("home-main", "settings-home-main");
+    expect(container.querySelector(".settings-category-index")).not.toBeInTheDocument();
+    expect(within(settingsCanvas).queryByText("全局")).not.toBeInTheDocument();
+    const categories = [
+      "外观与交互",
+      "AI 模型服务",
+      "生成类型与提示词",
+      "知识库与存储",
+      "备份与恢复",
+      "导入、导出与迁移",
+      "隐私与安全",
+      "更新、诊断与关于"
+    ];
+
+    categories.forEach((category) => {
+      expect(
+        within(settingsCanvas).getByRole("button", { name: category })
+      ).toBeInTheDocument();
+    });
+    expect(
+      within(settingsCanvas).getByRole("heading", {
+        level: 2,
+        name: "外观与交互"
+      })
+    ).toBeInTheDocument();
+    expect(within(settingsCanvas).getByText("界面字体")).toBeInTheDocument();
+    expect(
+      within(settingsCanvas).getByText("浏览器预览使用内置字体")
+    ).toBeInTheDocument();
+    expect(
+      within(settingsCanvas).getByRole("searchbox", { name: "筛选系统字体" })
+    ).toBeDisabled();
+    await user.selectOptions(
+      within(settingsCanvas).getByRole("combobox", { name: "界面字体" }),
+      "system-sans"
+    );
+    expect(document.documentElement.style.getPropertyValue("--font-body"))
+      .toContain("Segoe UI");
+    expect(
+      JSON.parse(window.localStorage.getItem("annota:font-preferences") ?? "{}")
+    ).toMatchObject({ interfaceFamily: "system-sans" });
+    expect(settingsCanvas.querySelectorAll("[data-setting-slot]")).not.toHaveLength(0);
+    settingsCanvas.querySelectorAll("[data-setting-slot]").forEach((slot) => {
+      expect(slot).toBeEmptyDOMElement();
+    });
+
+    await user.click(
+      within(settingsCanvas).getByRole("button", { name: "AI 模型服务" })
+    );
+    expect(
+      within(settingsCanvas).getByRole("heading", {
+        level: 2,
+        name: "AI 模型服务"
+      })
+    ).toBeInTheDocument();
+    expect(within(settingsCanvas).getByText("模型服务列表")).toBeInTheDocument();
+    expect(
+      within(settingsCanvas).getByRole("button", { name: "AI 模型服务" })
+    ).toHaveAttribute("aria-current", "page");
+    expect(container.querySelector(".home-app")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "返回主页" }));
     expect(screen.getByRole("heading", { name: "最近笔记" })).toBeInTheDocument();

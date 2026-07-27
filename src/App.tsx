@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { BookOpenText, CornerDownLeft, Search, X } from "lucide-react";
 import { HomePage } from "./components/HomePage";
 import { ReaderPage } from "./components/ReaderPage";
-import { SettingsPage } from "./components/SettingsPage";
 import { WindowTitleBar } from "./components/WindowTitleBar";
 import { useAppStore } from "./store/AppStore";
 
@@ -62,14 +61,14 @@ export default function App() {
       <WindowTitleBar pageTitle={settingsOpen ? "设置" : currentArticle?.title} />
       <div className="desktop-content">
         <div className="route-stage">
-          {settingsOpen ? (
-            <SettingsPage onBack={() => setSettingsOpen(false)} />
-          ) : currentArticle ? (
+          {currentArticle ? (
             <ReaderPage />
           ) : (
             <HomePage
+              settingsOpen={settingsOpen}
               onOpenSearch={() => setCommandOpen(true)}
               onOpenSettings={() => setSettingsOpen(true)}
+              onCloseSettings={() => setSettingsOpen(false)}
             />
           )}
         </div>

@@ -31,6 +31,8 @@
   --font-body: "Noto Sans SC Variable", "Microsoft YaHei UI", sans-serif;
   --font-reading: var(--font-body);
   --font-mono: "Cascadia Code", "Cascadia Mono", Consolas, monospace;
+  --reading-font-size: 16px;
+  --code-font-size: 13px;
 
   --space-1: 0.25rem;
   --space-2: 0.5rem;
