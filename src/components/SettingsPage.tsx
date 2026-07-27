@@ -1,16 +1,41 @@
 import { useEffect, useState } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
+import {
+  ChatGLM,
+  Claude,
+  DeepSeek,
+  Gemini,
+  Kimi,
+  OpenAI
+} from "@lobehub/icons";
 import {
   ArchiveRestore,
   ArrowDownUp,
-  ArrowLeft,
+  BrainCircuit,
+  BookOpenText,
   Bot,
+  Braces,
+  Check,
   ChevronRight,
   Database,
+  Eye,
+  EyeOff,
   Info,
+  KeyRound,
+  Keyboard,
+  Landmark,
+  LayoutTemplate,
+  Network,
+  Orbit,
   Palette,
+  Plus,
+  Radio,
+  RotateCcw,
   Search,
-  Settings2,
+  Server,
   ShieldCheck,
+  Sprout,
+  Trash2,
   WandSparkles,
   Wrench
 } from "lucide-react";
@@ -32,9 +57,38 @@ import {
   loadSystemFontCatalog
 } from "../utils/systemFonts";
 import type { SystemFontCatalog } from "../utils/systemFonts";
+import {
+  contentStyleDefinition,
+  contentStyles,
+  contentTermLabels
+} from "../utils/contentDisplay";
+import type {
+  ContentStyleId,
+  CustomContentStyle
+} from "../utils/contentDisplay";
+import {
+  conflictingShortcut,
+  formatShortcut,
+  shortcutDefinitions,
+  shortcutFromKeyboardEvent
+} from "../utils/shortcuts";
+import type {
+  ShortcutActionId,
+  ShortcutBinding,
+  ShortcutPreferences
+} from "../utils/shortcuts";
 
 interface SettingsPageProps {
-  onBack: () => void;
+  contentStyle: ContentStyleId;
+  customContentStyle: CustomContentStyle;
+  shortcuts: ShortcutPreferences;
+  onContentStyleChange: (style: ContentStyleId) => void;
+  onCustomContentStyleChange: (style: CustomContentStyle) => void;
+  onShortcutChange: (
+    actionId: ShortcutActionId,
+    binding: ShortcutBinding
+  ) => void;
+  onResetShortcuts: () => void;
 }
 
 type SettingSlotSize = "compact" | "medium" | "wide";
@@ -57,6 +111,191 @@ interface SettingCategory {
   description: string;
   icon: LucideIcon;
   groups: SettingGroup[];
+}
+
+type ProviderTone = "cobalt" | "indigo" | "cyan" | "violet" | "slate";
+type ProviderBrand =
+  | "chatgpt"
+  | "gemini"
+  | "kimi"
+  | "deepseek"
+  | "claude"
+  | "glm"
+  | "custom";
+type ProviderProtocol = "openai-compatible" | "anthropic-messages";
+
+interface ModelProvider {
+  id: string;
+  name: string;
+  shortName: string;
+  kind: "default" | "custom";
+  tone: ProviderTone;
+  brand: ProviderBrand;
+  protocol: ProviderProtocol;
+  baseUrl: string;
+  endpointPath: string;
+  apiKey: string;
+  model: string;
+  enabled: boolean;
+  isDefault: boolean;
+}
+
+const initialModelProviders: ModelProvider[] = [
+  {
+    id: "chatgpt",
+    name: "Chat GPT",
+    shortName: "GPT",
+    kind: "default",
+    tone: "slate",
+    brand: "chatgpt",
+    protocol: "openai-compatible",
+    baseUrl: "https://api.openai.com/v1",
+    endpointPath: "/chat/completions",
+    apiKey: "",
+    model: "gpt-5-mini",
+    enabled: true,
+    isDefault: true
+  },
+  {
+    id: "gemini",
+    name: "Gemini",
+    shortName: "GM",
+    kind: "default",
+    tone: "cyan",
+    brand: "gemini",
+    protocol: "openai-compatible",
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+    endpointPath: "/chat/completions",
+    apiKey: "",
+    model: "gemini-3.6-flash",
+    enabled: false,
+    isDefault: false
+  },
+  {
+    id: "kimi",
+    name: "Kimi",
+    shortName: "KM",
+    kind: "default",
+    tone: "slate",
+    brand: "kimi",
+    protocol: "openai-compatible",
+    baseUrl: "https://api.moonshot.cn/v1",
+    endpointPath: "/chat/completions",
+    apiKey: "",
+    model: "kimi-k2.5",
+    enabled: false,
+    isDefault: false
+  },
+  {
+    id: "deepseek",
+    name: "Deepseek",
+    shortName: "DS",
+    kind: "default",
+    tone: "cobalt",
+    brand: "deepseek",
+    protocol: "openai-compatible",
+    baseUrl: "https://api.deepseek.com",
+    endpointPath: "/chat/completions",
+    apiKey: "",
+    model: "deepseek-v4-flash",
+    enabled: true,
+    isDefault: false
+  },
+  {
+    id: "claude",
+    name: "Claude",
+    shortName: "CL",
+    kind: "default",
+    tone: "violet",
+    brand: "claude",
+    protocol: "anthropic-messages",
+    baseUrl: "https://api.anthropic.com/v1",
+    endpointPath: "/messages",
+    apiKey: "",
+    model: "claude-sonnet-4-5",
+    enabled: false,
+    isDefault: false
+  },
+  {
+    id: "glm",
+    name: "GLM",
+    shortName: "GLM",
+    kind: "default",
+    tone: "indigo",
+    brand: "glm",
+    protocol: "openai-compatible",
+    baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+    endpointPath: "/chat/completions",
+    apiKey: "",
+    model: "glm-5.2",
+    enabled: false,
+    isDefault: false
+  },
+  {
+    id: "custom-1",
+    name: "本地兼容接口",
+    shortName: "API",
+    kind: "custom",
+    tone: "slate",
+    brand: "custom",
+    protocol: "openai-compatible",
+    baseUrl: "http://127.0.0.1:11434/v1",
+    endpointPath: "/chat/completions",
+    apiKey: "",
+    model: "",
+    enabled: false,
+    isDefault: false
+  }
+];
+
+function ModelProviderMark({
+  provider,
+  large = false
+}: {
+  provider: ModelProvider;
+  large?: boolean;
+}) {
+  const iconSize = large ? 30 : 22;
+  let icon;
+
+  switch (provider.brand) {
+    case "chatgpt":
+      icon = <OpenAI size={iconSize} />;
+      break;
+    case "gemini":
+      icon = <Gemini.Color size={iconSize} />;
+      break;
+    case "kimi":
+      icon = <Kimi.Color size={iconSize} />;
+      break;
+    case "deepseek":
+      icon = <DeepSeek.Color size={iconSize} />;
+      break;
+    case "claude":
+      icon = <Claude.Color size={iconSize} />;
+      break;
+    case "glm":
+      icon = (
+        <ChatGLM
+          className="model-provider-brand-icon is-glm"
+          size={iconSize}
+        />
+      );
+      break;
+    default:
+      icon = provider.shortName;
+  }
+
+  return (
+    <span
+      className={`model-provider-mark is-${provider.tone}${
+        provider.brand !== "custom" ? " has-brand" : ""
+      }${large ? " is-large" : ""}`}
+      aria-hidden="true"
+    >
+      {icon}
+    </span>
+  );
 }
 
 const settingCategories: SettingCategory[] = [
@@ -85,104 +324,32 @@ const settingCategories: SettingCategory[] = [
           { label: "默认标注颜色", scope: "全局", slot: "compact" },
           { label: "减少动态效果", scope: "全局", slot: "compact" }
         ]
-      },
-      {
-        title: "快捷键",
-        items: [
-          { label: "快捷键一览", scope: "全局", slot: "wide" },
-          { label: "自定义快捷键", scope: "后续增强", slot: "wide" }
-        ]
       }
     ]
+  },
+  {
+    id: "shortcuts",
+    label: "快捷键",
+    eyebrow: "操作效率",
+    description: "查看并管理应用中的键盘操作。",
+    icon: Keyboard,
+    groups: []
   },
   {
     id: "models",
     label: "AI 模型服务",
     eyebrow: "模型连接",
-    description: "管理由你提供密钥的 OpenAI Compatible 模型服务。",
+    description: "管理不同模型服务商的接口、密钥与默认模型。",
     icon: Bot,
-    groups: [
-      {
-        title: "服务",
-        items: [
-          { label: "模型服务列表", scope: "全局", slot: "wide" },
-          { label: "服务名称", scope: "单个 Provider", slot: "wide" },
-          { label: "服务类型", scope: "单个 Provider", slot: "wide" },
-          { label: "默认模型服务", scope: "全局", slot: "wide" }
-        ]
-      },
-      {
-        title: "连接",
-        items: [
-          { label: "Base URL", scope: "单个 Provider", slot: "wide" },
-          { label: "API Key", scope: "单个 Provider", slot: "wide" },
-          { label: "模型名称", scope: "单个 Provider", slot: "wide" },
-          { label: "测试连接", scope: "单个 Provider", slot: "medium" }
-        ]
-      },
-      {
-        title: "默认参数",
-        items: [
-          { label: "Temperature", scope: "单个 Provider" },
-          { label: "最大输出 Token", scope: "单个 Provider" },
-          { label: "请求超时", scope: "单个 Provider" },
-          { label: "最大并发生成数", scope: "全局", slot: "compact" },
-          { label: "自动重试规则", scope: "全局", slot: "wide" }
-        ]
-      },
-      {
-        title: "服务管理",
-        items: [
-          { label: "复制服务配置", scope: "单个 Provider", slot: "medium" },
-          { label: "删除服务", scope: "单个 Provider", slot: "medium" }
-        ]
-      }
-    ]
+    groups: []
   },
   {
     id: "generation",
-    label: "生成类型与提示词",
+    label: "生成与提示词",
     eyebrow: "生成动作",
     description: "组织解释、翻译与自定义动作的外观、语义和提示词。",
     icon: WandSparkles,
-    groups: [
-      {
-        title: "类型列表",
-        items: [
-          { label: "内置类型", scope: "全局", slot: "wide" },
-          { label: "自定义类型", scope: "全局", slot: "wide" },
-          { label: "动作栏顺序", scope: "全局", slot: "wide" },
-          { label: "显示在动作栏", scope: "单个生成类型", slot: "compact" }
-        ]
-      },
-      {
-        title: "基本信息与语义",
-        items: [
-          { label: "名称", scope: "单个生成类型", slot: "wide" },
-          { label: "图标", scope: "单个生成类型", slot: "compact" },
-          { label: "颜色", scope: "单个生成类型", slot: "compact" },
-          { label: "关系语义", scope: "单个生成类型", slot: "wide" },
-          { label: "分类信息", scope: "单个生成类型", slot: "wide" }
-        ]
-      },
-      {
-        title: "提示词",
-        items: [
-          { label: "提示词模板", scope: "单个类型版本", slot: "wide" },
-          { label: "可用上下文说明", scope: "单个生成类型", slot: "wide" },
-          { label: "输出预览", scope: "单个生成类型", slot: "wide" }
-        ]
-      },
-      {
-        title: "恢复与迁移",
-        items: [
-          { label: "恢复内置默认", scope: "单个内置类型", slot: "medium" },
-          { label: "复制类型", scope: "单个生成类型", slot: "medium" },
-          { label: "删除自定义类型", scope: "单个生成类型", slot: "medium" },
-          { label: "导入或导出模板", scope: "全局", slot: "wide" }
-        ]
-      }
-    ]
+    groups: []
   },
   {
     id: "storage",
@@ -359,7 +526,15 @@ const settingCategories: SettingCategory[] = [
   }
 ];
 
-export function SettingsPage({ onBack }: SettingsPageProps) {
+export function SettingsPage({
+  contentStyle,
+  customContentStyle,
+  shortcuts,
+  onContentStyleChange,
+  onCustomContentStyleChange,
+  onShortcutChange,
+  onResetShortcuts
+}: SettingsPageProps) {
   const [activeCategoryId, setActiveCategoryId] = useState(
     settingCategories[0].id
   );
@@ -395,19 +570,7 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
   };
 
   return (
-    <>
-      <header className="home-topbar settings-home-topbar">
-        <button className="settings-back-button" type="button" onClick={onBack}>
-          <ArrowLeft aria-hidden="true" size={16} />
-          返回主页
-        </button>
-        <div className="settings-heading">
-          <Settings2 aria-hidden="true" size={17} />
-          <h1>设置</h1>
-        </div>
-      </header>
-
-      <section className="home-main settings-home-main" aria-label="设置内容">
+    <section className="home-main settings-home-main" aria-label="设置内容">
       <div className="settings-canvas">
         <aside className="settings-sidebar" aria-label="设置分类">
           <div className="settings-sidebar-intro">
@@ -442,7 +605,7 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
             <ShieldCheck aria-hidden="true" size={17} />
             <span>
               <strong>保存在本机</strong>
-              字体偏好会即时应用，并保存在当前设备
+              字体与内容风格会即时应用，并保存在当前设备
             </span>
           </div>
         </aside>
@@ -451,7 +614,11 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
           className="settings-workspace"
           aria-labelledby={`settings-title-${activeCategory.id}`}
         >
-          <div className="settings-workspace-inner">
+          <div
+            className={`settings-workspace-inner${
+              activeCategory.id === "models" ? " is-models" : ""
+            }`}
+          >
             <header className="settings-section-hero">
               <div className="settings-section-icon">
                 <ActiveIcon aria-hidden="true" size={21} />
@@ -465,70 +632,819 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
               </div>
               <div className="settings-display-badge">
                 <Info aria-hidden="true" size={14} />
-                {activeCategory.id === "appearance" ? "字体已启用" : "页面展示"}
+                {activeCategory.id === "appearance"
+                  ? "字体与风格已启用"
+                  : activeCategory.id === "shortcuts"
+                    ? "可自定义"
+                  : activeCategory.id === "models"
+                    ? "接口配置预览"
+                    : "页面展示"}
               </div>
             </header>
 
-            <div className="settings-preview-note" role="note">
-              字体设置现已可用；其他项目暂为结构预览，不会更改应用数据。
-            </div>
+            {activeCategory.id === "models" ? (
+              <ModelProviderSettings />
+            ) : activeCategory.id === "shortcuts" ? (
+              <ShortcutSettings
+                shortcuts={shortcuts}
+                onChange={onShortcutChange}
+                onReset={onResetShortcuts}
+              />
+            ) : (
+              <>
+                {activeCategory.groups.length > 0 && (
+                  <div className="settings-preview-note" role="note">
+                    {activeCategory.id === "appearance"
+                      ? "字体与内容显示风格现已可用；阅读与标注项目仍为结构预览。"
+                      : "当前项目暂为结构预览，不会更改应用数据。"}
+                  </div>
+                )}
 
-            <div className="settings-groups">
-              {activeCategory.groups.map((group) => (
-                <section className="settings-group" key={group.title}>
-                  <header>
-                    <h3>{group.title}</h3>
-                    <span>{String(group.items.length).padStart(2, "0")} 项</span>
-                  </header>
-                  {activeCategory.id === "appearance" &&
-                    group.title === "字体" && (
-                      <FontCatalogToolbar
-                        catalog={fontCatalog}
-                        query={fontQuery}
-                        onQueryChange={setFontQuery}
-                      />
-                    )}
-                  <div className="settings-group-rows">
-                    {group.items.map((item) => (
-                      <div
-                        className={`settings-row${
-                          activeCategory.id === "appearance" &&
-                          group.title === "字体"
-                            ? " is-functional"
-                            : ""
-                        }`}
-                        key={item.label}
-                      >
-                        <div className="settings-row-copy">
-                          <strong>{item.label}</strong>
-                        </div>
-                        {activeCategory.id === "appearance" &&
-                        group.title === "字体" ? (
-                          <FontControl
-                            label={item.label}
-                            preferences={fontPreferences}
-                            systemFonts={fontCatalog.families}
+                <div className="settings-groups">
+                  {activeCategory.groups.map((group) => (
+                    <section className="settings-group" key={group.title}>
+                      <header>
+                        <h3>{group.title}</h3>
+                        <span>
+                          {String(group.items.length).padStart(2, "0")} 项
+                        </span>
+                      </header>
+                      {activeCategory.id === "appearance" &&
+                        group.title === "字体" && (
+                          <FontCatalogToolbar
+                            catalog={fontCatalog}
                             query={fontQuery}
-                            onChange={updateFontPreference}
-                          />
-                        ) : (
-                          <div
-                            className={`settings-value-slot is-${item.slot ?? "medium"}`}
-                            data-setting-slot
-                            aria-hidden="true"
+                            onQueryChange={setFontQuery}
                           />
                         )}
+                      <div className="settings-group-rows">
+                        {group.items.map((item) => (
+                          <div
+                            className={`settings-row${
+                              activeCategory.id === "appearance" &&
+                              group.title === "字体"
+                                ? " is-functional"
+                                : ""
+                            }`}
+                            key={item.label}
+                          >
+                            <div className="settings-row-copy">
+                              <strong>{item.label}</strong>
+                            </div>
+                            {activeCategory.id === "appearance" &&
+                            group.title === "字体" ? (
+                              <FontControl
+                                label={item.label}
+                                preferences={fontPreferences}
+                                systemFonts={fontCatalog.families}
+                                query={fontQuery}
+                                onChange={updateFontPreference}
+                              />
+                            ) : (
+                              <div
+                                className={`settings-value-slot is-${item.slot ?? "medium"}`}
+                                data-setting-slot
+                                aria-hidden="true"
+                              />
+                            )}
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                </section>
-              ))}
-            </div>
+                    </section>
+                  ))}
+                </div>
+
+                {activeCategory.id === "appearance" && (
+                  <ContentStyleSettings
+                    customStyle={customContentStyle}
+                    value={contentStyle}
+                    onChange={onContentStyleChange}
+                    onCustomChange={onCustomContentStyleChange}
+                  />
+                )}
+              </>
+            )}
           </div>
         </section>
       </div>
+    </section>
+  );
+}
+
+const shortcutGroupIcons: Record<
+  (typeof shortcutDefinitions)[number]["group"],
+  LucideIcon
+> = {
+  全局: Keyboard,
+  阅读: BookOpenText,
+  拓扑: Network
+};
+
+function ShortcutSettings({
+  shortcuts,
+  onChange,
+  onReset
+}: {
+  shortcuts: ShortcutPreferences;
+  onChange: (
+    actionId: ShortcutActionId,
+    binding: ShortcutBinding
+  ) => void;
+  onReset: () => void;
+}) {
+  const [recordingActionId, setRecordingActionId] =
+    useState<ShortcutActionId | null>(null);
+  const [shortcutError, setShortcutError] = useState("");
+  const groups = ["全局", "阅读", "拓扑"] as const;
+
+  const recordShortcut = (
+    actionId: ShortcutActionId,
+    event: ReactKeyboardEvent<HTMLButtonElement>
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.key === "Escape") {
+      setRecordingActionId(null);
+      setShortcutError("");
+      return;
+    }
+    const binding = shortcutFromKeyboardEvent(event);
+    if (!binding) {
+      setShortcutError("请同时按下一个非修饰键；Windows 键不可用于快捷键。");
+      return;
+    }
+    const conflict = conflictingShortcut(shortcuts, actionId, binding);
+    if (conflict) {
+      setShortcutError(
+        `${formatShortcut(binding)} 已用于“${conflict.label}”，请使用其他组合。`
+      );
+      return;
+    }
+    onChange(actionId, binding);
+    setRecordingActionId(null);
+    setShortcutError("");
+  };
+
+  return (
+    <div className="shortcut-settings">
+      <div className="shortcut-settings-toolbar">
+        <div>
+          <strong>应用快捷键</strong>
+          <span>点击快捷键后，直接按下新的组合键。</span>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            onReset();
+            setRecordingActionId(null);
+            setShortcutError("");
+          }}
+        >
+          <RotateCcw aria-hidden="true" size={15} />
+          恢复默认
+        </button>
+      </div>
+
+      <div className="shortcut-settings-note" role="note">
+        <Info aria-hidden="true" size={15} />
+        <span>
+          此处管理应用命令；Enter、Backspace、Escape 和控件方向键保留系统标准行为。
+        </span>
+      </div>
+
+      {shortcutError && (
+        <div className="shortcut-settings-error" role="alert">
+          {shortcutError}
+        </div>
+      )}
+
+      <div className="shortcut-settings-groups">
+        {groups.map((group) => {
+          const GroupIcon = shortcutGroupIcons[group];
+          const definitions = shortcutDefinitions.filter(
+            (definition) => definition.group === group
+          );
+          return (
+            <section className="shortcut-settings-group" key={group}>
+              <header>
+                <span>
+                  <GroupIcon aria-hidden="true" size={17} />
+                </span>
+                <div>
+                  <h3>{group}</h3>
+                  <small>{definitions.length} 项命令</small>
+                </div>
+              </header>
+              <div className="shortcut-settings-list">
+                {definitions.map((definition) => {
+                  const isRecording = recordingActionId === definition.id;
+                  return (
+                    <div className="shortcut-settings-row" key={definition.id}>
+                      <div>
+                        <strong>{definition.label}</strong>
+                        <span>{definition.description}</span>
+                      </div>
+                      <button
+                        className={`shortcut-recorder${
+                          isRecording ? " is-recording" : ""
+                        }`}
+                        type="button"
+                        aria-label={`修改快捷键：${definition.label}`}
+                        aria-pressed={isRecording}
+                        onClick={() => {
+                          setRecordingActionId(definition.id);
+                          setShortcutError("");
+                        }}
+                        onBlur={() =>
+                          setRecordingActionId((current) =>
+                            current === definition.id ? null : current
+                          )
+                        }
+                        onKeyDown={(event) =>
+                          isRecording &&
+                          recordShortcut(definition.id, event)
+                        }
+                      >
+                        <kbd>
+                          {isRecording
+                            ? "请按下新组合键"
+                            : formatShortcut(shortcuts[definition.id])}
+                        </kbd>
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+const contentStyleIcons: Record<ContentStyleId, LucideIcon> = {
+  traditional: LayoutTemplate,
+  "digital-garden": Sprout,
+  "cognitive-neural": BrainCircuit,
+  "cosmic-atlas": Orbit,
+  "academic-curation": Landmark,
+  custom: Plus
+};
+
+function ContentStyleSettings({
+  customStyle,
+  value,
+  onChange,
+  onCustomChange
+}: {
+  customStyle: CustomContentStyle;
+  value: ContentStyleId;
+  onChange: (style: ContentStyleId) => void;
+  onCustomChange: (style: CustomContentStyle) => void;
+}) {
+  const activeStyle = contentStyleDefinition(value, customStyle);
+  const ActiveStyleIcon = contentStyleIcons[activeStyle.id];
+
+  return (
+    <section
+      className="settings-content-style"
+      aria-labelledby="content-style-title"
+    >
+      <header>
+        <div>
+          <span>内容显示</span>
+          <h3 id="content-style-title">风格切换</h3>
+        </div>
+        <small>当前：{activeStyle.name}</small>
+      </header>
+
+      <div className="content-style-layout">
+        <div
+          className="content-style-options"
+          role="radiogroup"
+          aria-label="内容显示风格"
+        >
+          {contentStyles.map((style) => {
+            const StyleIcon = contentStyleIcons[style.id];
+            const isSelected = style.id === value;
+            return (
+              <label
+                className={`content-style-option${
+                  isSelected ? " is-selected" : ""
+                }`}
+                key={style.id}
+              >
+                <input
+                  type="radio"
+                  name="content-style"
+                  value={style.id}
+                  checked={isSelected}
+                  onChange={() => onChange(style.id)}
+                />
+                <span className="content-style-option-icon">
+                  <StyleIcon aria-hidden="true" size={18} />
+                </span>
+                <span className="content-style-option-copy">
+                  <strong>{style.name}</strong>
+                  <small>{style.englishName}</small>
+                </span>
+                <Check
+                  className="content-style-option-check"
+                  aria-hidden="true"
+                  size={16}
+                />
+              </label>
+            );
+          })}
+          <label
+            className={`content-style-option is-custom${
+              value === "custom" ? " is-selected" : ""
+            }`}
+          >
+            <input
+              type="radio"
+              name="content-style"
+              value="custom"
+              checked={value === "custom"}
+              aria-label="添加并使用自定义风格"
+              onChange={() => onChange("custom")}
+            />
+            <span className="content-style-option-icon">
+              <Plus aria-hidden="true" size={18} />
+            </span>
+            <span className="content-style-option-copy">
+              <strong>
+                {customStyle.name.trim() || "自定义风格"}
+              </strong>
+              <small>Custom</small>
+            </span>
+            <Check
+              className="content-style-option-check"
+              aria-hidden="true"
+              size={16}
+            />
+          </label>
+        </div>
+
+        <div className="content-style-preview" aria-live="polite">
+          <header>
+            <span className="content-style-preview-icon">
+              <ActiveStyleIcon aria-hidden="true" size={21} />
+            </span>
+            <div>
+              <span>当前风格</span>
+              <h4>{activeStyle.name}</h4>
+            </div>
+          </header>
+          <p>{activeStyle.description}</p>
+          {value === "custom" ? (
+            <div className="content-style-custom-form">
+              <label className="content-style-name-field">
+                <span>风格名称</span>
+                <input
+                  value={customStyle.name}
+                  aria-label="自定义风格名称"
+                  placeholder="例如：我的工作台"
+                  onChange={(event) =>
+                    onCustomChange({
+                      ...customStyle,
+                      name: event.target.value
+                    })
+                  }
+                />
+              </label>
+              <div className="content-style-custom-terms">
+                {contentTermLabels.map(({ key, label }) => (
+                  <label key={key}>
+                    <span>{label}</span>
+                    <input
+                      value={customStyle.terms[key]}
+                      aria-label={`自定义${label}表述`}
+                      placeholder={contentStyles[0].terms[key]}
+                      onChange={(event) =>
+                        onCustomChange({
+                          ...customStyle,
+                          terms: {
+                            ...customStyle.terms,
+                            [key]: event.target.value
+                          }
+                        })
+                      }
+                    />
+                  </label>
+                ))}
+              </div>
+              <small className="content-style-custom-hint">
+                留空的项目会使用传统模式表述；修改会即时应用。
+              </small>
+            </div>
+          ) : (
+            <dl>
+              {contentTermLabels.map(({ key, label }) => (
+                <div key={key}>
+                  <dt>{label}</dt>
+                  <dd>{activeStyle.terms[key]}</dd>
+                </div>
+              ))}
+            </dl>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ModelProviderSettings() {
+  const [providers, setProviders] = useState(initialModelProviders);
+  const [selectedProviderId, setSelectedProviderId] = useState("openai");
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [nextCustomProviderNumber, setNextCustomProviderNumber] = useState(2);
+  const selectedProvider =
+    providers.find((provider) => provider.id === selectedProviderId) ??
+    providers[0];
+  const defaultProviders = providers.filter(
+    (provider) => provider.kind === "default"
+  );
+  const customProviders = providers.filter(
+    (provider) => provider.kind === "custom"
+  );
+
+  const updateProvider = (
+    providerId: string,
+    patch: Partial<ModelProvider>
+  ) => {
+    setProviders((current) =>
+      current.map((provider) => {
+        if (patch.isDefault && provider.id !== providerId) {
+          return { ...provider, isDefault: false };
+        }
+        return provider.id === providerId ? { ...provider, ...patch } : provider;
+      })
+    );
+  };
+
+  const addCustomProvider = () => {
+    const id = `custom-${nextCustomProviderNumber}`;
+    const customProvider: ModelProvider = {
+      id,
+      name: `自定义服务 ${nextCustomProviderNumber}`,
+      shortName: "API",
+      kind: "custom",
+      tone: "slate",
+      brand: "custom",
+      protocol: "openai-compatible",
+      baseUrl: "",
+      endpointPath: "/chat/completions",
+      apiKey: "",
+      model: "",
+      enabled: false,
+      isDefault: false
+    };
+    setProviders((current) => [...current, customProvider]);
+    setNextCustomProviderNumber((current) => current + 1);
+    setSelectedProviderId(id);
+    setShowApiKey(false);
+  };
+
+  const removeSelectedProvider = () => {
+    if (selectedProvider.kind !== "custom") return;
+    setProviders((current) =>
+      current.filter((provider) => provider.id !== selectedProvider.id)
+    );
+    setSelectedProviderId(defaultProviders[0].id);
+    setShowApiKey(false);
+  };
+
+  const renderProviderList = (
+    title: string,
+    providerList: ModelProvider[],
+    allowAdd = false
+  ) => (
+    <section className="model-provider-section">
+      <header>
+        <span>{title}</span>
+        {allowAdd && (
+          <button
+            className="model-provider-add"
+            type="button"
+            aria-label="添加自定义服务商"
+            onClick={addCustomProvider}
+          >
+            <Plus aria-hidden="true" size={14} />
+            添加
+          </button>
+        )}
+      </header>
+      <div className="model-provider-list">
+        {providerList.map((provider) => {
+          const isSelected = provider.id === selectedProvider.id;
+          return (
+            <div
+              className={`model-provider-item${isSelected ? " is-selected" : ""}`}
+              key={provider.id}
+            >
+              <button
+                className="model-provider-select"
+                type="button"
+                aria-label={`配置 ${provider.name}`}
+                aria-current={isSelected ? "page" : undefined}
+                onClick={() => {
+                  setSelectedProviderId(provider.id);
+                  setShowApiKey(false);
+                }}
+              >
+                <ModelProviderMark provider={provider} />
+                <span className="model-provider-copy">
+                  <strong>{provider.name}</strong>
+                  <small>
+                    {provider.isDefault
+                      ? "当前默认"
+                      : provider.apiKey
+                        ? "密钥已填写"
+                        : "等待配置"}
+                  </small>
+                </span>
+              </button>
+              <label className="model-provider-switch">
+                <span className="sr-only">启用 {provider.name}</span>
+                <input
+                  type="checkbox"
+                  checked={provider.enabled}
+                  onChange={(event) =>
+                    updateProvider(provider.id, {
+                      enabled: event.target.checked
+                    })
+                  }
+                />
+                <span aria-hidden="true" />
+              </label>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+
+  return (
+    <div className="model-provider-layout">
+      <aside className="model-provider-rail" aria-label="模型服务列表">
+        <div className="model-provider-rail-intro">
+          <Server aria-hidden="true" size={16} />
+          <div>
+            <h3>模型服务列表</h3>
+            <p>选择服务商后，在右侧定义它的接口。</p>
+          </div>
+        </div>
+        {renderProviderList("默认服务商", defaultProviders)}
+        {renderProviderList("自定义服务商", customProviders, true)}
+      </aside>
+
+      <section
+        className="model-provider-detail"
+        aria-labelledby="model-provider-detail-title"
+      >
+        <header className="model-provider-detail-header">
+          <ModelProviderMark provider={selectedProvider} large />
+          <div>
+            <div className="model-provider-title-line">
+              <h3 id="model-provider-detail-title">{selectedProvider.name}</h3>
+              <span>
+                {selectedProvider.kind === "default" ? "内置服务" : "自定义服务"}
+              </span>
+            </div>
+            <p>定义请求地址、鉴权方式和该服务默认使用的模型。</p>
+          </div>
+          <button
+            className="model-provider-test"
+            type="button"
+            disabled
+            title="真实 API 调用尚未接入"
+          >
+            <Radio aria-hidden="true" size={15} />
+            测试连接
+          </button>
+        </header>
+
+        <div className="model-provider-status" role="note">
+          <KeyRound aria-hidden="true" size={16} />
+          <span>
+            本页当前只演示接口配置。API Key 尚未写入 Windows 安全存储，也不会发起网络请求。
+          </span>
+        </div>
+
+        <form className="model-provider-form" onSubmit={(event) => event.preventDefault()}>
+          <fieldset>
+            <legend>服务身份</legend>
+            <div className="model-provider-form-grid">
+              <label className="model-field">
+                <span>服务名称</span>
+                <input
+                  aria-label="服务名称"
+                  value={selectedProvider.name}
+                  readOnly={selectedProvider.kind === "default"}
+                  onChange={(event) =>
+                    updateProvider(selectedProvider.id, {
+                      name: event.target.value
+                    })
+                  }
+                />
+                <small>
+                  {selectedProvider.kind === "default"
+                    ? "内置服务名称保持固定"
+                    : "用于在服务商列表中识别这套接口"}
+                </small>
+              </label>
+
+              <label className="model-field">
+                <span>接口协议</span>
+                <select
+                  aria-label="接口协议"
+                  value={selectedProvider.protocol}
+                  onChange={(event) => {
+                    const protocol = event.target.value as ProviderProtocol;
+                    updateProvider(selectedProvider.id, {
+                      protocol,
+                      endpointPath:
+                        protocol === "anthropic-messages"
+                          ? "/messages"
+                          : "/chat/completions"
+                    });
+                  }}
+                >
+                  <option value="openai-compatible">OpenAI Compatible</option>
+                  <option value="anthropic-messages">Anthropic Messages</option>
+                </select>
+                <small>
+                  {selectedProvider.protocol === "anthropic-messages"
+                    ? "Claude 官方接口使用 Messages 请求格式"
+                    : "使用兼容的 Chat Completions 请求格式"}
+                </small>
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>接口定义</legend>
+            <label className="model-field is-wide">
+              <span>Base URL</span>
+              <input
+                aria-label="Base URL"
+                type="url"
+                spellCheck={false}
+                value={selectedProvider.baseUrl}
+                placeholder="https://api.example.com/v1"
+                onChange={(event) =>
+                  updateProvider(selectedProvider.id, {
+                    baseUrl: event.target.value
+                  })
+                }
+              />
+              <small>填写 API 根地址，不包含具体请求路径</small>
+            </label>
+
+            <div className="model-provider-form-grid">
+              <label className="model-field">
+                <span>请求路径</span>
+                <input
+                  aria-label="请求路径"
+                  spellCheck={false}
+                  value={selectedProvider.endpointPath}
+                  onChange={(event) =>
+                    updateProvider(selectedProvider.id, {
+                      endpointPath: event.target.value
+                    })
+                  }
+                />
+                <small>
+                  {selectedProvider.protocol === "anthropic-messages"
+                    ? "Anthropic Messages 默认使用 /messages"
+                    : "默认使用 /chat/completions"}
+                </small>
+              </label>
+
+              <label className="model-field">
+                <span>默认模型</span>
+                <input
+                  aria-label="默认模型"
+                  spellCheck={false}
+                  value={selectedProvider.model}
+                  placeholder="输入服务商提供的模型 ID"
+                  onChange={(event) =>
+                    updateProvider(selectedProvider.id, {
+                      model: event.target.value
+                    })
+                  }
+                />
+                <small>生成时可由具体动作覆盖</small>
+              </label>
+            </div>
+
+            <label className="model-field is-wide">
+              <span>API Key</span>
+              <span className="model-secret-input">
+                <input
+                  aria-label="API Key"
+                  type={showApiKey ? "text" : "password"}
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={selectedProvider.apiKey}
+                  placeholder="输入服务商密钥"
+                  onChange={(event) =>
+                    updateProvider(selectedProvider.id, {
+                      apiKey: event.target.value
+                    })
+                  }
+                />
+                <button
+                  type="button"
+                  aria-label={showApiKey ? "隐藏 API Key" : "显示 API Key"}
+                  onClick={() => setShowApiKey((current) => !current)}
+                >
+                  {showApiKey ? (
+                    <EyeOff aria-hidden="true" size={16} />
+                  ) : (
+                    <Eye aria-hidden="true" size={16} />
+                  )}
+                </button>
+              </span>
+              <small>正式实现将交由 Windows 安全存储管理</small>
+            </label>
+          </fieldset>
+
+          <fieldset className="model-provider-behavior">
+            <legend>服务行为</legend>
+            <label className="model-provider-check">
+              <input
+                type="checkbox"
+                checked={selectedProvider.enabled}
+                onChange={(event) =>
+                  updateProvider(selectedProvider.id, {
+                    enabled: event.target.checked
+                  })
+                }
+              />
+              <span>
+                <strong>启用此服务</strong>
+                <small>关闭后不会出现在生成动作的可用服务列表中</small>
+              </span>
+            </label>
+            <label className="model-provider-check">
+              <input
+                type="checkbox"
+                checked={selectedProvider.isDefault}
+                onChange={(event) =>
+                  updateProvider(selectedProvider.id, {
+                    isDefault: event.target.checked
+                  })
+                }
+              />
+              <span>
+                <strong>设为默认服务</strong>
+                <small>未指定服务商的生成动作将使用它</small>
+              </span>
+            </label>
+          </fieldset>
+        </form>
+
+        <section className="model-request-boundary" aria-labelledby="request-boundary-title">
+          <div className="model-request-boundary-heading">
+            <Braces aria-hidden="true" size={18} />
+            <div>
+              <h4 id="request-boundary-title">调用 JSON 的组装边界</h4>
+              <p>提示词与上下文不会在本页定义。</p>
+            </div>
+          </div>
+          <div className="model-request-flow" aria-label="调用 JSON 组成">
+            <span>服务商配置</span>
+            <b aria-hidden="true">+</b>
+            <span>提示词模板</span>
+            <b aria-hidden="true">+</b>
+            <span>当前上下文</span>
+            <b aria-hidden="true">→</b>
+            <strong>请求 JSON</strong>
+          </div>
+          <pre aria-label="请求 JSON 结构预览">{`{
+  "provider": "${selectedProvider.id}",
+  "model": "${selectedProvider.model || "<model-id>"}",
+  "messages": ["<prompt-template>", "<current-context>"]
+}`}</pre>
+        </section>
+
+        {selectedProvider.kind === "custom" && (
+          <div className="model-provider-danger">
+            <div>
+              <strong>移除自定义服务</strong>
+              <span>只移除此页面中的临时配置。</span>
+            </div>
+            <button type="button" onClick={removeSelectedProvider}>
+              <Trash2 aria-hidden="true" size={15} />
+              删除服务
+            </button>
+          </div>
+        )}
       </section>
-    </>
+    </div>
   );
 }
 

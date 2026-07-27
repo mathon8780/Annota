@@ -8,7 +8,8 @@ import {
   type ClipboardEvent,
   type CompositionEvent,
   type FormEvent,
-  type KeyboardEvent
+  type KeyboardEvent,
+  type PointerEvent
 } from "react";
 import type {
   ContentBlock,
@@ -22,6 +23,8 @@ import {
   toggleInlineMark,
   transformMarksForTextChange
 } from "../utils/inlineMarks";
+import { matchesShortcut } from "../utils/shortcuts";
+import type { ShortcutBinding } from "../utils/shortcuts";
 
 interface EditorRange {
   blockId: string;
@@ -35,6 +38,7 @@ interface BlockEditorProps {
   blocks: ContentBlock[];
   formatCommand: InlineFormatCommand | null;
   resetVersion: number;
+  saveShortcut: ShortcutBinding;
   onChange: (blocks: ContentBlock[]) => void;
   onSelection: (selection: SelectionState | null) => void;
   onSaveState: (label: string) => void;
@@ -171,11 +175,17 @@ function replaceBlockRange(
   );
 }
 
+function removeEmptyBlocks(blocks: ContentBlock[]) {
+  const populatedBlocks = blocks.filter((block) => block.text.length > 0);
+  return populatedBlocks.length > 0 ? populatedBlocks : blocks.slice(0, 1);
+}
+
 export function BlockEditor({
   articleId,
   blocks,
   formatCommand,
   resetVersion,
+  saveShortcut,
   onChange,
   onSelection,
   onSaveState
@@ -186,6 +196,7 @@ export function BlockEditor({
   const editorRef = useRef<HTMLDivElement>(null);
   const handledFormatCommand = useRef(0);
   const pendingRange = useRef<EditorRange | null>(null);
+  const activeBlockId = useRef<string | null>(null);
   const blockSequence = useRef(0);
 
   useEffect(() => {
@@ -194,6 +205,7 @@ export function BlockEditor({
 
   useEffect(() => {
     pendingRange.current = null;
+    activeBlockId.current = null;
     onSelection(null);
     window.getSelection()?.removeAllRanges();
     editorRef.current?.blur();
@@ -263,9 +275,11 @@ export function BlockEditor({
     if (!root) return;
     const range = readEditorRange(root);
     if (!range || range.start === range.end || !range.text.trim()) {
+      activeBlockId.current = range?.blockId ?? null;
       onSelection(null);
       return;
     }
+    activeBlockId.current = range.blockId;
     onSelection(range);
   };
 
@@ -275,6 +289,7 @@ export function BlockEditor({
     const block = findBlockElement(event.target as Node, root);
     const blockId = block?.dataset.blockId;
     if (!block || !blockId) return;
+    activeBlockId.current = blockId;
     const range = readEditorRange(root);
     if (range) pendingRange.current = range;
     updateText(blockId, block.textContent ?? "");
@@ -292,7 +307,7 @@ export function BlockEditor({
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if ((event.ctrlKey || event.metaKey) && event.key.toLocaleLowerCase() === "s") {
+    if (matchesShortcut(event, saveShortcut)) {
       event.preventDefault();
       commitNow();
       return;
@@ -308,6 +323,7 @@ export function BlockEditor({
     if (event.key === "Enter") {
       event.preventDefault();
       const nextBlockId = createBlockId();
+      activeBlockId.current = nextBlockId;
       setDraft((value) => {
         const blockIndex = value.findIndex((block) => block.id === range.blockId);
         if (blockIndex < 0) return value;
@@ -356,6 +372,7 @@ export function BlockEditor({
           end: caretOffset,
           text: ""
         };
+        activeBlockId.current = previous.id;
         return [
           ...value.slice(0, currentIndex - 1),
           merged,
@@ -434,6 +451,7 @@ export function BlockEditor({
         end: finalLineLength,
         text: ""
       };
+      activeBlockId.current = finalBlock.id;
       return [
         ...value.slice(0, blockIndex),
         ...nextBlocks,
@@ -451,6 +469,42 @@ export function BlockEditor({
     if (block && blockId) updateText(blockId, block.textContent ?? "");
   };
 
+  const saveDraftImmediately = (nextDraft: ContentBlock[]) => {
+    window.clearTimeout(timer.current);
+    pendingRange.current = null;
+    setDraft(nextDraft);
+    onChange(nextDraft);
+    onSaveState("已保存");
+  };
+
+  const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    const root = event.currentTarget;
+    const nextBlock = findBlockElement(event.target as Node, root);
+    const nextBlockId = nextBlock?.dataset.blockId;
+    const currentBlockId =
+      activeBlockId.current ?? readEditorRange(root)?.blockId ?? null;
+    if (
+      !currentBlockId ||
+      !nextBlockId ||
+      nextBlockId === currentBlockId ||
+      draft.length <= 1
+    ) {
+      return;
+    }
+    const currentBlock = draft.find((block) => block.id === currentBlockId);
+    if (!currentBlock || currentBlock.text.length > 0) return;
+    activeBlockId.current = nextBlockId;
+    saveDraftImmediately(
+      draft.filter((block) => block.id !== currentBlockId)
+    );
+  };
+
+  const handleBlur = () => {
+    const nextDraft = removeEmptyBlocks(draft);
+    if (nextDraft.length === draft.length) return;
+    saveDraftImmediately(nextDraft);
+  };
+
   return (
     <div
       ref={editorRef}
@@ -463,9 +517,11 @@ export function BlockEditor({
       aria-multiline="true"
       onInput={handleInput}
       onMouseUp={syncSelection}
+      onPointerDown={handlePointerDown}
       onKeyUp={syncSelection}
       onKeyDown={handleKeyDown}
       onPaste={handlePaste}
+      onBlur={handleBlur}
       onCompositionStart={() => setIsComposing(true)}
       onCompositionEnd={handleCompositionEnd}
     >

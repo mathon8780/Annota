@@ -19,6 +19,11 @@ import {
   ZoomOut
 } from "lucide-react";
 import type { ArticleNode } from "../types";
+import {
+  formatShortcut,
+  matchesShortcut
+} from "../utils/shortcuts";
+import type { ShortcutBinding } from "../utils/shortcuts";
 
 interface TopologyPanelProps {
   articles: Record<string, ArticleNode>;
@@ -27,6 +32,7 @@ interface TopologyPanelProps {
   onNavigate: (id: string) => void;
   fullScreen: boolean;
   onFullScreen: (value: boolean) => void;
+  focusShortcut: ShortcutBinding;
 }
 
 interface Position {
@@ -112,7 +118,8 @@ export function TopologyPanel({
   currentId,
   onNavigate,
   fullScreen,
-  onFullScreen
+  onFullScreen,
+  focusShortcut
 }: TopologyPanelProps) {
   const layout = useMemo(() => buildLayout(articles, rootId), [articles, rootId]);
   const [scale, setScale] = useState(0.78);
@@ -160,10 +167,7 @@ export function TopologyPanel({
         target instanceof HTMLElement &&
         (target.matches("textarea, input, select") || target.isContentEditable);
       if (
-        event.key.toLocaleLowerCase() !== "f" ||
-        event.ctrlKey ||
-        event.altKey ||
-        event.metaKey ||
+        !matchesShortcut(event, focusShortcut) ||
         editing
       ) {
         return;
@@ -180,7 +184,7 @@ export function TopologyPanel({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [focusCurrent, fullScreen, open, pinned]);
+  }, [focusCurrent, focusShortcut, fullScreen, open, pinned]);
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
@@ -449,7 +453,7 @@ export function TopologyPanel({
       </div>
       <footer className="topology-footer">
         <span>滚轮缩放 · 拖动浏览 · 点击跳转</span>
-        <kbd>F</kbd>
+        <kbd>{formatShortcut(focusShortcut)}</kbd>
         <span>聚焦</span>
       </footer>
       </div>

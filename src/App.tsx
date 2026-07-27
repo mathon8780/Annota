@@ -4,13 +4,44 @@ import { HomePage } from "./components/HomePage";
 import { ReaderPage } from "./components/ReaderPage";
 import { WindowTitleBar } from "./components/WindowTitleBar";
 import { useAppStore } from "./store/AppStore";
+import {
+  applyContentStyle,
+  contentStyleDefinition,
+  loadCustomContentStyle,
+  loadContentStyle,
+  saveCustomContentStyle,
+  saveContentStyle
+} from "./utils/contentDisplay";
+import type {
+  ContentStyleId,
+  CustomContentStyle
+} from "./utils/contentDisplay";
+import {
+  defaultShortcutPreferences,
+  loadShortcutPreferences,
+  matchesShortcut,
+  saveShortcutPreferences
+} from "./utils/shortcuts";
+import type {
+  ShortcutActionId,
+  ShortcutBinding
+} from "./utils/shortcuts";
 
 export default function App() {
   const { data, currentArticle, openNotebook } = useAppStore();
   const [commandOpen, setCommandOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [contentStyle, setContentStyle] = useState(loadContentStyle);
+  const [customContentStyle, setCustomContentStyle] = useState(
+    loadCustomContentStyle
+  );
+  const [shortcuts, setShortcuts] = useState(loadShortcutPreferences);
   const commandRef = useRef<HTMLDialogElement>(null);
+  const contentTerms = contentStyleDefinition(
+    contentStyle,
+    customContentStyle
+  ).terms;
 
   const results = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase("zh-CN");
@@ -28,14 +59,18 @@ export default function App() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.ctrlKey && event.key.toLocaleLowerCase() === "k") {
+      if (matchesShortcut(event, shortcuts["open-search"])) {
         event.preventDefault();
         setCommandOpen(true);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [shortcuts]);
+
+  useEffect(() => {
+    applyContentStyle(contentStyle);
+  }, [contentStyle]);
 
   useEffect(() => {
     const dialog = commandRef.current;
@@ -56,16 +91,51 @@ export default function App() {
     setQuery("");
   };
 
+  const changeContentStyle = (nextStyle: ContentStyleId) => {
+    setContentStyle(nextStyle);
+    saveContentStyle(nextStyle);
+  };
+
+  const changeCustomContentStyle = (nextStyle: CustomContentStyle) => {
+    setCustomContentStyle(nextStyle);
+    saveCustomContentStyle(nextStyle);
+  };
+
+  const changeShortcut = (
+    actionId: ShortcutActionId,
+    binding: ShortcutBinding
+  ) => {
+    setShortcuts((current) => {
+      const next = { ...current, [actionId]: binding };
+      saveShortcutPreferences(next);
+      return next;
+    });
+  };
+
+  const resetShortcuts = () => {
+    const next = defaultShortcutPreferences();
+    setShortcuts(next);
+    saveShortcutPreferences(next);
+  };
+
   return (
     <div className="desktop-shell">
       <WindowTitleBar pageTitle={settingsOpen ? "设置" : currentArticle?.title} />
       <div className="desktop-content">
         <div className="route-stage">
           {currentArticle ? (
-            <ReaderPage />
+            <ReaderPage shortcuts={shortcuts} terms={contentTerms} />
           ) : (
             <HomePage
+              contentStyle={contentStyle}
+              customContentStyle={customContentStyle}
+              shortcuts={shortcuts}
+              terms={contentTerms}
               settingsOpen={settingsOpen}
+              onContentStyleChange={changeContentStyle}
+              onCustomContentStyleChange={changeCustomContentStyle}
+              onShortcutChange={changeShortcut}
+              onResetShortcuts={resetShortcuts}
               onOpenSearch={() => setCommandOpen(true)}
               onOpenSettings={() => setSettingsOpen(true)}
               onCloseSettings={() => setSettingsOpen(false)}
@@ -91,13 +161,13 @@ export default function App() {
           <header className="command-search">
             <Search aria-hidden="true" size={18} />
             <label className="sr-only" htmlFor="global-search">
-              搜索全部笔记与子文章
+              搜索全部笔记与{contentTerms.subNotes}
             </label>
             <input
               id="global-search"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="搜索标题、正文、标签…"
+              placeholder={`搜索标题、正文、${contentTerms.tags}…`}
             />
             <kbd>Esc</kbd>
             <button className="icon-button compact" type="button" onClick={() => setCommandOpen(false)}>
@@ -106,7 +176,7 @@ export default function App() {
             </button>
           </header>
           <div className="command-heading" id="command-title">
-            {query ? `${results.length} 个结果` : "最近的节点"}
+            {query ? `${results.length} 个结果` : contentTerms.recent}
           </div>
           <div className="command-results" role="listbox">
             {results.length ? (

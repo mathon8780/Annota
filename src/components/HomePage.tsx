@@ -18,10 +18,32 @@ import {
 } from "lucide-react";
 import { useAppStore } from "../store/AppStore";
 import type { Notebook } from "../types";
+import type {
+  ContentStyleId,
+  ContentTerms,
+  CustomContentStyle
+} from "../utils/contentDisplay";
+import { formatShortcut } from "../utils/shortcuts";
+import type {
+  ShortcutActionId,
+  ShortcutBinding,
+  ShortcutPreferences
+} from "../utils/shortcuts";
 import { SettingsPage } from "./SettingsPage";
 
 interface HomePageProps {
+  contentStyle: ContentStyleId;
+  customContentStyle: CustomContentStyle;
+  shortcuts: ShortcutPreferences;
+  terms: ContentTerms;
   settingsOpen: boolean;
+  onContentStyleChange: (style: ContentStyleId) => void;
+  onCustomContentStyleChange: (style: CustomContentStyle) => void;
+  onShortcutChange: (
+    actionId: ShortcutActionId,
+    binding: ShortcutBinding
+  ) => void;
+  onResetShortcuts: () => void;
   onOpenSearch: () => void;
   onOpenSettings: () => void;
   onCloseSettings: () => void;
@@ -54,7 +76,15 @@ function formatDate(value: string) {
 }
 
 export function HomePage({
+  contentStyle,
+  customContentStyle,
+  shortcuts,
+  terms,
   settingsOpen,
+  onContentStyleChange,
+  onCustomContentStyleChange,
+  onShortcutChange,
+  onResetShortcuts,
   onOpenSearch,
   onOpenSettings,
   onCloseSettings
@@ -105,29 +135,29 @@ export function HomePage({
   };
 
   const sidebarActions = [
-    { icon: LibraryBig, label: "花园概览", active: !settingsOpen },
-    { icon: Network, label: "拓扑导航" },
-    { icon: History, label: "阅读足迹" }
+    { id: "home", icon: LibraryBig, label: terms.home, active: !settingsOpen },
+    { id: "graph", icon: Network, label: terms.graph, active: false },
+    { id: "recent", icon: History, label: terms.recent, active: false }
   ];
 
   return (
     <div className="home-app">
       <main className="home-workspace">
-        <aside className="home-sidebar" aria-label="主页导航">
+        <aside className="home-sidebar" aria-label={`${terms.home}导航`}>
           <nav>
-            {sidebarActions.map(({ icon: Icon, label, active }) => (
+            {sidebarActions.map(({ id, icon: Icon, label, active }) => (
               <button
-                key={label}
+                key={id}
                 className={`home-nav-item${active ? " is-active" : ""}`}
                 type="button"
                 onClick={() =>
-                  label === "花园概览"
+                  id === "home"
                     ? onCloseSettings()
                     : !active &&
                   setNotice(
-                    label === "拓扑导航"
-                      ? "请先打开一篇笔记，再从右下角展开或全屏查看拓扑。"
-                      : "最近打开的主笔记已按时间显示在当前看板。"
+                    id === "graph"
+                      ? `请先打开一篇笔记，再从右下角展开或全屏查看${terms.graph}。`
+                      : `${terms.recent}已按时间显示在当前看板。`
                   )
                 }
               >
@@ -137,7 +167,7 @@ export function HomePage({
             ))}
           </nav>
 
-          <div className="sidebar-section-title">知识维度</div>
+          <div className="sidebar-section-title">{terms.folders}</div>
           <div className="dimension-list">
             {[
               ["技术学习", "08"],
@@ -173,16 +203,26 @@ export function HomePage({
           </div>
         </aside>
 
-        <div className="home-content">
+        <div
+          className={`home-content${settingsOpen ? " is-settings-open" : ""}`}
+        >
           {settingsOpen ? (
-            <SettingsPage onBack={onCloseSettings} />
+            <SettingsPage
+              contentStyle={contentStyle}
+              customContentStyle={customContentStyle}
+              shortcuts={shortcuts}
+              onContentStyleChange={onContentStyleChange}
+              onCustomContentStyleChange={onCustomContentStyleChange}
+              onShortcutChange={onShortcutChange}
+              onResetShortcuts={onResetShortcuts}
+            />
           ) : (
             <>
           <header className="home-topbar">
             <button className="global-search-trigger" type="button" onClick={onOpenSearch}>
               <Search aria-hidden="true" size={17} />
-              <span>搜索标题、正文与标签</span>
-              <kbd>Ctrl K</kbd>
+              <span>搜索标题、正文与{terms.tags}</span>
+              <kbd>{formatShortcut(shortcuts["open-search"])}</kbd>
             </button>
             <div className="home-top-actions">
               <span className="local-status">
@@ -208,7 +248,7 @@ export function HomePage({
                 onClick={() => newDialogRef.current?.showModal()}
               >
                 <Plus aria-hidden="true" size={17} />
-                新建笔记
+                {terms.newNote}
               </button>
               <button className="button secondary" type="button" onClick={() => fileRef.current?.click()}>
                 <FileInput aria-hidden="true" size={17} />
@@ -243,7 +283,7 @@ export function HomePage({
               <Boxes aria-hidden="true" size={17} />
               <span>
                 <strong>{totalTags}</strong>
-                知识标签
+                {terms.tags}
               </span>
             </div>
             <div className="ledger-note">
@@ -254,20 +294,20 @@ export function HomePage({
 
           <div className="planned-ai" aria-disabled="true">
             <Sparkles aria-hidden="true" size={17} />
-            <span>从一个问题开始构建节点</span>
+            <span>{terms.highlightCreate}</span>
             <small>规划中 · 请在正文选区后使用解释或翻译</small>
           </div>
 
           <section className="recent-section" aria-labelledby="recent-title">
             <header className="recent-header">
               <div>
-                <h2 id="recent-title">最近笔记</h2>
+                <h2 id="recent-title">{terms.recent}</h2>
                 <span>主笔记按最近打开或修改排序</span>
               </div>
               <div className="recent-tools">
                 <label className="inline-filter">
                   <Search aria-hidden="true" size={15} />
-                  <span className="sr-only">筛选最近笔记</span>
+                  <span className="sr-only">筛选{terms.recent}</span>
                   <input
                     value={filter}
                     onChange={(event) => setFilter(event.target.value)}
@@ -297,6 +337,7 @@ export function HomePage({
                     key={notebook.id}
                     notebook={notebook}
                     descendants={countDescendants(notebook.rootId, data.articles)}
+                    subNotesLabel={terms.subNotes}
                     onOpen={() => openNotebook(notebook.id)}
                   />
                 ))}
@@ -335,7 +376,7 @@ export function HomePage({
         >
           <header>
             <div>
-              <h2 id="new-note-title">新建主笔记</h2>
+              <h2 id="new-note-title">{terms.newNote}</h2>
               <p>创建一棵新的知识树，稍后可在正文中继续编辑。</p>
             </div>
             <button className="icon-button" type="button" onClick={() => newDialogRef.current?.close()}>
@@ -369,10 +410,12 @@ export function HomePage({
 function NotebookCard({
   notebook,
   descendants,
+  subNotesLabel,
   onOpen
 }: {
   notebook: Notebook;
   descendants: number;
+  subNotesLabel: string;
   onOpen: () => void;
 }) {
   return (
@@ -393,7 +436,9 @@ function NotebookCard({
       <span className="notebook-footer">
         <span className="connection-count">
           <FolderTree aria-hidden="true" size={14} />
-          {descendants ? `${descendants} 个衍生节点` : "尚无子节点"}
+          {descendants
+            ? `${descendants} 个${subNotesLabel}`
+            : `尚无${subNotesLabel}`}
         </span>
         <span className="notebook-tags">
           {notebook.tags.slice(0, 2).map((tag) => (

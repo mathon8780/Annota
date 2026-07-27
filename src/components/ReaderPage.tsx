@@ -23,6 +23,12 @@ import type {
   InlineMarkType,
   SelectionState
 } from "../types";
+import type { ContentTerms } from "../utils/contentDisplay";
+import {
+  formatShortcut,
+  matchesShortcut
+} from "../utils/shortcuts";
+import type { ShortcutPreferences } from "../utils/shortcuts";
 import { BlockEditor } from "./BlockEditor";
 import { Brand } from "./Brand";
 import { InlineFormattingToolbar } from "./InlineFormattingToolbar";
@@ -71,7 +77,13 @@ function descendants(id: string, articles: Record<string, ArticleNode>) {
   return seen.size;
 }
 
-export function ReaderPage() {
+export function ReaderPage({
+  shortcuts,
+  terms
+}: {
+  shortcuts: ShortcutPreferences;
+  terms: ContentTerms;
+}) {
   const {
     data,
     currentArticle,
@@ -167,22 +179,34 @@ export function ReaderPage() {
       const editing =
         target instanceof HTMLElement &&
         (target.matches("textarea, input") || target.isContentEditable);
-      if (event.altKey && event.key === "ArrowLeft" && currentArticle?.parentId) {
+      if (
+        matchesShortcut(event, shortcuts["go-parent"]) &&
+        currentArticle?.parentId
+      ) {
         event.preventDefault();
         navigateTo(currentArticle.parentId);
       }
-      if (event.ctrlKey && event.key.toLocaleLowerCase() === "g") {
+      if (matchesShortcut(event, shortcuts["toggle-topology"])) {
         event.preventDefault();
         setFullTopology((value) => !value);
       }
-      if (event.ctrlKey && event.key === "Home" && !editing && currentNotebook) {
+      if (
+        matchesShortcut(event, shortcuts["go-root"]) &&
+        !editing &&
+        currentNotebook
+      ) {
         event.preventDefault();
         navigateTo(currentNotebook.rootId);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [currentArticle?.parentId, currentNotebook, navigateTo]);
+  }, [
+    currentArticle?.parentId,
+    currentNotebook,
+    navigateTo,
+    shortcuts
+  ]);
 
   if (!currentArticle || !currentNotebook) return null;
 
@@ -292,7 +316,12 @@ export function ReaderPage() {
       style={{ "--reading-path-width": `${readingPathWidth}px` } as CSSProperties}
     >
       <header className="reader-topbar">
-        <button className="reader-home-button" type="button" onClick={goHome} aria-label="返回主页">
+        <button
+          className="reader-home-button"
+          type="button"
+          onClick={goHome}
+          aria-label={`返回${terms.home}`}
+        >
           <Brand compact />
           <Home aria-hidden="true" size={16} />
         </button>
@@ -300,10 +329,10 @@ export function ReaderPage() {
         <div className="reader-meta">
           <span className="type-badge">{currentArticle.type}</span>
           <span>第 {path.length} 层</span>
-          <span>{childNodes.length} 个子文章</span>
+          <span>{childNodes.length} 个{terms.subNotes}</span>
         </div>
 
-        <div className="generation-actions" aria-label="选区生成动作">
+        <div className="generation-actions" aria-label={terms.highlightCreate}>
           <button
             className="generation-button"
             type="button"
@@ -412,11 +441,12 @@ export function ReaderPage() {
           aria-label="文章阅读区域"
           onPointerDown={handleReaderSurfacePointerDown}
         >
+          <InlineFormattingToolbar
+            selection={selection}
+            onFormat={applyInlineFormat}
+          />
+
           <div className="article-scroll-region">
-            <InlineFormattingToolbar
-              selection={selection}
-              onFormat={applyInlineFormat}
-            />
             <article
               className="article-column"
               data-motion={articleMotion}
@@ -447,6 +477,7 @@ export function ReaderPage() {
                 blocks={currentArticle.blocks}
                 formatCommand={formatCommand}
                 resetVersion={editorResetVersion}
+                saveShortcut={shortcuts["save-article"]}
                 onChange={(blocks) => updateBlocks(currentArticle.id, blocks)}
                 onSelection={setSelection}
                 onSaveState={setSaveState}
@@ -473,9 +504,12 @@ export function ReaderPage() {
             </article>
           </div>
 
-          <aside className="children-column" aria-label="下一级子文章">
+          <aside
+            className="children-column"
+            aria-label={`下一级${terms.subNotes}`}
+          >
             <header>
-              <strong>{currentArticle.title} 的子文章</strong>
+              <strong>{currentArticle.title} 的{terms.subNotes}</strong>
               <small>{childNodes.length + activeJobs.length} 个</small>
             </header>
 
@@ -502,7 +536,7 @@ export function ReaderPage() {
                   className="child-card"
                   type="button"
                   key={child.id}
-                  aria-label={`打开子文章：${child.title}`}
+                  aria-label={`打开${terms.subNotes}：${child.title}`}
                   onClick={() => navigateTo(child.id)}
                 >
                   <span className="child-card-icon">
@@ -526,7 +560,7 @@ export function ReaderPage() {
               {!childNodes.length && !activeJobs.length && (
                 <div className="children-empty">
                   <MessageSquareText aria-hidden="true" size={20} />
-                  <strong>还没有下一级文章</strong>
+                  <strong>还没有下一级{terms.subNotes}</strong>
                   <p>在左侧正文中选择一段文字，然后点击顶部“解释”或“翻译”。</p>
                 </div>
               )}
@@ -542,6 +576,7 @@ export function ReaderPage() {
         onNavigate={navigateTo}
         fullScreen={fullTopology}
         onFullScreen={setFullTopology}
+        focusShortcut={shortcuts["focus-topology"]}
       />
 
       {notice && (
@@ -553,7 +588,7 @@ export function ReaderPage() {
 
       <div className="reader-shortcut-hint" aria-hidden="true">
         <Network size={14} />
-        Ctrl G 打开拓扑
+        {formatShortcut(shortcuts["toggle-topology"])} 打开拓扑
       </div>
     </div>
   );

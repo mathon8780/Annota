@@ -9,6 +9,7 @@ import {
 import {
   Bold,
   Check,
+  ChevronDown,
   Highlighter,
   Italic,
   Palette,
@@ -129,6 +130,15 @@ export function InlineFormattingToolbar({
     setOpenMenu(null);
   };
 
+  const applyCurrentColor = (kind: ColorMenuKind) => {
+    setOpenMenu(null);
+    if (kind === "text") {
+      onFormat("textColor", textColor);
+    } else {
+      onFormat("backgroundColor", backgroundColor);
+    }
+  };
+
   const renderColorMenu = (kind: ColorMenuKind) => {
     if (openMenu !== kind) return null;
     const isText = kind === "text";
@@ -211,15 +221,12 @@ export function InlineFormattingToolbar({
 
       <div className="formatting-color-group">
         <button
-          ref={textColorButtonRef}
           className="formatting-color-button"
           type="button"
           disabled={disabled}
           aria-label="文字颜色"
-          aria-expanded={openMenu === "text"}
-          aria-haspopup="dialog"
-          title={disabled ? "请先选择正文文字" : "文字颜色"}
-          onClick={() => setOpenMenu((value) => value === "text" ? null : "text")}
+          title={disabled ? "请先选择正文文字" : "应用文字颜色"}
+          onClick={() => applyCurrentColor("text")}
         >
           <Type aria-hidden="true" size={17} />
           <span
@@ -228,22 +235,30 @@ export function InlineFormattingToolbar({
             aria-hidden="true"
           ></span>
         </button>
+        <button
+          ref={textColorButtonRef}
+          className="formatting-color-menu-button"
+          type="button"
+          disabled={disabled}
+          aria-label="选择文字颜色"
+          aria-expanded={openMenu === "text"}
+          aria-haspopup="dialog"
+          title="选择文字颜色"
+          onClick={() => setOpenMenu((value) => value === "text" ? null : "text")}
+        >
+          <ChevronDown aria-hidden="true" size={13} />
+        </button>
         {renderColorMenu("text")}
       </div>
 
       <div className="formatting-color-group">
         <button
-          ref={backgroundColorButtonRef}
           className="formatting-color-button"
           type="button"
           disabled={disabled}
           aria-label="背景标注颜色"
-          aria-expanded={openMenu === "background"}
-          aria-haspopup="dialog"
-          title={disabled ? "请先选择正文文字" : "背景标注颜色"}
-          onClick={() =>
-            setOpenMenu((value) => value === "background" ? null : "background")
-          }
+          title={disabled ? "请先选择正文文字" : "应用背景标注颜色"}
+          onClick={() => applyCurrentColor("background")}
         >
           <Highlighter aria-hidden="true" size={17} />
           <span
@@ -251,6 +266,21 @@ export function InlineFormattingToolbar({
             style={{ backgroundColor }}
             aria-hidden="true"
           ></span>
+        </button>
+        <button
+          ref={backgroundColorButtonRef}
+          className="formatting-color-menu-button"
+          type="button"
+          disabled={disabled}
+          aria-label="选择背景标注颜色"
+          aria-expanded={openMenu === "background"}
+          aria-haspopup="dialog"
+          title="选择背景标注颜色"
+          onClick={() =>
+            setOpenMenu((value) => value === "background" ? null : "background")
+          }
+        >
+          <ChevronDown aria-hidden="true" size={13} />
         </button>
         {renderColorMenu("background")}
       </div>
