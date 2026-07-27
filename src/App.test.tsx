@@ -118,6 +118,12 @@ describe("Annota core flow", () => {
       "246"
     );
 
+    const editor = screen.getByRole("textbox", { name: "编辑文章正文" });
+    const firstBlock = editor.querySelector<HTMLElement>("[data-block-id]")!;
+    setDocumentSelection(firstBlock, 0, 1);
+    fireEvent.mouseUp(editor);
+    expect(container.querySelector(".article-column")).toHaveAttribute("data-motion", "settle");
+
     const childrenPanel = screen.getByRole("complementary", { name: "下一级子文章" });
     await user.click(within(childrenPanel).getByRole("button", { name: /Component 为什么应该保持纯数据/ }));
     expect(container.querySelector(".article-column")).toHaveAttribute("data-motion", "forward");

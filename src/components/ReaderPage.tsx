@@ -32,6 +32,8 @@ const READING_PATH_DEFAULT_WIDTH = 246;
 const READING_PATH_MIN_WIDTH = 190;
 const READING_PATH_MAX_WIDTH = 420;
 const READING_PATH_STORAGE_KEY = "annota:reading-path-width";
+type ArticleMotion = "settle" | "forward" | "back";
+
 const READER_INTERACTIVE_TARGETS = [
   "button",
   "a",
@@ -93,12 +95,18 @@ export function ReaderPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const noticeTimer = useRef<number>();
   const formatCommandSequence = useRef(0);
-  const previousArticleRef = useRef<ArticleNode | null>(null);
   const pathResizeRef = useRef<{
     pointerId: number;
     startX: number;
     startWidth: number;
   } | null>(null);
+  const [articleTransition, setArticleTransition] = useState<{
+    articleId: string | null;
+    motion: ArticleMotion;
+  }>(() => ({
+    articleId: currentArticle?.id ?? null,
+    motion: "settle"
+  }));
 
   const path = useMemo(() => {
     if (!currentArticle) return [];
@@ -126,13 +134,20 @@ export function ReaderPage() {
     [currentArticle?.id, data.jobs]
   );
 
-  const previousArticle = previousArticleRef.current;
-  const articleMotion =
-    !currentArticle || !previousArticle
-      ? "settle"
-      : currentArticle.childIds.includes(previousArticle.id)
+  let articleMotion = articleTransition.motion;
+  if (currentArticle && currentArticle.id !== articleTransition.articleId) {
+    articleMotion =
+      articleTransition.articleId &&
+      currentArticle.childIds.includes(articleTransition.articleId)
         ? "back"
-        : "forward";
+        : articleTransition.articleId
+          ? "forward"
+          : "settle";
+    setArticleTransition({
+      articleId: currentArticle.id,
+      motion: articleMotion
+    });
+  }
 
   const showNotice = useCallback((message: string) => {
     setNotice(message);
@@ -145,10 +160,6 @@ export function ReaderPage() {
     setFormatCommand(null);
     setSaveState("已保存到本机");
   }, [currentArticle?.id]);
-
-  useEffect(() => {
-    previousArticleRef.current = currentArticle;
-  }, [currentArticle]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
