@@ -97,6 +97,80 @@ const articles: Record<string, ArticleNode> = {
       ["paragraph", "Entity 通常只是一个带版本的索引。它的意义来自当前关联的组件集合，而不是继承层级或对象方法。"]
     ])
   },
+  "cpp-polymorphism-root": {
+    id: "cpp-polymorphism-root",
+    rootId: "cpp-polymorphism-root",
+    parentId: null,
+    title: "虚函数与动态多态",
+    summary: "虚函数让程序通过基类指针或引用，根据对象的实际动态类型选择最终重写版本。",
+    type: "主文章",
+    tags: ["C++", "多态", "继承"],
+    childIds: [],
+    createdAt: "2026-07-28T09:05:00+08:00",
+    updatedAt: "2026-07-28T15:42:00+08:00",
+    blocks: blocks("cpp-polymorphism-root", [
+      ["quote", "虚函数解决的是“统一接口，不同行为”：调用方依赖基类接口，运行时再由对象的动态类型决定具体实现。"],
+      ["h2", "静态类型与动态类型"],
+      ["paragraph", "基类指针的静态类型在编译期已知，它所指对象的动态类型则参与运行时虚分派。非虚成员和重载选择通常仍由静态类型决定。"],
+      ["h2", "正确重写的边界"],
+      ["paragraph", "派生函数需要匹配函数名、参数、const 限定与引用限定符。使用 override 能让编译器检查重写关系，避免同名函数意外隐藏基类接口。"]
+    ])
+  },
+  "cpp-vtable-root": {
+    id: "cpp-vtable-root",
+    rootId: "cpp-vtable-root",
+    parentId: null,
+    title: "虚函数表",
+    summary: "理解主流编译器如何用 vtable 与 vptr 实现运行时多态，以及这种模型的标准边界。",
+    type: "主文章",
+    tags: ["C++", "对象模型", "vtable"],
+    childIds: [],
+    createdAt: "2026-07-28T08:20:00+08:00",
+    updatedAt: "2026-07-28T11:18:00+08:00",
+    blocks: blocks("cpp-vtable-root", [
+      ["paragraph", "主流实现会为多态类生成一张或多张虚函数表，并在相应对象子对象中保存虚表指针。调用虚函数时，程序通过表项定位最终函数。"],
+      ["quote", "C++ 标准规定的是可观察行为，并不承诺对象必须含有 vptr，也不规定虚函数表的具体布局。"],
+      ["h2", "重写如何影响表项"],
+      ["paragraph", "派生类重写虚函数后，对应槽位通常指向派生实现；未重写的槽位仍可沿用基类实现。多重继承与虚继承可能引入多张表及 this 指针调整。"]
+    ])
+  },
+  "cpp-virtual-destructor-root": {
+    id: "cpp-virtual-destructor-root",
+    rootId: "cpp-virtual-destructor-root",
+    parentId: null,
+    title: "虚析构函数",
+    summary: "只要对象可能通过基类指针被删除，基类析构函数就必须是虚函数。",
+    type: "主文章",
+    tags: ["C++", "生命周期", "多态"],
+    childIds: [],
+    createdAt: "2026-07-27T10:10:00+08:00",
+    updatedAt: "2026-07-27T20:36:00+08:00",
+    blocks: blocks("cpp-virtual-destructor-root", [
+      ["paragraph", "通过基类指针删除派生对象时，非虚基类析构会导致未定义行为。虚析构保证销毁从最派生类开始，并依次完成成员与基类清理。"],
+      ["h2", "多态基类的常见选择"],
+      ["paragraph", "基类析构通常设计为公有且虚，允许通过基类接口销毁；或设计为受保护且非虚，明确禁止外部通过基类指针删除。"],
+      ["quote", "析构函数即使声明为纯虚也必须提供定义，因为派生对象销毁时仍会调用基类析构。"]
+    ])
+  },
+  "cpp-template-root": {
+    id: "cpp-template-root",
+    rootId: "cpp-template-root",
+    parentId: null,
+    title: "模板基础与函数模板",
+    summary: "把模板理解为编译器按模板实参生成声明或定义的编译期配方。",
+    type: "主文章",
+    tags: ["C++", "模板", "泛型编程"],
+    childIds: [],
+    createdAt: "2026-07-27T08:35:00+08:00",
+    updatedAt: "2026-07-27T14:08:00+08:00",
+    blocks: blocks("cpp-template-root", [
+      ["paragraph", "函数模板本身不是普通函数；只有在模板实参确定并完成实例化后，具体实体才会参与调用。模板让相同算法复用于满足所需能力的不同类型。"],
+      ["h2", "模板形参与模板实参"],
+      ["paragraph", "模板形参是声明中的占位符，模板实参是在使用点代入的类型、值或模板。函数调用可以通过实参推导部分或全部类型模板参数。"],
+      ["h2", "实例化与特化"],
+      ["paragraph", "实例化会从模板生成具体实体；显式特化则为给定实参提供专门实现。阅读代码时需要区分“生成的具体版本”和程序员编写的显式特化。"]
+    ])
+  },
   "attention-root": {
     id: "attention-root",
     rootId: "attention-root",
@@ -154,6 +228,50 @@ const notebooks: Notebook[] = [
     category: "技术学习",
     updatedAt: now,
     lastOpenedNodeId: "ecs-root",
+    accent: "cobalt"
+  },
+  {
+    id: "notebook-cpp-polymorphism",
+    rootId: "cpp-polymorphism-root",
+    title: articles["cpp-polymorphism-root"].title,
+    summary: articles["cpp-polymorphism-root"].summary,
+    tags: articles["cpp-polymorphism-root"].tags,
+    category: "C++ / 核心",
+    updatedAt: articles["cpp-polymorphism-root"].updatedAt,
+    lastOpenedNodeId: "cpp-polymorphism-root",
+    accent: "cobalt"
+  },
+  {
+    id: "notebook-cpp-vtable",
+    rootId: "cpp-vtable-root",
+    title: articles["cpp-vtable-root"].title,
+    summary: articles["cpp-vtable-root"].summary,
+    tags: articles["cpp-vtable-root"].tags,
+    category: "C++ / 对象模型",
+    updatedAt: articles["cpp-vtable-root"].updatedAt,
+    lastOpenedNodeId: "cpp-vtable-root",
+    accent: "amber"
+  },
+  {
+    id: "notebook-cpp-virtual-destructor",
+    rootId: "cpp-virtual-destructor-root",
+    title: articles["cpp-virtual-destructor-root"].title,
+    summary: articles["cpp-virtual-destructor-root"].summary,
+    tags: articles["cpp-virtual-destructor-root"].tags,
+    category: "C++ / 生命周期",
+    updatedAt: articles["cpp-virtual-destructor-root"].updatedAt,
+    lastOpenedNodeId: "cpp-virtual-destructor-root",
+    accent: "green"
+  },
+  {
+    id: "notebook-cpp-template",
+    rootId: "cpp-template-root",
+    title: articles["cpp-template-root"].title,
+    summary: articles["cpp-template-root"].summary,
+    tags: articles["cpp-template-root"].tags,
+    category: "C++ / 模板",
+    updatedAt: articles["cpp-template-root"].updatedAt,
+    lastOpenedNodeId: "cpp-template-root",
     accent: "cobalt"
   },
   {

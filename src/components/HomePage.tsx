@@ -1,19 +1,26 @@
-import { useMemo, useRef, useState } from "react";
 import {
-  ArrowDownUp,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type TouchEvent as ReactTouchEvent,
+  type WheelEvent as ReactWheelEvent
+} from "react";
+import {
   BookOpenText,
   Boxes,
+  ChevronDown,
   Clock3,
   FileInput,
   FolderTree,
-  History,
   Import,
   LibraryBig,
-  Network,
   Plus,
   Search,
   Settings2,
-  Sparkles,
+  Star,
+  Tags,
   X
 } from "lucide-react";
 import { useAppStore } from "../store/AppStore";
@@ -29,6 +36,10 @@ import type {
   ShortcutBinding,
   ShortcutPreferences
 } from "../utils/shortcuts";
+import {
+  HomeLibraryView,
+  type HomeLibrarySection
+} from "./HomeLibraryView";
 import { SettingsPage } from "./SettingsPage";
 
 interface HomePageProps {
@@ -65,14 +76,35 @@ function countDescendants(rootId: string, articles: ReturnType<typeof useAppStor
   return seen.size;
 }
 
-function formatDate(value: string) {
+function formatTimelineDay(value: string) {
   const date = new Date(value);
   const today = new Date();
-  const diff = Math.max(0, today.getTime() - date.getTime());
-  const days = Math.floor(diff / 86_400_000);
-  if (days === 0) return "今天";
-  if (days === 1) return "昨天";
-  return date.toLocaleDateString("zh-CN", { month: "short", day: "numeric" });
+  const sameDay = (left: Date, right: Date) =>
+    left.getFullYear() === right.getFullYear() &&
+    left.getMonth() === right.getMonth() &&
+    left.getDate() === right.getDate();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  if (sameDay(date, today)) return "今天";
+  if (sameDay(date, yesterday)) return "昨天";
+  return date.toLocaleDateString("zh-CN", {
+    month: "long",
+    day: "numeric",
+    weekday: "short"
+  });
+}
+
+function formatClock(value: string) {
+  return new Date(value).toLocaleTimeString("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  });
+}
+
+function timelineDateKey(value: string) {
+  const date = new Date(value);
+  return [date.getFullYear(), date.getMonth() + 1, date.getDate()].join("-");
 }
 
 export function HomePage({
@@ -90,12 +122,18 @@ export function HomePage({
   onCloseSettings
 }: HomePageProps) {
   const { data, openNotebook, createNotebook, importPackage, resetDemo } = useAppStore();
-  const [sortBy, setSortBy] = useState<"time" | "connections">("time");
+  const [activeHomeView, setActiveHomeView] = useState<
+    "home" | HomeLibrarySection
+  >("home");
+  const [activePage, setActivePage] = useState<"overview" | "recent">("overview");
   const [filter, setFilter] = useState("");
   const [newTitle, setNewTitle] = useState("");
-  const [notice, setNotice] = useState("数据仅保存在这台设备上");
+  const [actionMenuOpen, setActionMenuOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const newDialogRef = useRef<HTMLDialogElement>(null);
+  const overviewScrollRef = useRef<HTMLElement>(null);
+  const recentScrollRef = useRef<HTMLElement>(null);
+  const touchStartYRef = useRef<number | null>(null);
 
   const notebooks = useMemo(() => {
     const query = filter.trim().toLocaleLowerCase("zh-CN");
@@ -105,19 +143,56 @@ export function HomePage({
         .toLocaleLowerCase("zh-CN")
         .includes(query)
     );
-    return [...filtered].sort((left, right) => {
-      if (sortBy === "connections") {
-        return (
-          countDescendants(right.rootId, data.articles) -
-          countDescendants(left.rootId, data.articles)
-        );
+    return [...filtered].sort(
+      (left, right) =>
+        new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
+    );
+  }, [data.notebooks, filter]);
+
+  const recentPreview = useMemo(
+    () =>
+      [...data.notebooks]
+        .sort(
+          (left, right) =>
+            new Date(right.updatedAt).getTime() -
+            new Date(left.updatedAt).getTime()
+        )
+        .slice(0, 3),
+    [data.notebooks]
+  );
+
+  const timelineGroups = useMemo(() => {
+    return notebooks.reduce<
+      Array<{ key: string; label: string; notebooks: Notebook[] }>
+    >((groups, notebook) => {
+      const key = timelineDateKey(notebook.updatedAt);
+      const current = groups.at(-1);
+      if (current?.key === key) {
+        current.notebooks.push(notebook);
+      } else {
+        groups.push({
+          key,
+          label: formatTimelineDay(notebook.updatedAt),
+          notebooks: [notebook]
+        });
       }
-      return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime();
-    });
-  }, [data.articles, data.notebooks, filter, sortBy]);
+      return groups;
+    }, []);
+  }, [notebooks]);
 
   const totalNodes = Object.keys(data.articles).length;
   const totalTags = new Set(data.notebooks.flatMap((notebook) => notebook.tags)).size;
+
+  useEffect(() => {
+    const overview = overviewScrollRef.current as
+      | (HTMLElement & { inert: boolean })
+      | null;
+    const recent = recentScrollRef.current as
+      | (HTMLElement & { inert: boolean })
+      | null;
+    if (overview) overview.inert = activePage !== "overview";
+    if (recent) recent.inert = activePage !== "recent";
+  }, [activePage]);
 
   const handleCreate = () => {
     const title = newTitle.trim() || "未命名笔记";
@@ -129,82 +204,167 @@ export function HomePage({
   const handleFile = async (file?: File) => {
     if (!file) return;
     const text = await file.text();
-    const result = importPackage(text, file.name);
-    setNotice(result.message);
+    importPackage(text, file.name);
     if (fileRef.current) fileRef.current.value = "";
   };
 
-  const sidebarActions = [
-    { id: "home", icon: LibraryBig, label: terms.home, active: !settingsOpen },
-    { id: "graph", icon: Network, label: terms.graph, active: false },
-    { id: "recent", icon: History, label: terms.recent, active: false }
-  ];
+  const overviewIsAtBottom = () => {
+    const overview = overviewScrollRef.current;
+    if (!overview) return true;
+    return overview.scrollHeight - overview.scrollTop - overview.clientHeight <= 2;
+  };
+
+  const showOverview = () => {
+    setActivePage("overview");
+    overviewScrollRef.current?.focus({ preventScroll: true });
+  };
+
+  const showRecent = () => {
+    if (!overviewIsAtBottom()) return;
+    setActivePage("recent");
+    recentScrollRef.current?.focus({ preventScroll: true });
+  };
+
+  const handlePageWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
+    if (Math.abs(event.deltaY) < 8) return;
+    if (activePage === "overview" && event.deltaY > 0 && overviewIsAtBottom()) {
+      event.preventDefault();
+      showRecent();
+      return;
+    }
+    if (
+      activePage === "recent" &&
+      event.deltaY < 0 &&
+      (recentScrollRef.current?.scrollTop ?? 0) <= 1
+    ) {
+      event.preventDefault();
+      showOverview();
+    }
+  };
+
+  const handlePageKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (
+      activePage === "overview" &&
+      (event.key === "PageDown" || event.key === "ArrowDown") &&
+      overviewIsAtBottom()
+    ) {
+      event.preventDefault();
+      showRecent();
+      return;
+    }
+    if (
+      activePage === "recent" &&
+      (event.key === "PageUp" || event.key === "ArrowUp") &&
+      (recentScrollRef.current?.scrollTop ?? 0) <= 1
+    ) {
+      event.preventDefault();
+      showOverview();
+    }
+  };
+
+  const handleTouchStart = (event: ReactTouchEvent<HTMLDivElement>) => {
+    touchStartYRef.current = event.touches[0]?.clientY ?? null;
+  };
+
+  const handleTouchEnd = (event: ReactTouchEvent<HTMLDivElement>) => {
+    const startY = touchStartYRef.current;
+    const endY = event.changedTouches[0]?.clientY;
+    touchStartYRef.current = null;
+    if (startY === null || endY === undefined) return;
+    const distance = startY - endY;
+    if (activePage === "overview" && distance > 48 && overviewIsAtBottom()) {
+      showRecent();
+    } else if (
+      activePage === "recent" &&
+      distance < -48 &&
+      (recentScrollRef.current?.scrollTop ?? 0) <= 1
+    ) {
+      showOverview();
+    }
+  };
 
   return (
     <div className="home-app">
       <main className="home-workspace">
-        <aside className="home-sidebar" aria-label={`${terms.home}导航`}>
-          <nav>
-            {sidebarActions.map(({ id, icon: Icon, label, active }) => (
+        <div className="home-sidebar-shell">
+          <aside className="home-sidebar" aria-label={`${terms.home}导航`}>
+            <nav>
               <button
-                key={id}
-                className={`home-nav-item${active ? " is-active" : ""}`}
+                className={`home-nav-item${
+                  !settingsOpen && activeHomeView === "home" ? " is-active" : ""
+                }`}
                 type="button"
-                onClick={() =>
-                  id === "home"
-                    ? onCloseSettings()
-                    : !active &&
-                  setNotice(
-                    id === "graph"
-                      ? `请先打开一篇笔记，再从右下角展开或全屏查看${terms.graph}。`
-                      : `${terms.recent}已按时间显示在当前看板。`
-                  )
+                aria-current={
+                  !settingsOpen && activeHomeView === "home" ? "page" : undefined
                 }
+                onClick={() => {
+                  onCloseSettings();
+                  setActiveHomeView("home");
+                  setActivePage("overview");
+                }}
               >
-                <Icon aria-hidden="true" size={17} />
-                <span>{label}</span>
+                <LibraryBig aria-hidden="true" size={17} />
+                <span>{terms.home}</span>
               </button>
-            ))}
-          </nav>
+              {(
+                [
+                  ["folders", FolderTree, terms.folders],
+                  ["tags", Tags, terms.tags],
+                  ["favorites", Star, terms.favorites]
+                ] as const
+              ).map(([section, Icon, label]) => (
+                <button
+                  className={`home-nav-item${
+                    !settingsOpen && activeHomeView === section
+                      ? " is-active"
+                      : ""
+                  }`}
+                  type="button"
+                  aria-current={
+                    !settingsOpen && activeHomeView === section
+                      ? "page"
+                      : undefined
+                  }
+                  key={section}
+                  onClick={() => {
+                    onCloseSettings();
+                    setActionMenuOpen(false);
+                    setActiveHomeView(section);
+                  }}
+                >
+                  <Icon aria-hidden="true" size={17} />
+                  <span>{label}</span>
+                </button>
+              ))}
+            </nav>
 
-          <div className="sidebar-section-title">{terms.folders}</div>
-          <div className="dimension-list">
-            {[
-              ["技术学习", "08"],
-              ["概念解析", "05"],
-              ["阅读方法", "03"]
-            ].map(([label, count]) => (
-              <button key={label} type="button" onClick={() => setFilter(label)}>
-                <span>{label}</span>
-                <small>{count}</small>
+            <div className="home-sidebar-footer">
+              <button type="button" onClick={() => fileRef.current?.click()}>
+                <Import aria-hidden="true" size={16} />
+                <span>导入材料</span>
               </button>
-            ))}
-          </div>
-
-          <div className="home-sidebar-footer">
-            <button type="button" onClick={() => fileRef.current?.click()}>
-              <Import aria-hidden="true" size={16} />
-              导入材料
-            </button>
-            <button type="button" onClick={resetDemo}>
-              <Clock3 aria-hidden="true" size={16} />
-              重置演示数据
-            </button>
-            <button
-              className={settingsOpen ? "is-active" : undefined}
-              type="button"
-              aria-label="打开设置"
-              aria-current={settingsOpen ? "page" : undefined}
-              onClick={onOpenSettings}
-            >
-              <Settings2 aria-hidden="true" size={16} />
-              设置
-            </button>
-          </div>
-        </aside>
+              <button type="button" onClick={resetDemo}>
+                <Clock3 aria-hidden="true" size={16} />
+                <span>重置演示数据</span>
+              </button>
+              <button
+                className={settingsOpen ? "is-active" : undefined}
+                type="button"
+                aria-label="打开设置"
+                aria-current={settingsOpen ? "page" : undefined}
+                onClick={onOpenSettings}
+              >
+                <Settings2 aria-hidden="true" size={16} />
+                <span>设置</span>
+              </button>
+            </div>
+          </aside>
+        </div>
 
         <div
-          className={`home-content${settingsOpen ? " is-settings-open" : ""}`}
+          className={`home-content${
+            settingsOpen ? " is-settings-open" : " has-mobile-library-nav"
+          }`}
         >
           {settingsOpen ? (
             <SettingsPage
@@ -218,42 +378,301 @@ export function HomePage({
             />
           ) : (
             <>
-          <header className="home-topbar">
-            <button className="global-search-trigger" type="button" onClick={onOpenSearch}>
-              <Search aria-hidden="true" size={17} />
-              <span>搜索标题、正文与{terms.tags}</span>
-              <kbd>{formatShortcut(shortcuts["open-search"])}</kbd>
-            </button>
-            <div className="home-top-actions">
-              <span className="local-status">
-                <span aria-hidden="true"></span>
-                本地工作区
-              </span>
-            </div>
-          </header>
+              <nav className="home-mobile-library-nav" aria-label="资料视图">
+                {(
+                  [
+                    ["home", LibraryBig, terms.home],
+                    ["folders", FolderTree, terms.folders],
+                    ["tags", Tags, terms.tags],
+                    ["favorites", Star, terms.favorites]
+                  ] as const
+                ).map(([section, Icon, label]) => (
+                  <button
+                    className={activeHomeView === section ? "is-active" : undefined}
+                    type="button"
+                    aria-current={
+                      activeHomeView === section ? "page" : undefined
+                    }
+                    key={section}
+                    onClick={() => {
+                      setActionMenuOpen(false);
+                      setActiveHomeView(section);
+                      if (section === "home") setActivePage("overview");
+                    }}
+                  >
+                    <Icon aria-hidden="true" size={16} />
+                    <span>{label}</span>
+                  </button>
+                ))}
+              </nav>
 
-          <section className="home-main">
-          <div className="home-intro">
-            <div>
-              <p className="context-line">周日，7 月 26 日</p>
-              <h1>继续生长你的知识树</h1>
-              <p>
-                从最近阅读处继续，或导入一份材料开始新的学习路径。每次解释与翻译都会保留来源。
-              </p>
-            </div>
-            <div className="home-primary-actions">
-              <button
-                className="button primary"
-                type="button"
-                onClick={() => newDialogRef.current?.showModal()}
-              >
-                <Plus aria-hidden="true" size={17} />
-                {terms.newNote}
-              </button>
-              <button className="button secondary" type="button" onClick={() => fileRef.current?.click()}>
-                <FileInput aria-hidden="true" size={17} />
-                导入材料
-              </button>
+              {activeHomeView === "home" ? (
+                <div
+                  className="home-page-viewport"
+                  data-active-page={activePage}
+                  role="region"
+                  aria-label="主页分页内容"
+                  tabIndex={0}
+                  onWheel={handlePageWheel}
+                  onKeyDown={handlePageKeyDown}
+                  onTouchStart={handleTouchStart}
+                  onTouchEnd={handleTouchEnd}
+                >
+                  <div className="home-page-track">
+                  <section
+                    ref={overviewScrollRef}
+                    className="home-main home-page-panel home-overview-page"
+                    aria-labelledby="home-overview-title"
+                    aria-hidden={activePage !== "overview"}
+                    tabIndex={-1}
+                  >
+                    <div className="home-intro">
+                      <div>
+                        <p className="context-line">周二，7 月 28 日</p>
+                        <h1 id="home-overview-title">继续生长你的知识树</h1>
+                        <p>
+                          从最近阅读处继续，或导入一份材料开始新的学习路径。每次解释与翻译都会保留来源。
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="home-overview-tools">
+                      <div className="home-ledger" aria-label="知识库概况">
+                        <div>
+                          <BookOpenText aria-hidden="true" size={17} />
+                          <span>
+                            <strong>{data.notebooks.length}</strong>
+                            主笔记
+                          </span>
+                        </div>
+                        <div>
+                          <FolderTree aria-hidden="true" size={17} />
+                          <span>
+                            <strong>{totalNodes}</strong>
+                            全部节点
+                          </span>
+                        </div>
+                        <div>
+                          <Boxes aria-hidden="true" size={17} />
+                          <span>
+                            <strong>{totalTags}</strong>
+                            {terms.tags}
+                          </span>
+                        </div>
+                      </div>
+
+                      <button
+                        className="global-search-trigger home-search-trigger"
+                        type="button"
+                        onClick={onOpenSearch}
+                      >
+                        <Search aria-hidden="true" size={17} />
+                        <span>搜索标题、正文与{terms.tags}</span>
+                        <kbd>{formatShortcut(shortcuts["open-search"])}</kbd>
+                      </button>
+                    </div>
+
+                    <section
+                      className="home-recent-preview"
+                      aria-labelledby="home-recent-preview-title"
+                    >
+                      <header>
+                        <div>
+                          <p>READING TRAIL</p>
+                          <h2 id="home-recent-preview-title">{terms.recent}</h2>
+                        </div>
+                        <span>按最近打开或修改时间排列</span>
+                      </header>
+                      <div className="notebook-grid home-recent-preview-grid">
+                        {recentPreview.map((notebook) => (
+                          <NotebookCard
+                            key={notebook.id}
+                            notebook={notebook}
+                            descendants={countDescendants(
+                              notebook.rootId,
+                              data.articles
+                            )}
+                            subNotesLabel={terms.subNotes}
+                            onOpen={() => openNotebook(notebook.id)}
+                          />
+                        ))}
+                      </div>
+                    </section>
+
+                    <button
+                      className="home-scroll-cue"
+                      type="button"
+                      onClick={showRecent}
+                    >
+                      <span>下滑查看{terms.recent}</span>
+                      <ChevronDown aria-hidden="true" size={17} />
+                    </button>
+                  </section>
+
+                  <section
+                    ref={recentScrollRef}
+                    className="home-main home-page-panel home-recent-page"
+                    aria-label="最近浏览时间线"
+                    aria-hidden={activePage !== "recent"}
+                    tabIndex={-1}
+                  >
+                    <header className="recent-header">
+                      <div>
+                        <p className="recent-eyebrow">READING TRAIL</p>
+                        <h2 id="recent-title">{terms.recent}</h2>
+                        <span>按最近打开或修改时间倒序排列</span>
+                      </div>
+                      <div className="recent-tools">
+                        <label className="inline-filter">
+                          <Search aria-hidden="true" size={15} />
+                          <span className="sr-only">筛选{terms.recent}</span>
+                          <input
+                            value={filter}
+                            onChange={(event) => setFilter(event.target.value)}
+                            placeholder="筛选当前卡片"
+                          />
+                          {filter && (
+                            <button
+                              type="button"
+                              onClick={() => setFilter("")}
+                              aria-label="清除筛选"
+                            >
+                              <X aria-hidden="true" size={14} />
+                            </button>
+                          )}
+                        </label>
+                      </div>
+                    </header>
+
+                    {timelineGroups.length ? (
+                      <div
+                        className="recent-timeline"
+                        role="list"
+                        aria-label="最近浏览时间线"
+                      >
+                        {timelineGroups.map((group) => (
+                          <section
+                            className="recent-timeline-group"
+                            role="listitem"
+                            key={group.key}
+                          >
+                            <div className="recent-timeline-stamp">
+                              <strong>{group.label}</strong>
+                              <small>{group.notebooks.length} 次浏览</small>
+                            </div>
+                            <div className="recent-timeline-line" aria-hidden="true">
+                              <span></span>
+                            </div>
+                            <div className="notebook-grid recent-timeline-cards">
+                              {group.notebooks.map((notebook) => (
+                                <NotebookCard
+                                  key={notebook.id}
+                                  notebook={notebook}
+                                  descendants={countDescendants(
+                                    notebook.rootId,
+                                    data.articles
+                                  )}
+                                  subNotesLabel={terms.subNotes}
+                                  onOpen={() => openNotebook(notebook.id)}
+                                />
+                              ))}
+                            </div>
+                          </section>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="home-empty">
+                        <Search aria-hidden="true" size={22} />
+                        <strong>没有符合筛选条件的主笔记</strong>
+                        <span>清除筛选，或导入一份新的 Markdown / TXT 材料。</span>
+                        <button
+                          className="button secondary"
+                          type="button"
+                          onClick={() => setFilter("")}
+                        >
+                          清除筛选
+                        </button>
+                      </div>
+                    )}
+                  </section>
+                  </div>
+                </div>
+              ) : (
+                <div className="home-main library-view-shell">
+                  <HomeLibraryView
+                    section={activeHomeView}
+                    notebooks={data.notebooks}
+                    articles={data.articles}
+                    renderNotebook={(notebook) => (
+                      <NotebookCard
+                        notebook={notebook}
+                        descendants={countDescendants(
+                          notebook.rootId,
+                          data.articles
+                        )}
+                        subNotesLabel={terms.subNotes}
+                        onOpen={() => openNotebook(notebook.id)}
+                      />
+                    )}
+                  />
+                </div>
+              )}
+
+              {activeHomeView === "home" && (
+                <div
+                  className={`home-action-dock${actionMenuOpen ? " is-open" : ""}`}
+                  onMouseEnter={() => setActionMenuOpen(true)}
+                  onMouseLeave={() => setActionMenuOpen(false)}
+                  onFocus={() => setActionMenuOpen(true)}
+                  onBlur={(event) => {
+                    if (
+                      !event.currentTarget.contains(
+                        event.relatedTarget as Node | null
+                      )
+                    ) {
+                      setActionMenuOpen(false);
+                    }
+                  }}
+                >
+                  <button
+                    className="home-action-trigger"
+                    type="button"
+                    aria-label="打开主页操作"
+                    aria-expanded={actionMenuOpen}
+                    onClick={() => setActionMenuOpen(true)}
+                  >
+                    <Plus aria-hidden="true" size={24} />
+                  </button>
+                  <div
+                    className="home-action-menu"
+                    role="group"
+                    aria-label="主页操作"
+                  >
+                    <button
+                      className="button primary"
+                      type="button"
+                      onClick={() => {
+                        setActionMenuOpen(false);
+                        newDialogRef.current?.showModal();
+                      }}
+                    >
+                      <Plus aria-hidden="true" size={17} />
+                      {terms.newNote}
+                    </button>
+                    <button
+                      className="button secondary"
+                      type="button"
+                      onClick={() => {
+                        setActionMenuOpen(false);
+                        fileRef.current?.click();
+                      }}
+                    >
+                      <FileInput aria-hidden="true" size={17} />
+                      导入材料
+                    </button>
+                  </div>
+                </div>
+              )}
               <input
                 ref={fileRef}
                 hidden
@@ -261,99 +680,6 @@ export function HomePage({
                 accept=".md,.markdown,.txt,.annota,.json,text/plain,text/markdown,application/json"
                 onChange={(event) => void handleFile(event.target.files?.[0])}
               />
-            </div>
-          </div>
-
-          <div className="home-ledger" aria-label="知识库概况">
-            <div>
-              <BookOpenText aria-hidden="true" size={17} />
-              <span>
-                <strong>{data.notebooks.length}</strong>
-                主笔记
-              </span>
-            </div>
-            <div>
-              <FolderTree aria-hidden="true" size={17} />
-              <span>
-                <strong>{totalNodes}</strong>
-                全部节点
-              </span>
-            </div>
-            <div>
-              <Boxes aria-hidden="true" size={17} />
-              <span>
-                <strong>{totalTags}</strong>
-                {terms.tags}
-              </span>
-            </div>
-            <div className="ledger-note">
-              <span aria-hidden="true"></span>
-              {notice}
-            </div>
-          </div>
-
-          <div className="planned-ai" aria-disabled="true">
-            <Sparkles aria-hidden="true" size={17} />
-            <span>{terms.highlightCreate}</span>
-            <small>规划中 · 请在正文选区后使用解释或翻译</small>
-          </div>
-
-          <section className="recent-section" aria-labelledby="recent-title">
-            <header className="recent-header">
-              <div>
-                <h2 id="recent-title">{terms.recent}</h2>
-                <span>主笔记按最近打开或修改排序</span>
-              </div>
-              <div className="recent-tools">
-                <label className="inline-filter">
-                  <Search aria-hidden="true" size={15} />
-                  <span className="sr-only">筛选{terms.recent}</span>
-                  <input
-                    value={filter}
-                    onChange={(event) => setFilter(event.target.value)}
-                    placeholder="筛选当前卡片"
-                  />
-                  {filter && (
-                    <button type="button" onClick={() => setFilter("")} aria-label="清除筛选">
-                      <X aria-hidden="true" size={14} />
-                    </button>
-                  )}
-                </label>
-                <button
-                  className="sort-button"
-                  type="button"
-                  onClick={() => setSortBy((value) => (value === "time" ? "connections" : "time"))}
-                >
-                  <ArrowDownUp aria-hidden="true" size={15} />
-                  {sortBy === "time" ? "按时间" : "按连接"}
-                </button>
-              </div>
-            </header>
-
-            {notebooks.length ? (
-              <div className="notebook-grid">
-                {notebooks.map((notebook) => (
-                  <NotebookCard
-                    key={notebook.id}
-                    notebook={notebook}
-                    descendants={countDescendants(notebook.rootId, data.articles)}
-                    subNotesLabel={terms.subNotes}
-                    onOpen={() => openNotebook(notebook.id)}
-                  />
-                ))}
-              </div>
-            ) : (
-              <div className="home-empty">
-                <Search aria-hidden="true" size={22} />
-                <strong>没有符合筛选条件的主笔记</strong>
-                <span>清除筛选，或导入一份新的 Markdown / TXT 材料。</span>
-                <button className="button secondary" type="button" onClick={() => setFilter("")}>
-                  清除筛选
-                </button>
-              </div>
-            )}
-            </section>
-          </section>
             </>
           )}
         </div>
@@ -428,7 +754,12 @@ function NotebookCard({
     >
       <span className="card-rail" aria-hidden="true"></span>
       <span className="notebook-meta">
-        <span>{formatDate(notebook.updatedAt)}</span>
+        <time
+          dateTime={notebook.updatedAt}
+          data-timestamp={new Date(notebook.updatedAt).getTime()}
+        >
+          {formatClock(notebook.updatedAt)}
+        </time>
         <span>{notebook.category}</span>
       </span>
       <strong>{notebook.title}</strong>

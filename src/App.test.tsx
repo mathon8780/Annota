@@ -4,6 +4,10 @@ import App from "./App";
 import { seedData } from "./data/seed";
 import { AppStoreProvider } from "./store/AppStore";
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 function renderApp(clearStorage = true) {
   if (clearStorage) window.localStorage.clear();
   return render(
@@ -13,8 +17,16 @@ function renderApp(clearStorage = true) {
   );
 }
 
+function showRecentBrowsing() {
+  const viewport = screen.getByRole("region", { name: "主页分页内容" });
+  if (viewport.getAttribute("data-active-page") === "overview") {
+    fireEvent.wheel(viewport, { deltaY: 96 });
+  }
+}
+
 async function openFirstNotebook(user: ReturnType<typeof userEvent.setup>) {
   const notebook = seedData.notebooks[0];
+  showRecentBrowsing();
   await user.click(
     screen.getByRole("button", { name: `打开笔记：${notebook.title}` })
   );
@@ -85,6 +97,126 @@ describe("Annota core flow", () => {
     expect(screen.queryByRole("region", { name: "文章阅读区域" })).not.toBeInTheDocument();
   });
 
+  it("adds the C++ demo notes to an existing demo workspace without replacing it", () => {
+    const legacyNotebooks = seedData.notebooks.filter(
+      (notebook) => !notebook.rootId.startsWith("cpp-")
+    );
+    const legacyArticles = Object.fromEntries(
+      Object.entries(seedData.articles).filter(
+        ([articleId]) => !articleId.startsWith("cpp-")
+      )
+    );
+    window.localStorage.setItem(
+      "annota.desktop.demo.v1",
+      JSON.stringify({
+        ...seedData,
+        notebooks: legacyNotebooks,
+        articles: legacyArticles
+      })
+    );
+
+    const { container } = renderApp(false);
+    showRecentBrowsing();
+
+    expect(container.querySelector(".home-ledger strong")).toHaveTextContent(
+      String(seedData.notebooks.length)
+    );
+    expect(
+      screen.getByRole("button", { name: "打开笔记：虚函数与动态多态" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "打开笔记：模板基础与函数模板" })
+    ).toBeInTheDocument();
+  });
+
+  it("opens folders, tags, and favorites from the home sidebar", async () => {
+    const user = userEvent.setup();
+    const { container } = renderApp();
+    const sidebar = screen.getByRole("complementary", { name: "主页导航" });
+    const navigation = within(sidebar).getByRole("navigation");
+
+    expect(within(navigation).getAllByRole("button")).toHaveLength(4);
+    expect(within(navigation).getByRole("button", { name: "主页" })).toBeInTheDocument();
+    const foldersButton = within(navigation).getByRole("button", {
+      name: "文件夹"
+    });
+    const tagsButton = within(navigation).getByRole("button", { name: "标签" });
+    const favoritesButton = within(navigation).getByRole("button", {
+      name: "收藏"
+    });
+    expect(within(sidebar).queryByText("知识图谱")).not.toBeInTheDocument();
+    expect(within(sidebar).queryByText("最近浏览")).not.toBeInTheDocument();
+    expect(container.querySelector(".home-sidebar-footer")).toBeInTheDocument();
+
+    await user.click(foldersButton);
+    expect(screen.getByRole("heading", { name: "按主题归档" })).toBeInTheDocument();
+    expect(foldersButton).toHaveAttribute("aria-current", "page");
+    const firstFolder = container.querySelector(
+      ".library-folder-card"
+    ) as HTMLButtonElement;
+    expect(firstFolder).not.toBeNull();
+    await user.click(firstFolder);
+    expect(
+      screen.getByRole("complementary", { name: "文件夹导航" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "全部文件夹" })
+    ).toBeInTheDocument();
+    expect(
+      container.querySelector(".library-folder-detail .notebook-card")
+    ).toBeInTheDocument();
+
+    await user.click(tagsButton);
+    expect(screen.getByRole("heading", { name: "从关键词进入" })).toBeInTheDocument();
+
+    await user.click(favoritesButton);
+    expect(screen.getByRole("heading", { name: "留住常看的内容" })).toBeInTheDocument();
+  });
+
+  it("slides from the overview to recent browsing and only returns from its top edge", () => {
+    const { container } = renderApp();
+    const viewport = screen.getByRole("region", { name: "主页分页内容" });
+    const recentPage = container.querySelector(
+      ".home-recent-page"
+    ) as HTMLElement;
+
+    expect(viewport).toHaveAttribute("data-active-page", "overview");
+    fireEvent.wheel(viewport, { deltaY: 96 });
+    expect(viewport).toHaveAttribute("data-active-page", "recent");
+
+    Object.defineProperty(recentPage, "scrollTop", {
+      configurable: true,
+      writable: true,
+      value: 80
+    });
+    fireEvent.wheel(recentPage, { deltaY: -96 });
+    expect(viewport).toHaveAttribute("data-active-page", "recent");
+
+    recentPage.scrollTop = 0;
+    fireEvent.wheel(recentPage, { deltaY: -96 });
+    expect(viewport).toHaveAttribute("data-active-page", "overview");
+  });
+
+  it("renders C++ demo notes in a descending recent-browsing timeline", () => {
+    const { container } = renderApp();
+    const viewport = screen.getByRole("region", { name: "主页分页内容" });
+    fireEvent.wheel(viewport, { deltaY: 96 });
+
+    const timeline = screen.getByRole("list", { name: "最近浏览时间线" });
+    const timestamps = Array.from(
+      timeline.querySelectorAll<HTMLTimeElement>("time[data-timestamp]")
+    ).map((item) => Number(item.dataset.timestamp));
+
+    expect(timestamps).toEqual([...timestamps].sort((left, right) => right - left));
+    expect(
+      screen.getByRole("button", { name: "打开笔记：虚函数与动态多态" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "打开笔记：模板基础与函数模板" })
+    ).toBeInTheDocument();
+    expect(container.querySelector(".recent-timeline-line")).toBeInTheDocument();
+  });
+
   it("opens a recent notebook in the reader and returns home", async () => {
     const user = userEvent.setup();
     const { container } = renderApp();
@@ -96,10 +228,12 @@ describe("Annota core flow", () => {
     expect(screen.getByRole("button", { name: "关闭窗口" })).toBeInTheDocument();
     const homeContent = container.querySelector(".home-content");
     expect(homeContent?.firstElementChild).toHaveClass("home-topbar");
-    expect(homeContent?.querySelector(".home-topbar + .home-main")).toBeInTheDocument();
+    expect(
+      homeContent?.querySelector(".home-topbar + .home-page-viewport")
+    ).toBeInTheDocument();
     expect(container.querySelector(".home-workspace > .home-topbar")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "返回主页" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /打开笔记：ECS 架构/ }));
+    await openFirstNotebook(user);
 
     expect(
       screen.getByRole("heading", { name: "ECS 架构：从数据布局到系统调度" })
@@ -129,14 +263,15 @@ describe("Annota core flow", () => {
     expect(container.querySelector(".article-column")).toHaveAttribute("data-motion", "forward");
 
     await user.click(screen.getByRole("button", { name: "返回主页" }));
-    expect(screen.getByRole("heading", { name: "最近浏览" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "继续生长你的知识树" })).toBeInTheDocument();
+    expect(container.querySelector("#recent-title")).toHaveTextContent("最近浏览");
     expect(container.querySelector(".route-stage")).not.toHaveAttribute("data-motion");
   });
 
   it("adjusts the reading path width with the keyboard", async () => {
     const user = userEvent.setup();
     renderApp();
-    await user.click(screen.getByRole("button", { name: /打开笔记：ECS 架构/ }));
+    await openFirstNotebook(user);
 
     const separator = screen.getByRole("separator", { name: "调整阅读路径宽度" });
     await user.click(separator);
@@ -162,7 +297,7 @@ describe("Annota core flow", () => {
   it("keeps the topology trigger separate from the animated panel", async () => {
     const user = userEvent.setup();
     renderApp();
-    await user.click(screen.getByRole("button", { name: /打开笔记：ECS 架构/ }));
+    await openFirstNotebook(user);
 
     const panel = screen.getByRole("complementary", { name: "当前知识树拓扑" });
     const shell = panel.parentElement;
@@ -180,7 +315,7 @@ describe("Annota core flow", () => {
   it("opens from the fixed trigger and closes only after leaving the stable shell", async () => {
     const user = userEvent.setup();
     renderApp();
-    await user.click(screen.getByRole("button", { name: /打开笔记：ECS 架构/ }));
+    await openFirstNotebook(user);
 
     const panel = screen.getByRole("complementary", { name: "当前知识树拓扑" });
     const shell = panel.parentElement!;
@@ -205,7 +340,7 @@ describe("Annota core flow", () => {
   it("elevates the topology shell in fullscreen with Ctrl E", async () => {
     const user = userEvent.setup();
     renderApp();
-    await user.click(screen.getByRole("button", { name: /打开笔记：ECS 架构/ }));
+    await openFirstNotebook(user);
 
     const panel = screen.getByRole("complementary", { name: "当前知识树拓扑" });
     const shell = panel.parentElement;
@@ -218,7 +353,7 @@ describe("Annota core flow", () => {
   it("resizes the topology from its border and focuses without changing zoom", async () => {
     const user = userEvent.setup();
     const { container } = renderApp();
-    await user.click(screen.getByRole("button", { name: /打开笔记：ECS 架构/ }));
+    await openFirstNotebook(user);
 
     const panel = screen.getByRole("complementary", { name: "当前知识树拓扑" });
     const viewport = container.querySelector(".topology-viewport") as HTMLDivElement;
@@ -256,6 +391,9 @@ describe("Annota core flow", () => {
     const user = userEvent.setup();
     renderApp();
 
+    fireEvent.wheel(screen.getByRole("region", { name: "主页分页内容" }), {
+      deltaY: 96
+    });
     const input = screen.getByPlaceholderText("筛选当前卡片");
     await user.type(input, "Neo4j");
 
@@ -677,6 +815,17 @@ describe("Annota core flow", () => {
   });
 
   it("opens the categorized settings workspace from the bottom of the home sidebar", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        data: [
+          { id: "gpt-5-mini" },
+          { id: "gpt-5.1" },
+          { id: "gpt-4.1" }
+        ]
+      })
+    } as Response);
     const user = userEvent.setup();
     const { container } = renderApp();
 
@@ -850,12 +999,86 @@ describe("Annota core flow", () => {
     expect(
       within(settingsCanvas).getByRole("button", { name: "配置 Chat GPT" })
     ).toHaveAttribute("aria-current", "page");
+    const defaultBaseUrl = within(settingsCanvas).getByRole("textbox", {
+      name: "Base URL"
+    });
+    const defaultModelsPath = within(settingsCanvas).getByRole("textbox", {
+      name: "模型列表地址"
+    });
+    const defaultEndpointPath = within(settingsCanvas).getByRole("textbox", {
+      name: "请求路径"
+    });
+    expect(defaultBaseUrl).toHaveValue("https://api.openai.com/v1");
+    expect(defaultModelsPath).toHaveValue("/models");
+    expect(defaultBaseUrl).toHaveAttribute("readonly");
+    expect(defaultModelsPath).toHaveAttribute("readonly");
+    expect(defaultEndpointPath).toHaveAttribute("readonly");
+    expect(within(settingsCanvas).getByText("使用模型")).toBeInTheDocument();
+    expect(within(settingsCanvas).queryByText("默认模型")).not.toBeInTheDocument();
+    const modelPicker = within(settingsCanvas).getByRole("combobox", {
+      name: "使用模型"
+    });
+    expect(modelPicker).toHaveAttribute("id", "default-model-chatgpt");
+    expect(modelPicker).toHaveTextContent("gpt-5-mini");
+    await user.click(
+      modelPicker
+    );
+    expect(modelPicker).toHaveAttribute("aria-expanded", "true");
     expect(
-      within(settingsCanvas).getByRole("textbox", { name: "Base URL" })
-    ).toHaveValue("https://api.openai.com/v1");
+      await within(settingsCanvas).findByRole("listbox", {
+        name: "Chat GPT 可用模型"
+      })
+    ).toBeInTheDocument();
+    expect(
+      within(settingsCanvas).getByText(
+        /内置目录（2026-07-28），共 23 个模型/
+      )
+    ).toBeInTheDocument();
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(
+      within(settingsCanvas).getByRole("option", { name: "gpt-5.6-sol" })
+    ).toBeInTheDocument();
+    await user.click(
+      within(settingsCanvas).getByRole("option", { name: "gpt-5.6-sol" })
+    );
+    expect(modelPicker).toHaveTextContent("gpt-5.6-sol");
+
+    await user.type(
+      within(settingsCanvas).getByLabelText("API Key"),
+      "sk-test"
+    );
+    await user.click(modelPicker);
+    expect(
+      await within(settingsCanvas).findByText(
+        "云端返回 3 个可用模型"
+      )
+    ).toBeInTheDocument();
+    const modelOption = within(settingsCanvas).getByRole("option", {
+      name: "gpt-5.1"
+    });
+    await user.click(modelOption);
+    expect(modelPicker).toHaveTextContent("gpt-5.1");
+    expect(modelPicker).toHaveAttribute("aria-expanded", "false");
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "https://api.openai.com/v1/models",
+      expect.objectContaining({ headers: expect.any(Headers) })
+    );
+    await user.click(modelPicker);
+    const modelQuery = within(settingsCanvas).getByRole("textbox", {
+      name: "搜索或输入模型 ID"
+    });
+    await user.type(modelQuery, "custom-reader-model");
+    await user.click(
+      within(settingsCanvas).getByRole("button", {
+        name: /使用自定义模型 ID custom-reader-model/
+      })
+    );
+    expect(modelPicker).toHaveTextContent("custom-reader-model");
     expect(
       within(settingsCanvas).getByRole("button", { name: "测试连接" })
     ).toBeDisabled();
+    expect(container.querySelector(".model-provider-brand-icon.is-zhipu"))
+      .toBeInTheDocument();
 
     ["Chat GPT", "Gemini", "Kimi", "Deepseek", "Claude", "GLM"].forEach(
       (provider) => {
@@ -879,9 +1102,6 @@ describe("Annota core flow", () => {
     expect(
       within(settingsCanvas).getByRole("textbox", { name: "Base URL" })
     ).toHaveValue("https://api.deepseek.com");
-    expect(within(settingsCanvas).getByText("调用 JSON 的组装边界"))
-      .toBeInTheDocument();
-
     await user.click(
       within(settingsCanvas).getByRole("button", {
         name: "添加自定义服务商"
@@ -890,10 +1110,21 @@ describe("Annota core flow", () => {
     expect(
       within(settingsCanvas).getByRole("textbox", { name: "服务名称" })
     ).toHaveValue("自定义服务 2");
+    expect(
+      within(settingsCanvas).getByRole("textbox", { name: "Base URL" })
+    ).not.toHaveAttribute("readonly");
+    expect(
+      within(settingsCanvas).getByRole("textbox", {
+        name: "模型列表地址"
+      })
+    ).not.toHaveAttribute("readonly");
+    expect(
+      within(settingsCanvas).getByRole("textbox", { name: "请求路径" })
+    ).not.toHaveAttribute("readonly");
     expect(container.querySelector(".home-app")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "工作台" }));
-    expect(screen.getByRole("heading", { name: "最近记录" })).toBeInTheDocument();
+    expect(container.querySelector("#recent-title")).toHaveTextContent("最近记录");
     expect(screen.getByRole("button", { name: "写新内容" })).toBeInTheDocument();
     await openFirstNotebook(user);
     const topologyPanel = screen.getByRole("complementary", {

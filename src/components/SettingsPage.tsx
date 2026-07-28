@@ -1,12 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
-  ChatGLM,
   Claude,
   DeepSeek,
   Gemini,
   Kimi,
-  OpenAI
+  OpenAI,
+  Zhipu
 } from "@lobehub/icons";
 import {
   ArchiveRestore,
@@ -14,8 +14,8 @@ import {
   BrainCircuit,
   BookOpenText,
   Bot,
-  Braces,
   Check,
+  ChevronDown,
   ChevronRight,
   Database,
   Eye,
@@ -30,6 +30,7 @@ import {
   Palette,
   Plus,
   Radio,
+  RefreshCw,
   RotateCcw,
   Search,
   Server,
@@ -77,6 +78,11 @@ import type {
   ShortcutBinding,
   ShortcutPreferences
 } from "../utils/shortcuts";
+import { discoverModels } from "../utils/modelDiscovery";
+import {
+  BUILT_IN_MODEL_CATALOG_UPDATED_AT,
+  getBuiltInModels
+} from "../data/builtInModelCatalog";
 
 interface SettingsPageProps {
   contentStyle: ContentStyleId;
@@ -120,7 +126,7 @@ type ProviderBrand =
   | "kimi"
   | "deepseek"
   | "claude"
-  | "glm"
+  | "zhipu"
   | "custom";
 type ProviderProtocol = "openai-compatible" | "anthropic-messages";
 
@@ -133,11 +139,20 @@ interface ModelProvider {
   brand: ProviderBrand;
   protocol: ProviderProtocol;
   baseUrl: string;
+  modelsPath: string;
   endpointPath: string;
   apiKey: string;
   model: string;
   enabled: boolean;
   isDefault: boolean;
+}
+
+type ModelCatalogStatus = "idle" | "loading" | "ready" | "error";
+
+interface ModelCatalog {
+  status: ModelCatalogStatus;
+  models: string[];
+  error?: string;
 }
 
 const initialModelProviders: ModelProvider[] = [
@@ -150,6 +165,7 @@ const initialModelProviders: ModelProvider[] = [
     brand: "chatgpt",
     protocol: "openai-compatible",
     baseUrl: "https://api.openai.com/v1",
+    modelsPath: "/models",
     endpointPath: "/chat/completions",
     apiKey: "",
     model: "gpt-5-mini",
@@ -165,6 +181,7 @@ const initialModelProviders: ModelProvider[] = [
     brand: "gemini",
     protocol: "openai-compatible",
     baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+    modelsPath: "/models",
     endpointPath: "/chat/completions",
     apiKey: "",
     model: "gemini-3.6-flash",
@@ -180,9 +197,10 @@ const initialModelProviders: ModelProvider[] = [
     brand: "kimi",
     protocol: "openai-compatible",
     baseUrl: "https://api.moonshot.cn/v1",
+    modelsPath: "/models",
     endpointPath: "/chat/completions",
     apiKey: "",
-    model: "kimi-k2.5",
+    model: "kimi-k3",
     enabled: false,
     isDefault: false
   },
@@ -195,6 +213,7 @@ const initialModelProviders: ModelProvider[] = [
     brand: "deepseek",
     protocol: "openai-compatible",
     baseUrl: "https://api.deepseek.com",
+    modelsPath: "/models",
     endpointPath: "/chat/completions",
     apiKey: "",
     model: "deepseek-v4-flash",
@@ -210,9 +229,10 @@ const initialModelProviders: ModelProvider[] = [
     brand: "claude",
     protocol: "anthropic-messages",
     baseUrl: "https://api.anthropic.com/v1",
+    modelsPath: "/models",
     endpointPath: "/messages",
     apiKey: "",
-    model: "claude-sonnet-4-5",
+    model: "claude-sonnet-5",
     enabled: false,
     isDefault: false
   },
@@ -222,9 +242,10 @@ const initialModelProviders: ModelProvider[] = [
     shortName: "GLM",
     kind: "default",
     tone: "indigo",
-    brand: "glm",
+    brand: "zhipu",
     protocol: "openai-compatible",
     baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+    modelsPath: "/models",
     endpointPath: "/chat/completions",
     apiKey: "",
     model: "glm-5.2",
@@ -240,6 +261,7 @@ const initialModelProviders: ModelProvider[] = [
     brand: "custom",
     protocol: "openai-compatible",
     baseUrl: "http://127.0.0.1:11434/v1",
+    modelsPath: "/models",
     endpointPath: "/chat/completions",
     apiKey: "",
     model: "",
@@ -274,10 +296,10 @@ function ModelProviderMark({
     case "claude":
       icon = <Claude.Color size={iconSize} />;
       break;
-    case "glm":
+    case "zhipu":
       icon = (
-        <ChatGLM
-          className="model-provider-brand-icon is-glm"
+        <Zhipu.Color
+          className="model-provider-brand-icon is-zhipu"
           size={iconSize}
         />
       );
@@ -601,13 +623,6 @@ export function SettingsPage({
               );
             })}
           </nav>
-          <div className="settings-local-note">
-            <ShieldCheck aria-hidden="true" size={17} />
-            <span>
-              <strong>保存在本机</strong>
-              字体与内容风格会即时应用，并保存在当前设备
-            </span>
-          </div>
         </aside>
 
         <section
@@ -1057,12 +1072,56 @@ function ContentStyleSettings({
 
 function ModelProviderSettings() {
   const [providers, setProviders] = useState(initialModelProviders);
-  const [selectedProviderId, setSelectedProviderId] = useState("openai");
+  const [selectedProviderId, setSelectedProviderId] = useState("chatgpt");
   const [showApiKey, setShowApiKey] = useState(false);
   const [nextCustomProviderNumber, setNextCustomProviderNumber] = useState(2);
+  const [modelCatalogs, setModelCatalogs] = useState<
+    Record<string, ModelCatalog>
+  >({});
+  const [openModelPickerId, setOpenModelPickerId] = useState<string | null>(
+    null
+  );
+  const [modelQuery, setModelQuery] = useState("");
+  const modelRequestIds = useRef<Record<string, number>>({});
   const selectedProvider =
     providers.find((provider) => provider.id === selectedProviderId) ??
     providers[0];
+  const selectedCatalog = modelCatalogs[selectedProvider.id] ?? {
+    status: "idle",
+    models: []
+  };
+  const selectedBuiltInModels = getBuiltInModels(selectedProvider.id);
+  const hasApiKey = Boolean(selectedProvider.apiKey.trim());
+  const activeCatalogModels =
+    selectedCatalog.status === "ready" && selectedCatalog.models.length > 0
+      ? selectedCatalog.models
+      : selectedBuiltInModels;
+  const selectableModels = Array.from(
+    new Set(
+      [...activeCatalogModels, selectedProvider.model].filter(Boolean)
+    )
+  );
+  const normalizedModelQuery = modelQuery.trim().toLocaleLowerCase("en-US");
+  const filteredModels = selectableModels.filter((model) =>
+    model.toLocaleLowerCase("en-US").includes(normalizedModelQuery)
+  );
+  const modelPickerOpen = openModelPickerId === selectedProvider.id;
+  const modelCatalogMessage =
+    selectedCatalog.status === "loading"
+      ? "正在读取服务商的云端模型列表…"
+      : selectedCatalog.status === "ready"
+        ? selectedCatalog.models.length > 0
+          ? `云端返回 ${selectedCatalog.models.length} 个可用模型`
+          : `云端未返回模型，继续显示 ${selectedBuiltInModels.length} 个内置模型`
+        : selectedCatalog.status === "error"
+          ? `${selectedCatalog.error ?? "模型列表读取失败"}；继续显示 ${
+              selectedBuiltInModels.length
+            } 个内置模型`
+          : selectedBuiltInModels.length > 0
+            ? `内置目录（${BUILT_IN_MODEL_CATALOG_UPDATED_AT}），共 ${selectedBuiltInModels.length} 个模型；填写 API Key 后可读取云端列表`
+            : hasApiKey
+              ? "展开后读取云端模型列表"
+              : "暂无内置目录；填写 API Key 后可读取云端列表，也可输入自定义模型 ID";
   const defaultProviders = providers.filter(
     (provider) => provider.kind === "default"
   );
@@ -1084,6 +1143,85 @@ function ModelProviderSettings() {
     );
   };
 
+  const resetModelCatalog = (providerId: string) => {
+    modelRequestIds.current[providerId] =
+      (modelRequestIds.current[providerId] ?? 0) + 1;
+    setModelCatalogs((current) => ({
+      ...current,
+      [providerId]: { status: "idle", models: [] }
+    }));
+    setOpenModelPickerId((current) =>
+      current === providerId ? null : current
+    );
+  };
+
+  const loadProviderModels = async (provider: ModelProvider) => {
+    if (!provider.apiKey.trim()) {
+      setModelCatalogs((current) => ({
+        ...current,
+        [provider.id]: { status: "idle", models: [] }
+      }));
+      return;
+    }
+
+    const requestId = (modelRequestIds.current[provider.id] ?? 0) + 1;
+    modelRequestIds.current[provider.id] = requestId;
+    setModelCatalogs((current) => ({
+      ...current,
+      [provider.id]: {
+        status: "loading",
+        models: current[provider.id]?.models ?? []
+      }
+    }));
+
+    try {
+      const models = await discoverModels({
+        baseUrl: provider.baseUrl,
+        modelsPath: provider.modelsPath,
+        apiKey: provider.apiKey,
+        protocol: provider.protocol
+      });
+      if (modelRequestIds.current[provider.id] !== requestId) return;
+      setModelCatalogs((current) => ({
+        ...current,
+        [provider.id]: { status: "ready", models }
+      }));
+    } catch (error) {
+      if (modelRequestIds.current[provider.id] !== requestId) return;
+      setModelCatalogs((current) => ({
+        ...current,
+        [provider.id]: {
+          status: "error",
+          models: current[provider.id]?.models ?? [],
+          error: error instanceof Error ? error.message : String(error)
+        }
+      }));
+    }
+  };
+
+  const toggleModelPicker = () => {
+    if (modelPickerOpen) {
+      setOpenModelPickerId(null);
+      return;
+    }
+
+    setOpenModelPickerId(selectedProvider.id);
+    setModelQuery("");
+    if (
+      hasApiKey &&
+      selectedCatalog.status !== "loading" &&
+      selectedCatalog.status !== "ready"
+    ) {
+      void loadProviderModels(selectedProvider);
+    }
+  };
+
+  const chooseModel = (model: string) => {
+    updateProvider(selectedProvider.id, { model });
+    setOpenModelPickerId(null);
+    setModelQuery("");
+  };
+
   const addCustomProvider = () => {
     const id = `custom-${nextCustomProviderNumber}`;
     const customProvider: ModelProvider = {
@@ -1095,6 +1233,7 @@ function ModelProviderSettings() {
       brand: "custom",
       protocol: "openai-compatible",
       baseUrl: "",
+      modelsPath: "/models",
       endpointPath: "/chat/completions",
       apiKey: "",
       model: "",
@@ -1152,6 +1291,8 @@ function ModelProviderSettings() {
                 onClick={() => {
                   setSelectedProviderId(provider.id);
                   setShowApiKey(false);
+                  setOpenModelPickerId(null);
+                  setModelQuery("");
                 }}
               >
                 <ModelProviderMark provider={provider} />
@@ -1229,7 +1370,8 @@ function ModelProviderSettings() {
         <div className="model-provider-status" role="note">
           <KeyRound aria-hidden="true" size={16} />
           <span>
-            本页当前只演示接口配置。API Key 尚未写入 Windows 安全存储，也不会发起网络请求。
+            展开“使用模型”时会请求当前模型列表地址；真实生成请求尚未接入，API
+            Key 也尚未写入 Windows 安全存储。
           </span>
         </div>
 
@@ -1270,6 +1412,7 @@ function ModelProviderSettings() {
                           ? "/messages"
                           : "/chat/completions"
                     });
+                    resetModelCatalog(selectedProvider.id);
                   }}
                 >
                   <option value="openai-compatible">OpenAI Compatible</option>
@@ -1286,22 +1429,56 @@ function ModelProviderSettings() {
 
           <fieldset>
             <legend>接口定义</legend>
-            <label className="model-field is-wide">
-              <span>Base URL</span>
-              <input
-                aria-label="Base URL"
-                type="url"
-                spellCheck={false}
-                value={selectedProvider.baseUrl}
-                placeholder="https://api.example.com/v1"
-                onChange={(event) =>
-                  updateProvider(selectedProvider.id, {
-                    baseUrl: event.target.value
-                  })
-                }
-              />
-              <small>填写 API 根地址，不包含具体请求路径</small>
-            </label>
+            <div className="model-provider-form-grid model-provider-address-grid">
+              <label className="model-field">
+                <span>Base URL</span>
+                <input
+                  aria-label="Base URL"
+                  type="url"
+                  spellCheck={false}
+                  readOnly={selectedProvider.kind === "default"}
+                  value={selectedProvider.baseUrl}
+                  placeholder="https://api.example.com/v1"
+                  onChange={(event) => {
+                    updateProvider(selectedProvider.id, {
+                      baseUrl: event.target.value
+                    });
+                    resetModelCatalog(selectedProvider.id);
+                  }}
+                />
+                <small>
+                  {selectedProvider.kind === "default"
+                    ? "默认服务商地址由应用内置"
+                    : "填写 API 根地址，不包含具体请求路径"}
+                </small>
+              </label>
+
+              <div className="model-field">
+                <label htmlFor={`models-path-${selectedProvider.id}`}>
+                  模型列表地址
+                </label>
+                <input
+                  id={`models-path-${selectedProvider.id}`}
+                  aria-label="模型列表地址"
+                  type="text"
+                  spellCheck={false}
+                  readOnly={selectedProvider.kind === "default"}
+                  value={selectedProvider.modelsPath}
+                  placeholder="/models 或完整 URL"
+                  onChange={(event) => {
+                    updateProvider(selectedProvider.id, {
+                      modelsPath: event.target.value
+                    });
+                    resetModelCatalog(selectedProvider.id);
+                  }}
+                />
+                <small>
+                  {selectedProvider.kind === "default"
+                    ? "默认服务商模型目录地址由应用内置"
+                    : "支持相对路径或完整 URL"}
+                </small>
+              </div>
+            </div>
 
             <div className="model-provider-form-grid">
               <label className="model-field">
@@ -1309,6 +1486,7 @@ function ModelProviderSettings() {
                 <input
                   aria-label="请求路径"
                   spellCheck={false}
+                  readOnly={selectedProvider.kind === "default"}
                   value={selectedProvider.endpointPath}
                   onChange={(event) =>
                     updateProvider(selectedProvider.id, {
@@ -1323,21 +1501,165 @@ function ModelProviderSettings() {
                 </small>
               </label>
 
-              <label className="model-field">
-                <span>默认模型</span>
-                <input
-                  aria-label="默认模型"
-                  spellCheck={false}
-                  value={selectedProvider.model}
-                  placeholder="输入服务商提供的模型 ID"
-                  onChange={(event) =>
-                    updateProvider(selectedProvider.id, {
-                      model: event.target.value
-                    })
-                  }
-                />
-                <small>生成时可由具体动作覆盖</small>
-              </label>
+              <div className="model-field">
+                <label htmlFor={`default-model-${selectedProvider.id}`}>
+                  使用模型
+                </label>
+                <div
+                  className={`model-picker${modelPickerOpen ? " is-open" : ""}`}
+                  onBlur={(event) => {
+                    if (
+                      !event.currentTarget.contains(
+                        event.relatedTarget as Node | null
+                      )
+                    ) {
+                      setOpenModelPickerId(null);
+                      setModelQuery("");
+                    }
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      setOpenModelPickerId(null);
+                      setModelQuery("");
+                    }
+                  }}
+                >
+                  <button
+                    id={`default-model-${selectedProvider.id}`}
+                    className="model-picker-trigger"
+                    type="button"
+                    role="combobox"
+                    aria-label="使用模型"
+                    aria-expanded={modelPickerOpen}
+                    aria-controls={`model-options-${selectedProvider.id}`}
+                    aria-haspopup="listbox"
+                    onClick={toggleModelPicker}
+                  >
+                    <span
+                      className={
+                        selectedProvider.model ? undefined : "is-placeholder"
+                      }
+                    >
+                      {selectedProvider.model || "选择服务商模型"}
+                    </span>
+                    {modelPickerOpen &&
+                    selectedCatalog.status === "loading" ? (
+                      <RefreshCw
+                        aria-hidden="true"
+                        className="is-spinning"
+                        size={16}
+                      />
+                    ) : (
+                      <ChevronDown aria-hidden="true" size={16} />
+                    )}
+                  </button>
+
+                  {modelPickerOpen && (
+                    <div className="model-picker-popover">
+                      <div className="model-picker-status">
+                        <span
+                          className={`is-${selectedCatalog.status}`}
+                          role={
+                            selectedCatalog.status === "error"
+                              ? "alert"
+                              : "status"
+                          }
+                        >
+                          {modelCatalogMessage}
+                        </span>
+                        <button
+                          type="button"
+                          aria-label={`刷新 ${selectedProvider.name} 模型列表`}
+                          title={
+                            hasApiKey
+                              ? "重新读取云端模型列表"
+                              : "填写 API Key 后可读取云端模型列表"
+                          }
+                          disabled={
+                            selectedCatalog.status === "loading" || !hasApiKey
+                          }
+                          onClick={() =>
+                            void loadProviderModels(selectedProvider)
+                          }
+                        >
+                          <RefreshCw
+                            aria-hidden="true"
+                            className={
+                              selectedCatalog.status === "loading"
+                                ? "is-spinning"
+                                : undefined
+                            }
+                            size={14}
+                          />
+                        </button>
+                      </div>
+
+                      <label className="model-picker-search">
+                        <Search aria-hidden="true" size={14} />
+                        <span className="sr-only">搜索或输入模型 ID</span>
+                        <input
+                          aria-label="搜索或输入模型 ID"
+                          autoComplete="off"
+                          spellCheck={false}
+                          value={modelQuery}
+                          placeholder="搜索或输入模型 ID"
+                          onChange={(event) =>
+                            setModelQuery(event.target.value)
+                          }
+                        />
+                      </label>
+
+                      <div
+                        id={`model-options-${selectedProvider.id}`}
+                        className="model-picker-options"
+                        role="listbox"
+                        aria-label={`${selectedProvider.name} 可用模型`}
+                      >
+                        {filteredModels.map((model) => (
+                          <button
+                            type="button"
+                            role="option"
+                            aria-selected={model === selectedProvider.model}
+                            key={model}
+                            onClick={() => chooseModel(model)}
+                          >
+                            <span>{model}</span>
+                            {model === selectedProvider.model && (
+                              <Check aria-hidden="true" size={14} />
+                            )}
+                          </button>
+                        ))}
+                        {selectedCatalog.status !== "loading" &&
+                          filteredModels.length === 0 && (
+                            <div className="model-picker-empty">
+                              没有匹配的模型，可以直接使用输入的模型 ID。
+                            </div>
+                          )}
+                      </div>
+
+                      {modelQuery.trim() &&
+                        !selectableModels.some(
+                          (model) =>
+                            model.toLocaleLowerCase("en-US") ===
+                            normalizedModelQuery
+                        ) && (
+                          <button
+                            className="model-picker-custom"
+                            type="button"
+                            onClick={() => chooseModel(modelQuery.trim())}
+                          >
+                            使用自定义模型 ID
+                            <strong>{modelQuery.trim()}</strong>
+                          </button>
+                        )}
+                    </div>
+                  )}
+                </div>
+                <small>
+                  无 API Key 时使用内置目录；填写后展开会读取云端列表，也可输入自定义模型 ID
+                </small>
+              </div>
             </div>
 
             <label className="model-field is-wide">
@@ -1350,11 +1672,12 @@ function ModelProviderSettings() {
                   spellCheck={false}
                   value={selectedProvider.apiKey}
                   placeholder="输入服务商密钥"
-                  onChange={(event) =>
+                  onChange={(event) => {
                     updateProvider(selectedProvider.id, {
                       apiKey: event.target.value
-                    })
-                  }
+                    });
+                    resetModelCatalog(selectedProvider.id);
+                  }}
                 />
                 <button
                   type="button"
@@ -1406,30 +1729,6 @@ function ModelProviderSettings() {
             </label>
           </fieldset>
         </form>
-
-        <section className="model-request-boundary" aria-labelledby="request-boundary-title">
-          <div className="model-request-boundary-heading">
-            <Braces aria-hidden="true" size={18} />
-            <div>
-              <h4 id="request-boundary-title">调用 JSON 的组装边界</h4>
-              <p>提示词与上下文不会在本页定义。</p>
-            </div>
-          </div>
-          <div className="model-request-flow" aria-label="调用 JSON 组成">
-            <span>服务商配置</span>
-            <b aria-hidden="true">+</b>
-            <span>提示词模板</span>
-            <b aria-hidden="true">+</b>
-            <span>当前上下文</span>
-            <b aria-hidden="true">→</b>
-            <strong>请求 JSON</strong>
-          </div>
-          <pre aria-label="请求 JSON 结构预览">{`{
-  "provider": "${selectedProvider.id}",
-  "model": "${selectedProvider.model || "<model-id>"}",
-  "messages": ["<prompt-template>", "<current-context>"]
-}`}</pre>
-        </section>
 
         {selectedProvider.kind === "custom" && (
           <div className="model-provider-danger">

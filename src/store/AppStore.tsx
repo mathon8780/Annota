@@ -19,6 +19,12 @@ import type {
 } from "../types";
 
 const STORAGE_KEY = "annota.desktop.demo.v1";
+const CPP_DEMO_ROOT_IDS = new Set([
+  "cpp-polymorphism-root",
+  "cpp-vtable-root",
+  "cpp-virtual-destructor-root",
+  "cpp-template-root"
+]);
 
 type Action =
   | { type: "open-notebook"; notebookId: string; articleId?: string }
@@ -36,6 +42,27 @@ function cloneSeed(): AppData {
   return JSON.parse(JSON.stringify(seedData)) as AppData;
 }
 
+function mergeCppDemoAdditions(data: AppData): AppData {
+  const notebookIds = new Set(data.notebooks.map((notebook) => notebook.id));
+  const notebookAdditions = seedData.notebooks.filter(
+    (notebook) =>
+      CPP_DEMO_ROOT_IDS.has(notebook.rootId) && !notebookIds.has(notebook.id)
+  );
+  const articleAdditions = Object.fromEntries(
+    Object.entries(seedData.articles).filter(
+      ([articleId]) => CPP_DEMO_ROOT_IDS.has(articleId) && !data.articles[articleId]
+    )
+  );
+  if (!notebookAdditions.length && !Object.keys(articleAdditions).length) {
+    return data;
+  }
+  return {
+    ...data,
+    notebooks: [...data.notebooks, ...notebookAdditions],
+    articles: { ...articleAdditions, ...data.articles }
+  };
+}
+
 function loadInitialData(): AppData {
   if (typeof window === "undefined") return cloneSeed();
   try {
@@ -43,12 +70,12 @@ function loadInitialData(): AppData {
     if (!raw) return cloneSeed();
     const parsed = JSON.parse(raw) as AppData;
     if (!Array.isArray(parsed.notebooks) || !parsed.articles) return cloneSeed();
-    return {
+    return mergeCppDemoAdditions({
       ...parsed,
       jobs: [],
       currentNotebookId: null,
       currentArticleId: null
-    };
+    });
   } catch {
     return cloneSeed();
   }
