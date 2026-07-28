@@ -81,13 +81,23 @@ function renderInlineText(block: ContentBlock) {
       (mark) => mark.type === "backgroundColor"
     )?.color;
     const decorations = [
-      activeMarks.some((mark) => mark.type === "underline") ? "underline" : "",
+      activeMarks.some((mark) => mark.type === "underline" || mark.type === "wavyUnderline") ? "underline" : "",
       activeMarks.some((mark) => mark.type === "strikethrough") ? "line-through" : ""
     ].filter(Boolean);
 
     if (textColor) style.color = textColor;
     if (backgroundColor) style.backgroundColor = backgroundColor;
     if (decorations.length) style.textDecorationLine = decorations.join(" ");
+    if (activeMarks.some((mark) => mark.type === "wavyUnderline")) {
+      style.textDecorationStyle = "wavy";
+      style.textDecorationThickness = "1px";
+    }
+    if (activeMarks.some((mark) => mark.type === "border")) {
+      style.border = "1px solid color-mix(in oklch, currentColor 40%, transparent)";
+      style.borderRadius = "var(--radius-sm)";
+      style.padding = "0 2px";
+      style.margin = "0 1px";
+    }
 
     return (
       <span className={classes.join(" ")} style={style} key={`mark-${start}`}>

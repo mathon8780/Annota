@@ -15,7 +15,9 @@ import {
   Palette,
   Strikethrough,
   Type,
-  Underline
+  Underline,
+  Waves,
+  BoxSelect
 } from "lucide-react";
 import type { InlineMarkType, SelectionState } from "../types";
 
@@ -56,7 +58,9 @@ const formattingActions: Array<{
   { type: "bold", label: "加粗", icon: Bold },
   { type: "italic", label: "斜体", icon: Italic },
   { type: "strikethrough", label: "删除线", icon: Strikethrough },
-  { type: "underline", label: "下划线", icon: Underline }
+  { type: "underline", label: "下划线", icon: Underline },
+  { type: "wavyUnderline", label: "波浪线", icon: Waves },
+  { type: "border", label: "边框", icon: BoxSelect }
 ];
 
 export function InlineFormattingToolbar({

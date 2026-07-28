@@ -23,6 +23,10 @@
   --color-selection: oklch(91% 0.06 263);
   --color-shadow: oklch(18% 0.03 260 / 0.11);
   --color-shadow-soft: oklch(18% 0.03 260 / 0.055);
+  --shadow-sm: 0 1px 2px 0 oklch(18% 0.03 260 / 0.05);
+  --shadow-md: 0 4px 6px -1px oklch(18% 0.03 260 / 0.08), 0 2px 4px -1px oklch(18% 0.03 260 / 0.04);
+  --shadow-lg: 0 10px 15px -3px oklch(18% 0.03 260 / 0.08), 0 4px 6px -2px oklch(18% 0.03 260 / 0.04);
+  --shadow-xl: 0 20px 25px -5px oklch(18% 0.03 260 / 0.08), 0 10px 10px -5px oklch(18% 0.03 260 / 0.04);
   --color-backdrop: oklch(18% 0.03 260 / 0.3);
   --color-window-close: oklch(55% 0.22 25);
   --color-window-close-active: oklch(47% 0.2 25);

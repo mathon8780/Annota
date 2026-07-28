@@ -7,6 +7,8 @@ export type InlineMarkType =
   | "italic"
   | "strikethrough"
   | "underline"
+  | "wavyUnderline"
+  | "border"
   | "textColor"
   | "backgroundColor";
 
