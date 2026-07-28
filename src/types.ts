@@ -59,6 +59,37 @@ export interface Notebook {
   accent: "cobalt" | "amber" | "green";
 }
 
+export type FolderIconId =
+  | "archive"
+  | "book"
+  | "briefcase"
+  | "code"
+  | "cpu"
+  | "database"
+  | "flask"
+  | "folder"
+  | "globe"
+  | "graduation"
+  | "layers"
+  | "lightbulb"
+  | "network"
+  | "palette"
+  | "rocket"
+  | "shapes"
+  | "shield"
+  | "sparkles"
+  | "template"
+  | "wrench";
+
+export interface FolderProfile {
+  key: string;
+  name: string;
+  color: string;
+  icon: FolderIconId;
+  classifications: string[];
+  description: string;
+}
+
 export interface GenerationJob {
   id: string;
   parentId: string;
@@ -86,6 +117,8 @@ export interface InlineFormatCommand {
 
 export interface AppData {
   notebooks: Notebook[];
+  folderProfiles: FolderProfile[];
+  deletedFolderKeys: string[];
   articles: Record<string, ArticleNode>;
   jobs: GenerationJob[];
   currentNotebookId: string | null;

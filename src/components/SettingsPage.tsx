@@ -37,7 +37,6 @@ import {
   ShieldCheck,
   Sprout,
   Trash2,
-  WandSparkles,
   Wrench
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -363,14 +362,6 @@ const settingCategories: SettingCategory[] = [
     eyebrow: "模型连接",
     description: "管理不同模型服务商的接口、密钥与默认模型。",
     icon: Bot,
-    groups: []
-  },
-  {
-    id: "generation",
-    label: "生成与提示词",
-    eyebrow: "生成动作",
-    description: "组织解释、翻译与自定义动作的外观、语义和提示词。",
-    icon: WandSparkles,
     groups: []
   },
   {

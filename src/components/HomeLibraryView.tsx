@@ -1,29 +1,153 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode
+} from "react";
+import {
+  Archive,
+  BookOpenText,
+  Briefcase,
+  Check,
+  CheckSquare2,
   ChevronLeft,
-  ChevronRight,
+  Code2,
+  Cpu,
+  Database,
   FileText,
+  FlaskConical,
+  FolderKanban,
   FolderOpen,
-  FolderTree,
+  Globe2,
+  GraduationCap,
   Hash,
+  Layers3,
   LibraryBig,
-  Star
+  Lightbulb,
+  ListChecks,
+  Network,
+  Palette,
+  PanelTop,
+  PencilLine,
+  Plus,
+  Rocket,
+  Search,
+  Shapes,
+  ShieldCheck,
+  Sparkles,
+  Star,
+  Tags,
+  Trash2,
+  Wrench,
+  X,
+  type LucideIcon
 } from "lucide-react";
-import type { ArticleNode, Notebook } from "../types";
+import type {
+  ArticleNode,
+  FolderIconId,
+  FolderProfile,
+  Notebook
+} from "../types";
 
 export type HomeLibrarySection = "folders" | "tags" | "favorites";
 
 export interface HomeLibraryViewProps {
   section: HomeLibrarySection;
   notebooks: readonly Notebook[];
+  folderProfiles: readonly FolderProfile[];
   articles: Readonly<Record<string, ArticleNode>>;
   renderNotebook: (notebook: Notebook) => ReactNode;
+  onUpdateFolderProfile: (profile: FolderProfile) => void;
+  onUpdateFolderProfiles: (profiles: FolderProfile[]) => void;
+  onDeleteFolderProfiles: (keys: string[]) => void;
 }
 
 interface NotebookGroup {
   key: string;
   label: string;
   notebooks: Notebook[];
+}
+
+interface FolderCollection extends NotebookGroup {
+  profile: FolderProfile;
+}
+
+const FOLDER_COLORS = [
+  "#3158D8",
+  "#7658A5",
+  "#B36A3E",
+  "#2F806E",
+  "#A35C74",
+  "#4E7A8A",
+  "#5B6E9D",
+  "#7C7048"
+] as const;
+const UNFILED_FOLDER_KEY = "未归档";
+
+const FOLDER_ICON_OPTIONS: Array<{
+  id: FolderIconId;
+  label: string;
+  icon: LucideIcon;
+}> = [
+  { id: "archive", label: "档案", icon: Archive },
+  { id: "book", label: "阅读", icon: BookOpenText },
+  { id: "briefcase", label: "项目", icon: Briefcase },
+  { id: "code", label: "代码", icon: Code2 },
+  { id: "cpu", label: "系统", icon: Cpu },
+  { id: "database", label: "数据", icon: Database },
+  { id: "flask", label: "实验", icon: FlaskConical },
+  { id: "folder", label: "文件夹", icon: FolderKanban },
+  { id: "globe", label: "网络", icon: Globe2 },
+  { id: "graduation", label: "学习", icon: GraduationCap },
+  { id: "layers", label: "层级", icon: Layers3 },
+  { id: "lightbulb", label: "灵感", icon: Lightbulb },
+  { id: "network", label: "关系", icon: Network },
+  { id: "palette", label: "设计", icon: Palette },
+  { id: "rocket", label: "探索", icon: Rocket },
+  { id: "shapes", label: "组件", icon: Shapes },
+  { id: "shield", label: "安全", icon: ShieldCheck },
+  { id: "sparkles", label: "概念", icon: Sparkles },
+  { id: "template", label: "模板", icon: PanelTop },
+  { id: "wrench", label: "工具", icon: Wrench }
+];
+
+const FOLDER_ICONS = Object.fromEntries(
+  FOLDER_ICON_OPTIONS.map((option) => [option.id, option.icon])
+) as Record<FolderIconId, LucideIcon>;
+
+function createDefaultFolderProfile(
+  group: NotebookGroup,
+  index: number
+): FolderProfile {
+  const classifications = group.label
+    .split("/")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return {
+    key: group.key,
+    name: group.label,
+    color: FOLDER_COLORS[index % FOLDER_COLORS.length],
+    icon: index % 2 === 0 ? "archive" : "book",
+    classifications:
+      classifications.length > 1 ? classifications : ["知识集合"],
+    description: `集中整理与“${group.label}”相关的笔记、页面和阅读进度。`
+  };
+}
+
+function folderAccentStyle(color: string) {
+  return { "--folder-accent": color } as CSSProperties;
+}
+
+function formatFolderActivity(value: string) {
+  return new Date(value).toLocaleString("zh-CN", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  });
 }
 
 const SECTION_COPY: Record<
@@ -40,8 +164,8 @@ const SECTION_COPY: Record<
     eyebrow: "资料库 / 文件夹",
     title: "按主题归档",
     description: "沿着已有目录回到一组相关笔记，继续整理同一条知识脉络。",
-    emptyTitle: "还没有可归档的笔记",
-    emptyDescription: "创建第一篇笔记后，它会按照所属目录显示在这里。"
+    emptyTitle: "还没有文件夹",
+    emptyDescription: "使用右下角加号创建第一个文件夹，并设置名称、颜色与图标。"
   },
   tags: {
     eyebrow: "资料库 / 标签",
@@ -134,11 +258,35 @@ function NotebookCollection({
 export function HomeLibraryView({
   section,
   notebooks,
+  folderProfiles,
   articles,
-  renderNotebook
+  renderNotebook,
+  onUpdateFolderProfile,
+  onUpdateFolderProfiles,
+  onDeleteFolderProfiles
 }: HomeLibraryViewProps) {
   const copy = SECTION_COPY[section];
   const [activeFolderKey, setActiveFolderKey] = useState<string | null>(null);
+  const [folderQuery, setFolderQuery] = useState("");
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedFolderKeys, setSelectedFolderKeys] = useState<Set<string>>(
+    () => new Set()
+  );
+  const [batchPanel, setBatchPanel] = useState<
+    "color" | "classifications" | null
+  >(null);
+  const [batchClassificationDraft, setBatchClassificationDraft] = useState("");
+  const [folderDraft, setFolderDraft] = useState<FolderProfile | null>(null);
+  const [folderEditorMode, setFolderEditorMode] = useState<"create" | "edit">(
+    "edit"
+  );
+  const [classificationDraft, setClassificationDraft] = useState("");
+  const [iconQuery, setIconQuery] = useState("");
+  const [deleteFolderKeys, setDeleteFolderKeys] = useState<string[] | null>(
+    null
+  );
+  const folderEditorRef = useRef<HTMLDialogElement>(null);
+  const deleteFolderDialogRef = useRef<HTMLDialogElement>(null);
 
   const articleCountByRoot = useMemo(() => {
     return Object.values(articles).reduce<Map<string, number>>(
@@ -158,12 +306,55 @@ export function HomeLibraryView({
     [notebooks]
   );
 
+  const folderCollections = useMemo<FolderCollection[]>(() => {
+    const groups = new Map(folderGroups.map((group) => [group.key, group]));
+    const profiles = new Map(
+      folderProfiles.map((profile) => [profile.key, profile])
+    );
+    const profiledCollections = folderProfiles.map((profile) => {
+      const group = groups.get(profile.key);
+      return {
+        key: profile.key,
+        label: profile.name,
+        notebooks: group?.notebooks ?? [],
+        profile
+      };
+    });
+    const unprofiledCollections = folderGroups
+      .filter((group) => !profiles.has(group.key))
+      .map((group, index) => ({
+        ...group,
+        profile: createDefaultFolderProfile(
+          group,
+          folderProfiles.length + index
+        )
+      }));
+    return [...profiledCollections, ...unprofiledCollections];
+  }, [folderGroups, folderProfiles]);
+
+  const visibleFolderCollections = useMemo(() => {
+    const query = folderQuery.trim().toLocaleLowerCase("zh-CN");
+    if (!query) return folderCollections;
+    return folderCollections.filter((collection) =>
+      [
+        collection.profile.name,
+        collection.profile.description,
+        collection.profile.classifications.join(" "),
+        collection.notebooks.map((notebook) => notebook.title).join(" ")
+      ]
+        .join(" ")
+        .toLocaleLowerCase("zh-CN")
+        .includes(query)
+    );
+  }, [folderCollections, folderQuery]);
+
   const activeFolder = useMemo(
     () =>
       activeFolderKey
-        ? folderGroups.find((group) => group.key === activeFolderKey) ?? null
+        ? folderCollections.find((group) => group.key === activeFolderKey) ??
+          null
         : null,
-    [activeFolderKey, folderGroups]
+    [activeFolderKey, folderCollections]
   );
 
   useEffect(() => {
@@ -171,6 +362,188 @@ export function HomeLibraryView({
       setActiveFolderKey(null);
     }
   }, [activeFolder, activeFolderKey, section]);
+
+  useEffect(() => {
+    if (section === "folders") return;
+    setSelectionMode(false);
+    setSelectedFolderKeys(new Set());
+    setBatchPanel(null);
+    setFolderQuery("");
+  }, [section]);
+
+  useEffect(() => {
+    const validKeys = new Set(
+      folderCollections.map((collection) => collection.key)
+    );
+    setSelectedFolderKeys((current) => {
+      const next = new Set([...current].filter((key) => validKeys.has(key)));
+      return next.size === current.size ? current : next;
+    });
+  }, [folderCollections]);
+
+  useEffect(() => {
+    const dialog = folderEditorRef.current;
+    if (!folderDraft || !dialog || dialog.open) return;
+    dialog.showModal();
+  }, [folderDraft]);
+
+  useEffect(() => {
+    const dialog = deleteFolderDialogRef.current;
+    if (!deleteFolderKeys || !dialog || dialog.open) return;
+    dialog.showModal();
+  }, [deleteFolderKeys]);
+
+  const openFolderEditor = (collection: FolderCollection) => {
+    setFolderEditorMode("edit");
+    setFolderDraft({ ...collection.profile });
+    setClassificationDraft(collection.profile.classifications.join("，"));
+    setIconQuery("");
+  };
+
+  const openFolderCreator = () => {
+    const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    setFolderEditorMode("create");
+    setFolderDraft({
+      key: `folder-${stamp}`,
+      name: "",
+      color: FOLDER_COLORS[0],
+      icon: "folder",
+      classifications: ["知识集合"],
+      description: ""
+    });
+    setClassificationDraft("知识集合");
+    setIconQuery("");
+  };
+
+  const closeFolderEditor = () => {
+    setFolderDraft(null);
+    setClassificationDraft("");
+    setIconQuery("");
+  };
+
+  const saveFolderProfile = () => {
+    if (!folderDraft) return;
+    const classifications = [
+      ...new Set(
+        classificationDraft
+          .split(/[,，]/)
+          .map((classification) => classification.trim())
+          .filter(Boolean)
+      )
+    ].slice(0, 6);
+    onUpdateFolderProfile({
+      ...folderDraft,
+      name: folderDraft.name.trim() || folderDraft.key,
+      description: folderDraft.description.trim(),
+      classifications:
+        classifications.length > 0 ? classifications : ["知识集合"]
+    });
+    closeFolderEditor();
+  };
+
+  const toggleFolderSelection = (key: string) => {
+    setSelectedFolderKeys((current) => {
+      const next = new Set(current);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
+
+  const closeBatchMode = () => {
+    setSelectionMode(false);
+    setSelectedFolderKeys(new Set());
+    setBatchPanel(null);
+    setBatchClassificationDraft("");
+  };
+
+  const selectAllVisibleFolders = () => {
+    setSelectedFolderKeys(
+      new Set(visibleFolderCollections.map((collection) => collection.key))
+    );
+  };
+
+  const selectedFolderCollections = folderCollections.filter((collection) =>
+    selectedFolderKeys.has(collection.key)
+  );
+
+  const applyBatchColor = (color: string) => {
+    if (!selectedFolderCollections.length) return;
+    onUpdateFolderProfiles(
+      selectedFolderCollections.map((collection) => ({
+        ...collection.profile,
+        color
+      }))
+    );
+    setBatchPanel(null);
+  };
+
+  const applyBatchClassifications = () => {
+    const classifications = [
+      ...new Set(
+        batchClassificationDraft
+          .split(/[,，]/)
+          .map((classification) => classification.trim())
+          .filter(Boolean)
+      )
+    ].slice(0, 6);
+    if (!selectedFolderCollections.length || !classifications.length) return;
+    onUpdateFolderProfiles(
+      selectedFolderCollections.map((collection) => ({
+        ...collection.profile,
+        classifications
+      }))
+    );
+    setBatchPanel(null);
+    setBatchClassificationDraft("");
+  };
+
+  const requestFolderDeletion = (keys: string[]) => {
+    const uniqueKeys = [...new Set(keys)].filter(
+      (key) => key !== UNFILED_FOLDER_KEY
+    );
+    if (!uniqueKeys.length) return;
+    setDeleteFolderKeys(uniqueKeys);
+  };
+
+  const closeDeleteConfirmation = () => {
+    setDeleteFolderKeys(null);
+  };
+
+  const confirmFolderDeletion = () => {
+    if (!deleteFolderKeys?.length) return;
+    onDeleteFolderProfiles(deleteFolderKeys);
+    if (activeFolderKey && deleteFolderKeys.includes(activeFolderKey)) {
+      setActiveFolderKey(null);
+    }
+    closeFolderEditor();
+    closeBatchMode();
+    closeDeleteConfirmation();
+  };
+
+  const foldersPendingDeletion = deleteFolderKeys
+    ? folderCollections.filter((collection) =>
+        deleteFolderKeys.includes(collection.key)
+      )
+    : [];
+  const notebooksPendingReassignment = foldersPendingDeletion.reduce(
+    (total, collection) => total + collection.notebooks.length,
+    0
+  );
+  const selectedDeletableFolderCount = selectedFolderCollections.filter(
+    (collection) => collection.key !== UNFILED_FOLDER_KEY
+  ).length;
+
+  const visibleIconOptions = useMemo(() => {
+    const query = iconQuery.trim().toLocaleLowerCase("zh-CN");
+    if (!query) return FOLDER_ICON_OPTIONS;
+    return FOLDER_ICON_OPTIONS.filter((option) =>
+      `${option.label} ${option.id}`.toLocaleLowerCase("zh-CN").includes(query)
+    );
+  }, [iconQuery]);
 
   const tagGroups = useMemo(
     () => createGroups(notebooks, (notebook) => notebook.tags),
@@ -194,7 +567,7 @@ export function HomeLibraryView({
 
   const sectionCount =
     section === "folders"
-      ? folderGroups.length
+      ? folderCollections.length
       : section === "tags"
         ? tagGroups.length
         : favoriteNotebooks.length;
@@ -204,6 +577,20 @@ export function HomeLibraryView({
       : section === "tags"
         ? `${sectionCount} 个标签`
         : `${sectionCount} 篇笔记`;
+  const folderPageCount = (collection: FolderCollection) =>
+    collection.notebooks.reduce(
+      (total, notebook) =>
+        total + (articleCountByRoot.get(notebook.rootId) ?? 0),
+      0
+    );
+  const recentArticleFor = (collection: FolderCollection) => {
+    const notebook = collection.notebooks[0];
+    return notebook
+      ? (articles[notebook.lastOpenedNodeId] ??
+          articles[notebook.rootId] ??
+          null)
+      : null;
+  };
 
   return (
     <section
@@ -222,9 +609,12 @@ export function HomeLibraryView({
       </header>
 
       {section === "folders" &&
-        (folderGroups.length ? (
+        (folderCollections.length ? (
           activeFolder ? (
-            <div className="library-folder-browser">
+            <div
+              className="library-folder-browser"
+              style={folderAccentStyle(activeFolder.profile.color)}
+            >
               <aside className="library-folder-rail" aria-label="文件夹导航">
                 <button
                   className="library-folder-back"
@@ -237,27 +627,36 @@ export function HomeLibraryView({
 
                 <div className="library-folder-rail-summary">
                   <span>COLLECTIONS</span>
-                  <strong>{folderGroups.length}</strong>
+                  <strong>{folderCollections.length}</strong>
                 </div>
 
                 <nav aria-label="切换文件夹">
-                  {folderGroups.map((group) => (
-                    <button
-                      className={
-                        group.key === activeFolder.key ? "is-active" : undefined
-                      }
-                      type="button"
-                      aria-current={
-                        group.key === activeFolder.key ? "page" : undefined
-                      }
-                      key={group.key}
-                      onClick={() => setActiveFolderKey(group.key)}
-                    >
-                      <FolderTree aria-hidden="true" size={15} />
-                      <span>{group.label}</span>
-                      <small>{group.notebooks.length}</small>
-                    </button>
-                  ))}
+                  {folderCollections.map((collection) => {
+                    const CollectionIcon =
+                      FOLDER_ICONS[collection.profile.icon];
+                    return (
+                      <button
+                        className={
+                          collection.key === activeFolder.key
+                            ? "is-active"
+                            : undefined
+                        }
+                        type="button"
+                        aria-current={
+                          collection.key === activeFolder.key
+                            ? "page"
+                            : undefined
+                        }
+                        key={collection.key}
+                        onClick={() => setActiveFolderKey(collection.key)}
+                        style={folderAccentStyle(collection.profile.color)}
+                      >
+                        <CollectionIcon aria-hidden="true" size={15} />
+                        <span>{collection.profile.name}</span>
+                        <small>{collection.notebooks.length}</small>
+                      </button>
+                    );
+                  })}
                 </nav>
               </aside>
 
@@ -267,30 +666,70 @@ export function HomeLibraryView({
               >
                 <header className="library-folder-detail-header">
                   <span className="library-folder-detail-icon" aria-hidden="true">
-                    <FolderOpen size={24} />
+                    {(() => {
+                      const ActiveIcon =
+                        FOLDER_ICONS[activeFolder.profile.icon];
+                      return <ActiveIcon size={24} />;
+                    })()}
                   </span>
-                  <div>
-                    <span>当前文件夹</span>
+                  <div className="library-folder-detail-copy">
+                    <span className="library-folder-detail-kicker">
+                      文件夹集合
+                    </span>
                     <h3 id="library-active-folder-title">
-                      {activeFolder.label}
+                      {activeFolder.profile.name}
                     </h3>
-                    <p>
-                      {activeFolder.notebooks.length} 篇笔记 ·{" "}
-                      {activeFolder.notebooks.reduce(
-                        (total, notebook) =>
-                          total +
-                          (articleCountByRoot.get(notebook.rootId) ?? 0),
-                        0
-                      )}{" "}
-                      个页面
+                    <div className="library-folder-classifications">
+                      {activeFolder.profile.classifications.map(
+                        (classification) => (
+                          <span key={classification}>{classification}</span>
+                        )
+                      )}
+                    </div>
+                    <p className="library-folder-detail-description">
+                      {activeFolder.profile.description}
                     </p>
+                    <p className="library-folder-detail-meta">
+                      {activeFolder.notebooks.length} 篇笔记 ·{" "}
+                      {folderPageCount(activeFolder)} 个页面
+                    </p>
+                  </div>
+                  <div className="library-folder-detail-actions">
+                    <button
+                      className="library-folder-edit"
+                      type="button"
+                      aria-label={`编辑文件夹属性：${activeFolder.profile.name}`}
+                      onClick={() => openFolderEditor(activeFolder)}
+                    >
+                      <PencilLine aria-hidden="true" size={16} />
+                    </button>
+                    {activeFolder.key !== UNFILED_FOLDER_KEY && (
+                      <button
+                        className="library-folder-delete"
+                        type="button"
+                        aria-label={`删除文件夹：${activeFolder.profile.name}`}
+                        onClick={() =>
+                          requestFolderDeletion([activeFolder.key])
+                        }
+                      >
+                        <Trash2 aria-hidden="true" size={16} />
+                      </button>
+                    )}
                   </div>
                 </header>
 
-                <NotebookCollection
-                  notebooks={activeFolder.notebooks}
-                  renderNotebook={renderNotebook}
-                />
+                {activeFolder.notebooks.length ? (
+                  <NotebookCollection
+                    notebooks={activeFolder.notebooks}
+                    renderNotebook={renderNotebook}
+                  />
+                ) : (
+                  <div className="library-folder-detail-empty" role="status">
+                    <FileText aria-hidden="true" size={20} />
+                    <strong>这个文件夹还是空的</strong>
+                    <span>文件夹已经创建，可以继续向其中归档笔记。</span>
+                  </div>
+                )}
               </section>
             </div>
           ) : (
@@ -299,50 +738,306 @@ export function HomeLibraryView({
                 <FolderOpen aria-hidden="true" size={18} />
                 <p>
                   <strong>文件夹是内容集合</strong>
-                  每个文件夹可以包含多篇笔记及其关联页面。选择一个集合，进入集中浏览。
+                  用名称、颜色、图标与专属归类组织多篇笔记；最近打开的内容会留在每张集合卡片上。
                 </p>
               </div>
 
+              <div className="library-folder-management">
+                <label className="library-folder-search">
+                  <Search aria-hidden="true" size={16} />
+                  <span className="sr-only">查找文件夹</span>
+                  <input
+                    value={folderQuery}
+                    placeholder="查找名称、归类或内部笔记"
+                    onChange={(event) => setFolderQuery(event.target.value)}
+                  />
+                  {folderQuery && (
+                    <button
+                      type="button"
+                      aria-label="清除文件夹查找"
+                      onClick={() => setFolderQuery("")}
+                    >
+                      <X aria-hidden="true" size={14} />
+                    </button>
+                  )}
+                </label>
+                <div className="library-folder-management-actions">
+                  <button
+                    className="library-folder-create-button"
+                    type="button"
+                    aria-label="新建文件夹"
+                    title="新建文件夹"
+                    onClick={openFolderCreator}
+                  >
+                    <Plus aria-hidden="true" size={18} />
+                  </button>
+                  <button
+                    className={selectionMode ? "is-active" : undefined}
+                    type="button"
+                    aria-pressed={selectionMode}
+                    onClick={() => {
+                      if (selectionMode) {
+                        closeBatchMode();
+                      } else {
+                        setSelectionMode(true);
+                      }
+                    }}
+                  >
+                    <ListChecks aria-hidden="true" size={16} />
+                    <span>{selectionMode ? "退出批量管理" : "批量管理"}</span>
+                  </button>
+                </div>
+              </div>
+
+              {selectionMode && (
+                <div className="library-folder-batch">
+                  <div className="library-folder-batch-summary">
+                    <CheckSquare2 aria-hidden="true" size={17} />
+                    <span>
+                      已选择 <strong>{selectedFolderKeys.size}</strong> 个文件夹
+                    </span>
+                  </div>
+                  <div className="library-folder-batch-actions">
+                    <button type="button" onClick={selectAllVisibleFolders}>
+                      全选当前结果
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!selectedFolderKeys.size}
+                      onClick={() =>
+                        setBatchPanel(
+                          batchPanel === "color" ? null : "color"
+                        )
+                      }
+                    >
+                      <Palette aria-hidden="true" size={14} />
+                      批量改色
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!selectedFolderKeys.size}
+                      onClick={() =>
+                        setBatchPanel(
+                          batchPanel === "classifications"
+                            ? null
+                            : "classifications"
+                        )
+                      }
+                    >
+                      <Tags aria-hidden="true" size={14} />
+                      批量归类
+                    </button>
+                    <button
+                      className="is-danger"
+                      type="button"
+                      disabled={!selectedDeletableFolderCount}
+                      onClick={() =>
+                        requestFolderDeletion([...selectedFolderKeys])
+                      }
+                    >
+                      <Trash2 aria-hidden="true" size={14} />
+                      删除
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!selectedFolderKeys.size}
+                      onClick={() => setSelectedFolderKeys(new Set())}
+                    >
+                      取消选择
+                    </button>
+                  </div>
+
+                  {batchPanel === "color" && (
+                    <div
+                      className="library-folder-batch-panel"
+                      aria-label="批量选择文件夹颜色"
+                    >
+                      <span>应用颜色</span>
+                      <div className="folder-color-options">
+                        {FOLDER_COLORS.map((color) => (
+                          <button
+                            type="button"
+                            aria-label={`批量应用颜色 ${color}`}
+                            key={color}
+                            style={{ backgroundColor: color }}
+                            onClick={() => applyBatchColor(color)}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {batchPanel === "classifications" && (
+                    <div className="library-folder-batch-panel">
+                      <label>
+                        <span>覆盖文件夹归类</span>
+                        <input
+                          value={batchClassificationDraft}
+                          placeholder="例如：语言底层，C++"
+                          onChange={(event) =>
+                            setBatchClassificationDraft(event.target.value)
+                          }
+                        />
+                      </label>
+                      <button
+                        className="button primary"
+                        type="button"
+                        disabled={!batchClassificationDraft.trim()}
+                        onClick={applyBatchClassifications}
+                      >
+                        应用
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <ul className="library-folder-card-grid" aria-label="全部文件夹">
-                {folderGroups.map((group) => {
-                  const pageCount = group.notebooks.reduce(
-                    (total, notebook) =>
-                      total + (articleCountByRoot.get(notebook.rootId) ?? 0),
-                    0
-                  );
+                {visibleFolderCollections.map((collection, index) => {
+                  const pageCount = folderPageCount(collection);
+                  const recentNotebook = collection.notebooks[0];
+                  const recentArticle = recentArticleFor(collection);
+                  const CollectionIcon =
+                    FOLDER_ICONS[collection.profile.icon];
 
                   return (
-                    <li key={group.key}>
-                      <button
-                        className="library-folder-card"
-                        type="button"
-                        aria-label={`打开文件夹：${group.label}`}
-                        onClick={() => setActiveFolderKey(group.key)}
-                      >
-                        <span className="library-folder-card-top">
-                          <span aria-hidden="true">
-                            <FolderOpen size={22} />
+                    <li
+                      key={collection.key}
+                      style={
+                        {
+                          ...folderAccentStyle(collection.profile.color),
+                          "--folder-card-delay": `${index * 42}ms`
+                        } as CSSProperties
+                      }
+                    >
+                      <article className="library-folder-card">
+                        <button
+                          className="library-folder-card-open"
+                          type="button"
+                          aria-label={`打开文件夹：${collection.profile.name}`}
+                          onClick={() => setActiveFolderKey(collection.key)}
+                        >
+                          <span
+                            className="library-folder-card-spine"
+                            aria-hidden="true"
+                          >
+                            <CollectionIcon size={24} />
                           </span>
-                          <small>{group.notebooks.length} 篇笔记</small>
-                        </span>
-                        <strong>{group.label}</strong>
-                        <span className="library-folder-card-meta">
-                          {pageCount} 个页面
-                        </span>
-                        <span className="library-folder-card-preview">
-                          {group.notebooks.slice(0, 3).map((notebook) => (
-                            <span key={notebook.id}>{notebook.title}</span>
-                          ))}
-                        </span>
-                        <span className="library-folder-card-action">
-                          查看文件夹
-                          <ChevronRight aria-hidden="true" size={15} />
-                        </span>
-                      </button>
+                          <span className="library-folder-card-content">
+                            <span className="library-folder-card-heading">
+                              <span>
+                                <strong>{collection.profile.name}</strong>
+                                <small>
+                                  {collection.notebooks.length} 篇笔记 ·{" "}
+                                  {pageCount} 个页面
+                                </small>
+                              </span>
+                            </span>
+
+                            <span className="library-folder-classifications">
+                              {collection.profile.classifications.map(
+                                (classification) => (
+                                  <span key={classification}>
+                                    {classification}
+                                  </span>
+                                )
+                              )}
+                            </span>
+
+                            <span className="library-folder-card-description">
+                              {collection.profile.description}
+                            </span>
+
+                            <span className="library-folder-card-information">
+                              <span className="library-folder-card-preview">
+                                <small>集合内容</small>
+                                {collection.notebooks
+                                  .slice(0, 2)
+                                  .map((notebook) => (
+                                    <span key={notebook.id}>
+                                      {notebook.title}
+                                    </span>
+                                  ))}
+                              </span>
+
+                              <span className="library-folder-card-recent">
+                                <BookOpenText aria-hidden="true" size={15} />
+                                <span>
+                                  <small>最近打开</small>
+                                  <strong>
+                                    {recentArticle?.title ??
+                                      recentNotebook?.title ??
+                                      "暂无阅读记录"}
+                                  </strong>
+                                </span>
+                                {recentNotebook && (
+                                  <time dateTime={recentNotebook.updatedAt}>
+                                    {formatFolderActivity(
+                                      recentNotebook.updatedAt
+                                    )}
+                                  </time>
+                                )}
+                              </span>
+                            </span>
+                          </span>
+                        </button>
+                        <div className="library-folder-card-actions">
+                          {selectionMode ? (
+                            <label className="library-folder-select">
+                              <input
+                                type="checkbox"
+                                checked={selectedFolderKeys.has(collection.key)}
+                                onChange={() =>
+                                  toggleFolderSelection(collection.key)
+                                }
+                              />
+                              <span>
+                                选择
+                                <span className="sr-only">
+                                  {collection.profile.name}
+                                </span>
+                              </span>
+                            </label>
+                          ) : (
+                            <>
+                              <button
+                                className="library-folder-edit"
+                                type="button"
+                                aria-label={`编辑文件夹属性：${collection.profile.name}`}
+                                onClick={() => openFolderEditor(collection)}
+                              >
+                                <PencilLine aria-hidden="true" size={15} />
+                              </button>
+                              {collection.key !== UNFILED_FOLDER_KEY && (
+                                <button
+                                  className="library-folder-delete"
+                                  type="button"
+                                  aria-label={`删除文件夹：${collection.profile.name}`}
+                                  onClick={() =>
+                                    requestFolderDeletion([collection.key])
+                                  }
+                                >
+                                  <Trash2 aria-hidden="true" size={15} />
+                                </button>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </article>
                     </li>
                   );
                 })}
               </ul>
+              {!visibleFolderCollections.length && (
+                <div className="library-folder-search-empty" role="status">
+                  <Search aria-hidden="true" size={20} />
+                  <strong>没有找到匹配的文件夹</strong>
+                  <span>换一个名称、归类或笔记标题再试。</span>
+                  <button type="button" onClick={() => setFolderQuery("")}>
+                    清除查找
+                  </button>
+                </div>
+              )}
             </div>
           )
         ) : (
@@ -412,6 +1107,320 @@ export function HomeLibraryView({
             description={copy.emptyDescription}
           />
         ))}
+
+      {folderDraft && (
+        <dialog
+          ref={folderEditorRef}
+          className="folder-editor-dialog"
+          aria-labelledby="folder-editor-title"
+          onCancel={(event) => {
+            event.preventDefault();
+            closeFolderEditor();
+          }}
+          onClick={(event) => {
+            if (event.target === folderEditorRef.current) closeFolderEditor();
+          }}
+        >
+          <form
+            className="folder-editor-panel"
+            onSubmit={(event) => {
+              event.preventDefault();
+              saveFolderProfile();
+            }}
+          >
+            <header className="folder-editor-header">
+              <div>
+                <span>
+                  {folderEditorMode === "create"
+                    ? "NEW COLLECTION"
+                    : "COLLECTION PROFILE"}
+                </span>
+                <h3 id="folder-editor-title">
+                  {folderEditorMode === "create"
+                    ? "新建文件夹"
+                    : "编辑文件夹属性"}
+                </h3>
+                <p>
+                  {folderEditorMode === "create"
+                    ? "先设置集合的基础信息，创建后即可继续添加笔记。"
+                    : "这些设置只描述集合，不会改变内部笔记的标签。"}
+                </p>
+              </div>
+              <button
+                className="folder-editor-close"
+                type="button"
+                aria-label="关闭文件夹编辑"
+                onClick={closeFolderEditor}
+              >
+                <X aria-hidden="true" size={17} />
+              </button>
+            </header>
+
+            <div className="folder-editor-body">
+              <div className="folder-editor-fields">
+                <label className="folder-editor-field">
+                  <span>名称</span>
+                  <input
+                    autoFocus
+                    required
+                    maxLength={40}
+                    value={folderDraft.name}
+                    onChange={(event) =>
+                      setFolderDraft({
+                        ...folderDraft,
+                        name: event.target.value
+                      })
+                    }
+                  />
+                </label>
+
+                <fieldset className="folder-editor-field folder-color-field">
+                  <legend>颜色</legend>
+                  <div className="folder-color-options">
+                    {FOLDER_COLORS.map((color) => (
+                      <button
+                        className={
+                          folderDraft.color.toLocaleLowerCase() ===
+                          color.toLocaleLowerCase()
+                            ? "is-active"
+                            : undefined
+                        }
+                        type="button"
+                        aria-label={`选择颜色 ${color}`}
+                        aria-pressed={
+                          folderDraft.color.toLocaleLowerCase() ===
+                          color.toLocaleLowerCase()
+                        }
+                        key={color}
+                        style={{ backgroundColor: color }}
+                        onClick={() =>
+                          setFolderDraft({ ...folderDraft, color })
+                        }
+                      />
+                    ))}
+                    <label className="folder-custom-color">
+                      <input
+                        type="color"
+                        value={folderDraft.color}
+                        onChange={(event) =>
+                          setFolderDraft({
+                            ...folderDraft,
+                            color: event.target.value.toUpperCase()
+                          })
+                        }
+                      />
+                      <span>自定义</span>
+                    </label>
+                  </div>
+                </fieldset>
+
+                <fieldset className="folder-editor-field folder-icon-field">
+                  <legend>应用内图标</legend>
+                  <label className="folder-icon-search">
+                    <Search aria-hidden="true" size={14} />
+                    <span className="sr-only">查找文件夹图标</span>
+                    <input
+                      value={iconQuery}
+                      placeholder={`查找 ${FOLDER_ICON_OPTIONS.length} 个图标`}
+                      onChange={(event) => setIconQuery(event.target.value)}
+                    />
+                    {iconQuery && (
+                      <button
+                        type="button"
+                        aria-label="清除图标查找"
+                        onClick={() => setIconQuery("")}
+                      >
+                        <X aria-hidden="true" size={13} />
+                      </button>
+                    )}
+                  </label>
+                  <div className="folder-icon-options">
+                    {visibleIconOptions.map((option) => {
+                      const OptionIcon = option.icon;
+                      return (
+                        <button
+                          className={
+                            folderDraft.icon === option.id
+                              ? "is-active"
+                              : undefined
+                          }
+                          type="button"
+                          aria-label={`使用${option.label}图标`}
+                          aria-pressed={folderDraft.icon === option.id}
+                          key={option.id}
+                          onClick={() =>
+                            setFolderDraft({
+                              ...folderDraft,
+                              icon: option.id
+                            })
+                          }
+                        >
+                          <OptionIcon aria-hidden="true" size={17} />
+                          <span>{option.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {!visibleIconOptions.length && (
+                    <small>没有匹配的图标，换一个关键词再试。</small>
+                  )}
+                </fieldset>
+
+                <label className="folder-editor-field">
+                  <span>文件夹归类</span>
+                  <input
+                    value={classificationDraft}
+                    placeholder="例如：语言底层，C++"
+                    onChange={(event) =>
+                      setClassificationDraft(event.target.value)
+                    }
+                  />
+                  <small>使用逗号分隔，最多保留 6 项。</small>
+                </label>
+
+                <label className="folder-editor-field">
+                  <span>集合说明</span>
+                  <textarea
+                    maxLength={120}
+                    rows={3}
+                    value={folderDraft.description}
+                    onChange={(event) =>
+                      setFolderDraft({
+                        ...folderDraft,
+                        description: event.target.value
+                      })
+                    }
+                  />
+                </label>
+              </div>
+
+              <aside
+                className="folder-editor-preview"
+                aria-label="文件夹属性预览"
+                style={folderAccentStyle(folderDraft.color)}
+              >
+                <span className="folder-editor-preview-icon" aria-hidden="true">
+                  {(() => {
+                    const PreviewIcon = FOLDER_ICONS[folderDraft.icon];
+                    return <PreviewIcon size={25} />;
+                  })()}
+                </span>
+                <span>文件夹预览</span>
+                <strong>{folderDraft.name || folderDraft.key}</strong>
+                <div className="library-folder-classifications">
+                  {classificationDraft
+                    .split(/[,，]/)
+                    .map((classification) => classification.trim())
+                    .filter(Boolean)
+                    .slice(0, 3)
+                    .map((classification, index) => (
+                      <span key={`${classification}-${index}`}>
+                        {classification}
+                      </span>
+                    ))}
+                </div>
+                <p>
+                  {folderDraft.description ||
+                    "添加一段说明，帮助你快速判断这个集合收录什么内容。"}
+                </p>
+              </aside>
+            </div>
+
+            <footer className="folder-editor-footer">
+              {folderEditorMode === "edit" &&
+              folderDraft.key !== UNFILED_FOLDER_KEY ? (
+                <button
+                  className="folder-editor-delete"
+                  type="button"
+                  onClick={() => {
+                    const key = folderDraft.key;
+                    closeFolderEditor();
+                    requestFolderDeletion([key]);
+                  }}
+                >
+                  <Trash2 aria-hidden="true" size={15} />
+                  删除文件夹
+                </button>
+              ) : (
+                <span />
+              )}
+              <div>
+                <button
+                  className="button secondary"
+                  type="button"
+                  onClick={closeFolderEditor}
+                >
+                  取消
+                </button>
+                <button className="button primary" type="submit">
+                  <Check aria-hidden="true" size={16} />
+                  {folderEditorMode === "create" ? "创建文件夹" : "保存属性"}
+                </button>
+              </div>
+            </footer>
+          </form>
+        </dialog>
+      )}
+
+      {deleteFolderKeys && (
+        <dialog
+          ref={deleteFolderDialogRef}
+          className="folder-delete-dialog"
+          aria-labelledby="folder-delete-title"
+          onCancel={(event) => {
+            event.preventDefault();
+            closeDeleteConfirmation();
+          }}
+          onClick={(event) => {
+            if (event.target === deleteFolderDialogRef.current) {
+              closeDeleteConfirmation();
+            }
+          }}
+        >
+          <form
+            className="folder-delete-panel"
+            onSubmit={(event) => {
+              event.preventDefault();
+              confirmFolderDeletion();
+            }}
+          >
+            <span className="folder-delete-icon" aria-hidden="true">
+              <Trash2 size={20} />
+            </span>
+            <div>
+              <span>SAFE DELETE</span>
+              <h3 id="folder-delete-title">
+                删除 {foldersPendingDeletion.length} 个文件夹？
+              </h3>
+              <p>
+                文件夹属性会被移除。其中{" "}
+                <strong>{notebooksPendingReassignment} 篇笔记</strong>{" "}
+                将移动到“未归档”，笔记和文章内容不会被删除。
+              </p>
+              <div className="folder-delete-list">
+                {foldersPendingDeletion.slice(0, 4).map((collection) => (
+                  <span key={collection.key}>{collection.profile.name}</span>
+                ))}
+                {foldersPendingDeletion.length > 4 && (
+                  <span>另有 {foldersPendingDeletion.length - 4} 个</span>
+                )}
+              </div>
+            </div>
+            <footer>
+              <button
+                className="button secondary"
+                type="button"
+                onClick={closeDeleteConfirmation}
+              >
+                取消
+              </button>
+              <button className="folder-delete-confirm" type="submit">
+                确认删除
+              </button>
+            </footer>
+          </form>
+        </dialog>
+      )}
     </section>
   );
 }

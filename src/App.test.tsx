@@ -135,8 +135,11 @@ describe("Annota core flow", () => {
     const sidebar = screen.getByRole("complementary", { name: "主页导航" });
     const navigation = within(sidebar).getByRole("navigation");
 
-    expect(within(navigation).getAllByRole("button")).toHaveLength(4);
+    expect(within(navigation).getAllByRole("button")).toHaveLength(5);
     expect(within(navigation).getByRole("button", { name: "主页" })).toBeInTheDocument();
+    expect(
+      within(navigation).getByRole("button", { name: "生成与提示词" })
+    ).toBeInTheDocument();
     const foldersButton = within(navigation).getByRole("button", {
       name: "文件夹"
     });
@@ -151,8 +154,20 @@ describe("Annota core flow", () => {
     await user.click(foldersButton);
     expect(screen.getByRole("heading", { name: "按主题归档" })).toBeInTheDocument();
     expect(foldersButton).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("button", { name: "新建文件夹" })).toBeInTheDocument();
+    expect(
+      screen.getByPlaceholderText("查找名称、归类或内部笔记")
+    ).toBeInTheDocument();
+    const batchButton = screen.getByRole("button", { name: "批量管理" });
+    await user.click(batchButton);
+    expect(
+      screen.getByRole("button", { name: "全选当前结果" })
+    ).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "退出批量管理" })
+    );
     const firstFolder = container.querySelector(
-      ".library-folder-card"
+      ".library-folder-card-open"
     ) as HTMLButtonElement;
     expect(firstFolder).not.toBeNull();
     await user.click(firstFolder);
@@ -171,6 +186,30 @@ describe("Annota core flow", () => {
 
     await user.click(favoritesButton);
     expect(screen.getByRole("heading", { name: "留住常看的内容" })).toBeInTheDocument();
+  });
+
+  it("opens generation and prompts as a top-level page above the sidebar footer", async () => {
+    const user = userEvent.setup();
+    renderApp();
+    const sidebar = screen.getByRole("complementary", { name: "主页导航" });
+    const navigation = within(sidebar).getByRole("navigation");
+    const footer = sidebar.querySelector(".home-sidebar-footer");
+    const generationButton = within(navigation).getByRole("button", {
+      name: "生成与提示词"
+    });
+
+    expect(navigation.nextElementSibling).toBe(footer);
+    expect(generationButton.closest(".home-sidebar-footer")).toBeNull();
+
+    await user.click(generationButton);
+
+    expect(generationButton).toHaveAttribute("aria-current", "page");
+    expect(
+      screen.getByRole("region", { name: "生成与提示词内容" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 2, name: "生成与提示词" })
+    ).toBeInTheDocument();
   });
 
   it("slides from the overview to recent browsing and only returns from its top edge", () => {
@@ -227,9 +266,13 @@ describe("Annota core flow", () => {
     expect(screen.getByRole("button", { name: "最大化窗口" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "关闭窗口" })).toBeInTheDocument();
     const homeContent = container.querySelector(".home-content");
-    expect(homeContent?.firstElementChild).toHaveClass("home-topbar");
+    expect(homeContent?.firstElementChild).toHaveClass(
+      "home-mobile-library-nav"
+    );
     expect(
-      homeContent?.querySelector(".home-topbar + .home-page-viewport")
+      homeContent?.querySelector(
+        ".home-mobile-library-nav + .home-page-viewport"
+      )
     ).toBeInTheDocument();
     expect(container.querySelector(".home-workspace > .home-topbar")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "返回主页" })).not.toBeInTheDocument();
@@ -847,7 +890,6 @@ describe("Annota core flow", () => {
       "外观与交互",
       "快捷键",
       "AI 模型服务",
-      "生成与提示词",
       "知识库与存储",
       "备份与恢复",
       "导入、导出与迁移",
@@ -860,6 +902,11 @@ describe("Annota core flow", () => {
         within(settingsCanvas).getByRole("button", { name: category })
       ).toBeInTheDocument();
     });
+    expect(
+      within(settingsCanvas).queryByRole("button", {
+        name: "生成与提示词"
+      })
+    ).not.toBeInTheDocument();
     expect(
       within(settingsCanvas).getByRole("heading", {
         level: 2,

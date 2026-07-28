@@ -13,12 +13,14 @@ import type {
   AppData,
   ArticleNode,
   ContentBlock,
+  FolderProfile,
   GenerationJob,
   GenerationType,
   Notebook
 } from "../types";
 
 const STORAGE_KEY = "annota.desktop.demo.v1";
+const UNFILED_FOLDER_KEY = "未归档";
 const CPP_DEMO_ROOT_IDS = new Set([
   "cpp-polymorphism-root",
   "cpp-vtable-root",
@@ -32,6 +34,8 @@ type Action =
   | { type: "go-home" }
   | { type: "update-article"; articleId: string; blocks: ContentBlock[] }
   | { type: "create-notebook"; notebook: Notebook; article: ArticleNode }
+  | { type: "update-folder-profiles"; profiles: FolderProfile[] }
+  | { type: "delete-folder-profiles"; keys: string[] }
   | { type: "replace-data"; data: AppData }
   | { type: "start-job"; job: GenerationJob }
   | { type: "job-status"; jobId: string; status: GenerationJob["status"] }
@@ -53,12 +57,34 @@ function mergeCppDemoAdditions(data: AppData): AppData {
       ([articleId]) => CPP_DEMO_ROOT_IDS.has(articleId) && !data.articles[articleId]
     )
   );
-  if (!notebookAdditions.length && !Object.keys(articleAdditions).length) {
+  const currentFolderProfiles = Array.isArray(data.folderProfiles)
+    ? data.folderProfiles
+    : [];
+  const deletedFolderKeys = Array.isArray(data.deletedFolderKeys)
+    ? data.deletedFolderKeys
+    : [];
+  const deletedKeys = new Set(deletedFolderKeys);
+  const folderKeys = new Set(
+    currentFolderProfiles.map((profile) => profile.key)
+  );
+  const folderProfileAdditions = seedData.folderProfiles.filter(
+    (profile) =>
+      !folderKeys.has(profile.key) && !deletedKeys.has(profile.key)
+  );
+  if (
+    !notebookAdditions.length &&
+    !Object.keys(articleAdditions).length &&
+    !folderProfileAdditions.length &&
+    Array.isArray(data.folderProfiles) &&
+    Array.isArray(data.deletedFolderKeys)
+  ) {
     return data;
   }
   return {
     ...data,
     notebooks: [...data.notebooks, ...notebookAdditions],
+    folderProfiles: [...currentFolderProfiles, ...folderProfileAdditions],
+    deletedFolderKeys,
     articles: { ...articleAdditions, ...data.articles }
   };
 }
@@ -137,6 +163,52 @@ function reducer(state: AppData, action: Action): AppData {
         currentNotebookId: action.notebook.id,
         currentArticleId: action.article.id
       };
+    case "update-folder-profiles": {
+      const updates = new Map(
+        action.profiles.map((profile) => [profile.key, profile])
+      );
+      const existingKeys = new Set(
+        state.folderProfiles.map((profile) => profile.key)
+      );
+      const additions = action.profiles.filter(
+        (profile) => !existingKeys.has(profile.key)
+      );
+      const updatedKeys = new Set(
+        action.profiles.map((profile) => profile.key)
+      );
+      return {
+        ...state,
+        folderProfiles: [
+          ...additions,
+          ...state.folderProfiles.map(
+            (profile) => updates.get(profile.key) ?? profile
+          )
+        ],
+        deletedFolderKeys: state.deletedFolderKeys.filter(
+          (key) => !updatedKeys.has(key)
+        )
+      };
+    }
+    case "delete-folder-profiles": {
+      const keys = new Set(
+        action.keys.filter((key) => key !== UNFILED_FOLDER_KEY)
+      );
+      if (!keys.size) return state;
+      return {
+        ...state,
+        folderProfiles: state.folderProfiles.filter(
+          (profile) => !keys.has(profile.key)
+        ),
+        deletedFolderKeys: [
+          ...new Set([...state.deletedFolderKeys, ...keys])
+        ],
+        notebooks: state.notebooks.map((notebook) =>
+          keys.has(notebook.category)
+            ? { ...notebook, category: UNFILED_FOLDER_KEY }
+            : notebook
+        )
+      };
+    }
     case "replace-data":
       return action.data;
     case "start-job":
@@ -188,6 +260,9 @@ interface AppStoreValue {
   goHome: () => void;
   updateBlocks: (articleId: string, blocks: ContentBlock[]) => void;
   createNotebook: (title: string, text?: string) => string;
+  updateFolderProfile: (profile: FolderProfile) => void;
+  updateFolderProfiles: (profiles: FolderProfile[]) => void;
+  deleteFolderProfiles: (keys: string[]) => void;
   importPackage: (text: string, fileName: string) => { ok: boolean; message: string };
   exportCurrentTree: () => void;
   startGeneration: (
@@ -327,6 +402,18 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
     return notebookId;
   }, []);
 
+  const updateFolderProfile = useCallback((profile: FolderProfile) => {
+    dispatch({ type: "update-folder-profiles", profiles: [profile] });
+  }, []);
+
+  const updateFolderProfiles = useCallback((profiles: FolderProfile[]) => {
+    dispatch({ type: "update-folder-profiles", profiles });
+  }, []);
+
+  const deleteFolderProfiles = useCallback((keys: string[]) => {
+    dispatch({ type: "delete-folder-profiles", keys });
+  }, []);
+
   const importPackage = useCallback(
     (text: string, fileName: string) => {
       if (/\.annota$|\.json$/i.test(fileName)) {
@@ -339,6 +426,12 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
             type: "replace-data",
             data: {
               notebooks: parsed.notebooks,
+              folderProfiles: Array.isArray(parsed.folderProfiles)
+                ? parsed.folderProfiles
+                : [],
+              deletedFolderKeys: Array.isArray(parsed.deletedFolderKeys)
+                ? parsed.deletedFolderKeys
+                : [],
               articles: parsed.articles,
               jobs: [],
               currentNotebookId: null,
@@ -375,6 +468,10 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
       format: "annota-demo-v1",
       exportedAt: new Date().toISOString(),
       notebooks: [notebook],
+      folderProfiles: data.folderProfiles.filter(
+        (profile) => profile.key === notebook.category
+      ),
+      deletedFolderKeys: [],
       articles,
       jobs: [],
       currentNotebookId: null,
@@ -463,6 +560,9 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
       goHome,
       updateBlocks,
       createNotebook,
+      updateFolderProfile,
+      updateFolderProfiles,
+      deleteFolderProfiles,
       importPackage,
       exportCurrentTree,
       startGeneration,
@@ -478,6 +578,9 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
       goHome,
       updateBlocks,
       createNotebook,
+      updateFolderProfile,
+      updateFolderProfiles,
+      deleteFolderProfiles,
       importPackage,
       exportCurrentTree,
       startGeneration,

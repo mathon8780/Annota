@@ -21,6 +21,7 @@ import {
   Settings2,
   Star,
   Tags,
+  WandSparkles,
   X
 } from "lucide-react";
 import { useAppStore } from "../store/AppStore";
@@ -40,6 +41,7 @@ import {
   HomeLibraryView,
   type HomeLibrarySection
 } from "./HomeLibraryView";
+import { GenerationPage } from "./GenerationPage";
 import { SettingsPage } from "./SettingsPage";
 
 interface HomePageProps {
@@ -121,9 +123,18 @@ export function HomePage({
   onOpenSettings,
   onCloseSettings
 }: HomePageProps) {
-  const { data, openNotebook, createNotebook, importPackage, resetDemo } = useAppStore();
+  const {
+    data,
+    openNotebook,
+    createNotebook,
+    updateFolderProfile,
+    updateFolderProfiles,
+    deleteFolderProfiles,
+    importPackage,
+    resetDemo
+  } = useAppStore();
   const [activeHomeView, setActiveHomeView] = useState<
-    "home" | HomeLibrarySection
+    "home" | "generation" | HomeLibrarySection
   >("home");
   const [activePage, setActivePage] = useState<"overview" | "recent">("overview");
   const [filter, setFilter] = useState("");
@@ -336,6 +347,27 @@ export function HomePage({
                   <span>{label}</span>
                 </button>
               ))}
+              <button
+                className={`home-nav-item${
+                  !settingsOpen && activeHomeView === "generation"
+                    ? " is-active"
+                    : ""
+                }`}
+                type="button"
+                aria-current={
+                  !settingsOpen && activeHomeView === "generation"
+                    ? "page"
+                    : undefined
+                }
+                onClick={() => {
+                  onCloseSettings();
+                  setActionMenuOpen(false);
+                  setActiveHomeView("generation");
+                }}
+              >
+                <WandSparkles aria-hidden="true" size={17} />
+                <span>生成与提示词</span>
+              </button>
             </nav>
 
             <div className="home-sidebar-footer">
@@ -378,13 +410,14 @@ export function HomePage({
             />
           ) : (
             <>
-              <nav className="home-mobile-library-nav" aria-label="资料视图">
+              <nav className="home-mobile-library-nav" aria-label="主导航">
                 {(
                   [
                     ["home", LibraryBig, terms.home],
                     ["folders", FolderTree, terms.folders],
                     ["tags", Tags, terms.tags],
-                    ["favorites", Star, terms.favorites]
+                    ["favorites", Star, terms.favorites],
+                    ["generation", WandSparkles, "生成与提示词"]
                   ] as const
                 ).map(([section, Icon, label]) => (
                   <button
@@ -597,12 +630,18 @@ export function HomePage({
                   </section>
                   </div>
                 </div>
+              ) : activeHomeView === "generation" ? (
+                <GenerationPage />
               ) : (
                 <div className="home-main library-view-shell">
                   <HomeLibraryView
                     section={activeHomeView}
                     notebooks={data.notebooks}
+                    folderProfiles={data.folderProfiles}
                     articles={data.articles}
+                    onUpdateFolderProfile={updateFolderProfile}
+                    onUpdateFolderProfiles={updateFolderProfiles}
+                    onDeleteFolderProfiles={deleteFolderProfiles}
                     renderNotebook={(notebook) => (
                       <NotebookCard
                         notebook={notebook}

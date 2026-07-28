@@ -1,4 +1,10 @@
-import type { AppData, ArticleNode, ContentBlock, Notebook } from "../types";
+import type {
+  AppData,
+  ArticleNode,
+  ContentBlock,
+  FolderProfile,
+  Notebook
+} from "../types";
 
 const now = new Date("2026-07-26T09:30:00+08:00").toISOString();
 
@@ -309,8 +315,77 @@ const notebooks: Notebook[] = [
   }
 ];
 
+const folderProfiles: FolderProfile[] = [
+  {
+    key: "技术学习",
+    name: "技术学习",
+    color: "#3158D8",
+    icon: "cpu",
+    classifications: ["系统基础", "工程"],
+    description: "集中整理架构、系统与工程实践中的长期知识。"
+  },
+  {
+    key: "C++ / 核心",
+    name: "C++ 核心",
+    color: "#4E68C8",
+    icon: "code",
+    classifications: ["语言底层", "C++"],
+    description: "围绕语言机制、运行时行为与核心语义建立索引。"
+  },
+  {
+    key: "C++ / 对象模型",
+    name: "C++ 对象模型",
+    color: "#8A5AA8",
+    icon: "layers",
+    classifications: ["对象模型", "ABI"],
+    description: "记录类型布局、虚调用与编译器实现之间的联系。"
+  },
+  {
+    key: "C++ / 生命周期",
+    name: "C++ 生命周期",
+    color: "#2F806E",
+    icon: "archive",
+    classifications: ["内存管理", "C++"],
+    description: "聚合构造、析构、所有权与资源安全相关笔记。"
+  },
+  {
+    key: "C++ / 模板",
+    name: "C++ 模板",
+    color: "#B36A3E",
+    icon: "template",
+    classifications: ["泛型编程", "C++"],
+    description: "从函数模板到类型推导，整理可复用的泛型知识。"
+  },
+  {
+    key: "阅读方法",
+    name: "阅读方法",
+    color: "#4E7A8A",
+    icon: "book",
+    classifications: ["学习方法", "阅读"],
+    description: "保存注意力管理、理解与回顾材料的实践方法。"
+  },
+  {
+    key: "概念解析",
+    name: "概念解析",
+    color: "#A35C74",
+    icon: "sparkles",
+    classifications: ["AI 概念", "研究"],
+    description: "把复杂概念拆成定义、边界和可验证的关联。"
+  },
+  {
+    key: "数据库",
+    name: "数据库",
+    color: "#5B6E9D",
+    icon: "database",
+    classifications: ["数据系统", "图谱"],
+    description: "归档数据模型、查询结构和图数据库相关内容。"
+  }
+];
+
 export const seedData: AppData = {
   notebooks,
+  folderProfiles,
+  deletedFolderKeys: [],
   articles,
   jobs: [],
   currentNotebookId: null,
