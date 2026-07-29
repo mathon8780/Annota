@@ -2593,34 +2593,6 @@ kbd {
   gap: var(--space-6);
 }
 
-.library-folder-definition {
-  max-width: 620px;
-  padding-left: var(--space-4);
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-3);
-  color: var(--color-muted);
-  border-left: 2px solid var(--color-accent);
-}
-
-.library-folder-definition svg {
-  margin-top: 2px;
-  flex: 0 0 auto;
-  color: var(--color-accent);
-}
-
-.library-folder-definition p {
-  margin: 0;
-  font-size: var(--text-xs);
-  line-height: 1.65;
-}
-
-.library-folder-definition strong {
-  display: block;
-  margin-bottom: 2px;
-  color: var(--color-ink);
-}
-
 .library-folder-management {
   min-width: 0;
   display: flex;
@@ -2858,6 +2830,22 @@ kbd {
     box-shadow var(--dur-base) var(--ease-out);
 }
 
+.library-folder-card.is-selection-mode {
+  cursor: pointer;
+}
+
+.library-folder-card.is-selected {
+  border-color: color-mix(
+    in oklch,
+    var(--folder-accent) 62%,
+    var(--color-rule)
+  );
+  box-shadow:
+    inset 0 0 0 1px
+      color-mix(in oklch, var(--folder-accent) 28%, transparent),
+    var(--shadow-md);
+}
+
 .library-folder-card::before {
   content: "";
   width: 5px;
@@ -3044,8 +3032,7 @@ kbd {
   white-space: nowrap;
 }
 
-.library-folder-edit,
-.library-folder-delete {
+.library-folder-edit {
   width: 32px;
   height: 32px;
   display: grid;
@@ -3062,40 +3049,40 @@ kbd {
     transform var(--dur-fast) var(--ease-out);
 }
 
-.library-folder-delete {
-  color: var(--color-window-close);
+.library-folder-card-icon-edit {
+  width: 44px;
+  height: 44px;
+  position: absolute;
+  z-index: 4;
+  top: 14px;
+  left: 14px;
+  color: var(--folder-accent);
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
 }
 
-.library-folder-card-actions {
+.library-folder-selection-mark {
+  width: 28px;
+  height: 28px;
   position: absolute;
   z-index: 3;
   top: var(--space-4);
   right: var(--space-4);
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-}
-
-.library-folder-select {
-  min-height: 32px;
-  padding: 0 var(--space-2);
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  color: var(--color-muted);
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  color: var(--color-accent-ink);
   background: var(--color-paper-solid);
-  border: var(--rule-thin) solid var(--color-rule);
-  border-radius: var(--radius-pill);
+  border: var(--rule-thin) solid
+    color-mix(in oklch, var(--folder-accent) 44%, var(--color-rule));
+  border-radius: var(--radius-sm);
   box-shadow: var(--shadow-sm);
-  font-size: 10px;
-  cursor: pointer;
 }
 
-.library-folder-select input {
-  width: 15px;
-  height: 15px;
-  margin: 0;
-  accent-color: var(--folder-accent);
+.library-folder-card.is-selected .library-folder-selection-mark {
+  background: var(--folder-accent);
+  border-color: var(--folder-accent);
 }
 
 .library-folder-search-empty {
@@ -3309,14 +3296,6 @@ kbd {
   font-size: 9px;
 }
 
-.library-folder-detail-actions {
-  margin-left: auto;
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
 .library-folder-detail .library-view-card-grid {
   grid-template-columns: repeat(
     auto-fill,
@@ -3351,7 +3330,6 @@ kbd {
 .library-folder-back:focus-visible,
 .library-folder-card-open:focus-visible,
 .library-folder-edit:focus-visible,
-.library-folder-delete:focus-visible,
 .library-folder-create-button:focus-visible,
 .library-folder-rail nav button:focus-visible {
   outline: none;
@@ -3436,15 +3414,33 @@ kbd {
   min-width: 0;
   padding: var(--space-5) var(--space-6);
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 240px;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 0.58fr);
   align-items: start;
   gap: var(--space-6);
 }
 
-.folder-editor-fields {
+.folder-editor-fields,
+.folder-editor-meta-fields {
   min-width: 0;
   display: grid;
   gap: var(--space-4);
+}
+
+.folder-editor-meta-fields {
+  padding: var(--space-4);
+  position: sticky;
+  top: 0;
+  background: color-mix(
+    in oklch,
+    var(--color-paper-soft) 74%,
+    var(--color-paper-solid)
+  );
+  border: var(--rule-thin) solid var(--color-rule);
+  border-radius: var(--radius-md);
+}
+
+.folder-editor-meta-fields textarea {
+  min-height: 180px;
 }
 
 .folder-editor-field {
@@ -3539,29 +3535,60 @@ kbd {
 
 .folder-icon-search {
   min-width: 0;
-  min-height: 36px;
-  padding: 0 var(--space-2);
+  min-height: 40px;
+  padding: 0 var(--space-1) 0 var(--space-3);
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
   gap: var(--space-2);
   color: var(--color-faint);
-  background: var(--color-paper-soft);
+  background: var(--color-paper-solid);
   border: var(--rule-thin) solid var(--color-rule);
   border-radius: var(--radius-sm);
+  box-shadow: 0 2px 8px var(--color-shadow-soft);
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
+}
+
+.folder-icon-search:focus-within {
+  border-color: color-mix(
+    in oklch,
+    var(--color-accent) 46%,
+    var(--color-rule)
+  );
+  box-shadow:
+    0 0 0 3px var(--color-accent-soft),
+    0 2px 8px var(--color-shadow-soft);
 }
 
 .folder-icon-search input {
   min-width: 0;
-  height: 34px;
+  height: 38px;
   padding: 0;
   background: transparent;
   border: 0;
 }
 
+.folder-icon-search-count {
+  min-width: 40px;
+  min-height: 22px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-faint);
+  background: var(--color-paper-soft);
+  border: var(--rule-thin) solid var(--color-rule);
+  border-radius: var(--radius-pill);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.02em;
+}
+
 .folder-icon-search button {
-  width: 26px;
-  height: 26px;
+  width: 30px;
+  height: 30px;
   display: grid;
   place-items: center;
   color: var(--color-faint);
@@ -3571,28 +3598,32 @@ kbd {
 }
 
 .folder-icon-options {
-  max-height: 188px;
-  padding: 2px;
+  max-height: min(196px, 28vh);
+  padding: 3px;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: var(--space-2);
+  grid-template-columns: repeat(auto-fill, minmax(42px, 1fr));
+  gap: 6px;
   overflow-y: auto;
   scrollbar-width: thin;
 }
 
 .folder-icon-options button {
+  aspect-ratio: 1;
   min-width: 0;
-  min-height: 48px;
-  padding: var(--space-2);
+  min-height: 42px;
+  padding: 0;
   display: grid;
   place-items: center;
-  gap: 2px;
   color: var(--color-muted);
   background: var(--color-paper-soft);
   border: var(--rule-thin) solid var(--color-rule);
   border-radius: var(--radius-sm);
-  font-size: 9px;
   cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
 }
 
 .folder-icon-options button.is-active {
@@ -3603,15 +3634,16 @@ kbd {
     var(--color-accent) 36%,
     var(--color-rule)
   );
+  box-shadow: inset 0 0 0 1px
+    color-mix(in oklch, var(--color-accent) 18%, transparent);
 }
 
 .folder-editor-preview {
   --folder-accent: var(--color-accent);
   min-width: 0;
-  min-height: 260px;
+  min-height: 190px;
   padding: var(--space-5);
-  position: sticky;
-  top: 0;
+  position: relative;
   display: flex;
   flex-direction: column;
   color: var(--color-ink);
@@ -5974,7 +6006,6 @@ pre,
   }
 
   .library-folder-edit:hover,
-  .library-folder-delete:hover,
   .folder-editor-close:hover {
     color: var(--folder-accent, var(--color-accent));
     background: var(--color-paper-hover);
@@ -5982,7 +6013,6 @@ pre,
     transform: translateY(-1px);
   }
 
-  .library-folder-delete:hover,
   .folder-editor-delete:hover {
     color: var(--color-window-close);
     border-color: color-mix(
@@ -6599,9 +6629,8 @@ pre,
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .folder-editor-preview {
-    min-height: 210px;
-    position: relative;
+  .folder-editor-meta-fields {
+    position: static;
   }
 
   .library-folder-rail {
@@ -6720,7 +6749,12 @@ pre,
     padding: var(--space-4);
   }
 
-  .library-folder-card-actions {
+  .library-folder-card-icon-edit {
+    top: 6px;
+    left: 6px;
+  }
+
+  .library-folder-selection-mark {
     top: var(--space-3);
     right: var(--space-3);
   }
@@ -6743,7 +6777,7 @@ pre,
   }
 
   .folder-icon-options {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(40px, 1fr));
   }
 
   .folder-editor-footer .button {

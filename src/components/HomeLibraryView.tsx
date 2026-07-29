@@ -19,7 +19,6 @@ import {
   FileText,
   FlaskConical,
   FolderKanban,
-  FolderOpen,
   Globe2,
   GraduationCap,
   Hash,
@@ -30,7 +29,6 @@ import {
   Network,
   Palette,
   PanelTop,
-  PencilLine,
   Plus,
   Rocket,
   Search,
@@ -665,13 +663,18 @@ export function HomeLibraryView({
                 aria-labelledby="library-active-folder-title"
               >
                 <header className="library-folder-detail-header">
-                  <span className="library-folder-detail-icon" aria-hidden="true">
+                  <button
+                    className="library-folder-detail-icon library-folder-edit"
+                    type="button"
+                    aria-label={`编辑文件夹属性：${activeFolder.profile.name}`}
+                    onClick={() => openFolderEditor(activeFolder)}
+                  >
                     {(() => {
                       const ActiveIcon =
                         FOLDER_ICONS[activeFolder.profile.icon];
-                      return <ActiveIcon size={24} />;
+                      return <ActiveIcon aria-hidden="true" size={24} />;
                     })()}
-                  </span>
+                  </button>
                   <div className="library-folder-detail-copy">
                     <span className="library-folder-detail-kicker">
                       文件夹集合
@@ -694,28 +697,6 @@ export function HomeLibraryView({
                       {folderPageCount(activeFolder)} 个页面
                     </p>
                   </div>
-                  <div className="library-folder-detail-actions">
-                    <button
-                      className="library-folder-edit"
-                      type="button"
-                      aria-label={`编辑文件夹属性：${activeFolder.profile.name}`}
-                      onClick={() => openFolderEditor(activeFolder)}
-                    >
-                      <PencilLine aria-hidden="true" size={16} />
-                    </button>
-                    {activeFolder.key !== UNFILED_FOLDER_KEY && (
-                      <button
-                        className="library-folder-delete"
-                        type="button"
-                        aria-label={`删除文件夹：${activeFolder.profile.name}`}
-                        onClick={() =>
-                          requestFolderDeletion([activeFolder.key])
-                        }
-                      >
-                        <Trash2 aria-hidden="true" size={16} />
-                      </button>
-                    )}
-                  </div>
                 </header>
 
                 {activeFolder.notebooks.length ? (
@@ -734,14 +715,6 @@ export function HomeLibraryView({
             </div>
           ) : (
             <div className="library-folder-overview">
-              <div className="library-folder-definition">
-                <FolderOpen aria-hidden="true" size={18} />
-                <p>
-                  <strong>文件夹是内容集合</strong>
-                  用名称、颜色、图标与专属归类组织多篇笔记；最近打开的内容会留在每张集合卡片上。
-                </p>
-              </div>
-
               <div className="library-folder-management">
                 <label className="library-folder-search">
                   <Search aria-hidden="true" size={16} />
@@ -899,6 +872,7 @@ export function HomeLibraryView({
                   const recentArticle = recentArticleFor(collection);
                   const CollectionIcon =
                     FOLDER_ICONS[collection.profile.icon];
+                  const isSelected = selectedFolderKeys.has(collection.key);
 
                   return (
                     <li
@@ -910,18 +884,31 @@ export function HomeLibraryView({
                         } as CSSProperties
                       }
                     >
-                      <article className="library-folder-card">
+                      <article
+                        className={`library-folder-card${selectionMode ? " is-selection-mode" : ""}${isSelected ? " is-selected" : ""}`}
+                      >
                         <button
                           className="library-folder-card-open"
                           type="button"
-                          aria-label={`打开文件夹：${collection.profile.name}`}
-                          onClick={() => setActiveFolderKey(collection.key)}
+                          aria-label={
+                            selectionMode
+                              ? `${isSelected ? "取消选择" : "选择"}文件夹：${collection.profile.name}`
+                              : `打开文件夹：${collection.profile.name}`
+                          }
+                          aria-pressed={selectionMode ? isSelected : undefined}
+                          onClick={() => {
+                            if (selectionMode) {
+                              toggleFolderSelection(collection.key);
+                            } else {
+                              setActiveFolderKey(collection.key);
+                            }
+                          }}
                         >
                           <span
                             className="library-folder-card-spine"
                             aria-hidden="true"
                           >
-                            <CollectionIcon size={24} />
+                            {selectionMode && <CollectionIcon size={24} />}
                           </span>
                           <span className="library-folder-card-content">
                             <span className="library-folder-card-heading">
@@ -981,48 +968,24 @@ export function HomeLibraryView({
                             </span>
                           </span>
                         </button>
-                        <div className="library-folder-card-actions">
-                          {selectionMode ? (
-                            <label className="library-folder-select">
-                              <input
-                                type="checkbox"
-                                checked={selectedFolderKeys.has(collection.key)}
-                                onChange={() =>
-                                  toggleFolderSelection(collection.key)
-                                }
-                              />
-                              <span>
-                                选择
-                                <span className="sr-only">
-                                  {collection.profile.name}
-                                </span>
-                              </span>
-                            </label>
-                          ) : (
-                            <>
-                              <button
-                                className="library-folder-edit"
-                                type="button"
-                                aria-label={`编辑文件夹属性：${collection.profile.name}`}
-                                onClick={() => openFolderEditor(collection)}
-                              >
-                                <PencilLine aria-hidden="true" size={15} />
-                              </button>
-                              {collection.key !== UNFILED_FOLDER_KEY && (
-                                <button
-                                  className="library-folder-delete"
-                                  type="button"
-                                  aria-label={`删除文件夹：${collection.profile.name}`}
-                                  onClick={() =>
-                                    requestFolderDeletion([collection.key])
-                                  }
-                                >
-                                  <Trash2 aria-hidden="true" size={15} />
-                                </button>
-                              )}
-                            </>
-                          )}
-                        </div>
+                        {!selectionMode && (
+                          <button
+                            className="library-folder-edit library-folder-card-icon-edit"
+                            type="button"
+                            aria-label={`编辑文件夹属性：${collection.profile.name}`}
+                            onClick={() => openFolderEditor(collection)}
+                          >
+                            <CollectionIcon aria-hidden="true" size={24} />
+                          </button>
+                        )}
+                        {selectionMode && (
+                          <span
+                            className="library-folder-selection-mark"
+                            aria-hidden="true"
+                          >
+                            {isSelected && <Check size={15} strokeWidth={2.5} />}
+                          </span>
+                        )}
                       </article>
                     </li>
                   );
@@ -1216,14 +1179,20 @@ export function HomeLibraryView({
 
                 <fieldset className="folder-editor-field folder-icon-field">
                   <legend>应用内图标</legend>
-                  <label className="folder-icon-search">
+                  <div className="folder-icon-search">
                     <Search aria-hidden="true" size={14} />
-                    <span className="sr-only">查找文件夹图标</span>
                     <input
+                      aria-label="查找文件夹图标"
                       value={iconQuery}
-                      placeholder={`查找 ${FOLDER_ICON_OPTIONS.length} 个图标`}
+                      placeholder="搜索图标名称"
                       onChange={(event) => setIconQuery(event.target.value)}
                     />
+                    <span
+                      className="folder-icon-search-count"
+                      aria-live="polite"
+                    >
+                      {visibleIconOptions.length}/{FOLDER_ICON_OPTIONS.length}
+                    </span>
                     {iconQuery && (
                       <button
                         type="button"
@@ -1233,7 +1202,7 @@ export function HomeLibraryView({
                         <X aria-hidden="true" size={13} />
                       </button>
                     )}
-                  </label>
+                  </div>
                   <div className="folder-icon-options">
                     {visibleIconOptions.map((option) => {
                       const OptionIcon = option.icon;
@@ -1246,6 +1215,7 @@ export function HomeLibraryView({
                           }
                           type="button"
                           aria-label={`使用${option.label}图标`}
+                          title={option.label}
                           aria-pressed={folderDraft.icon === option.id}
                           key={option.id}
                           onClick={() =>
@@ -1255,8 +1225,7 @@ export function HomeLibraryView({
                             })
                           }
                         >
-                          <OptionIcon aria-hidden="true" size={17} />
-                          <span>{option.label}</span>
+                          <OptionIcon aria-hidden="true" size={20} />
                         </button>
                       );
                     })}
@@ -1266,6 +1235,42 @@ export function HomeLibraryView({
                   )}
                 </fieldset>
 
+                <aside
+                  className="folder-editor-preview"
+                  aria-label="文件夹属性预览"
+                  style={folderAccentStyle(folderDraft.color)}
+                >
+                  <span
+                    className="folder-editor-preview-icon"
+                    aria-hidden="true"
+                  >
+                    {(() => {
+                      const PreviewIcon = FOLDER_ICONS[folderDraft.icon];
+                      return <PreviewIcon size={25} />;
+                    })()}
+                  </span>
+                  <span>文件夹预览</span>
+                  <strong>{folderDraft.name || folderDraft.key}</strong>
+                  <div className="library-folder-classifications">
+                    {classificationDraft
+                      .split(/[,，]/)
+                      .map((classification) => classification.trim())
+                      .filter(Boolean)
+                      .slice(0, 3)
+                      .map((classification, index) => (
+                        <span key={`${classification}-${index}`}>
+                          {classification}
+                        </span>
+                      ))}
+                  </div>
+                  <p>
+                    {folderDraft.description ||
+                      "添加一段说明，帮助你快速判断这个集合收录什么内容。"}
+                  </p>
+                </aside>
+              </div>
+
+              <div className="folder-editor-meta-fields">
                 <label className="folder-editor-field">
                   <span>文件夹归类</span>
                   <input
@@ -1293,37 +1298,6 @@ export function HomeLibraryView({
                   />
                 </label>
               </div>
-
-              <aside
-                className="folder-editor-preview"
-                aria-label="文件夹属性预览"
-                style={folderAccentStyle(folderDraft.color)}
-              >
-                <span className="folder-editor-preview-icon" aria-hidden="true">
-                  {(() => {
-                    const PreviewIcon = FOLDER_ICONS[folderDraft.icon];
-                    return <PreviewIcon size={25} />;
-                  })()}
-                </span>
-                <span>文件夹预览</span>
-                <strong>{folderDraft.name || folderDraft.key}</strong>
-                <div className="library-folder-classifications">
-                  {classificationDraft
-                    .split(/[,，]/)
-                    .map((classification) => classification.trim())
-                    .filter(Boolean)
-                    .slice(0, 3)
-                    .map((classification, index) => (
-                      <span key={`${classification}-${index}`}>
-                        {classification}
-                      </span>
-                    ))}
-                </div>
-                <p>
-                  {folderDraft.description ||
-                    "添加一段说明，帮助你快速判断这个集合收录什么内容。"}
-                </p>
-              </aside>
             </div>
 
             <footer className="folder-editor-footer">
