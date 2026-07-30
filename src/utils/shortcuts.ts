@@ -6,7 +6,8 @@ export type ShortcutActionId =
   | "go-parent"
   | "toggle-topology"
   | "go-root"
-  | "focus-topology";
+  | "focus-topology"
+  | "pin-topology";
 
 export interface ShortcutBinding {
   key: string;
@@ -69,8 +70,14 @@ export const shortcutDefinitions: readonly ShortcutDefinition[] = [
   {
     id: "focus-topology",
     group: "拓扑",
-    label: "聚焦当前节点",
-    description: "拓扑可见时，将当前阅读节点移动到中心。"
+    label: "切换拓扑聚焦",
+    description: "拓扑可见时，在整棵知识树与当前阅读节点之间切换聚焦。"
+  },
+  {
+    id: "pin-topology",
+    group: "拓扑",
+    label: "固定或取消固定拓扑",
+    description: "文章拓扑可见时，切换面板的固定显示状态。"
   }
 ];
 
@@ -90,7 +97,8 @@ export const defaultShortcuts: ShortcutPreferences = {
     shift: false
   },
   "go-root": { key: "Home", ctrl: true, alt: false, shift: false },
-  "focus-topology": { key: "F", ctrl: false, alt: false, shift: false }
+  "focus-topology": { key: "F", ctrl: false, alt: false, shift: false },
+  "pin-topology": { key: "D", ctrl: false, alt: false, shift: false }
 };
 
 const modifierKeys = new Set([

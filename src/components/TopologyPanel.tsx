@@ -1,10 +1,12 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type WheelEvent
@@ -31,8 +33,10 @@ interface TopologyPanelProps {
   currentId: string;
   onNavigate: (id: string) => void;
   fullScreen: boolean;
+  sharedTransition: boolean;
   onFullScreen: (value: boolean) => void;
   focusShortcut: ShortcutBinding;
+  pinShortcut: ShortcutBinding;
 }
 
 interface Position {
@@ -47,25 +51,55 @@ interface TopologySize {
   height: number;
 }
 
+interface TopologySizePreference {
+  version: 2;
+  widthRatio: number;
+  heightRatio: number;
+}
+
 type ResizeEdge = "left" | "top" | "top-left";
+type TopologyFocusMode = "overall" | "current" | null;
 
 const TOPOLOGY_DEFAULT_SIZE = { width: 420, height: 322 };
 const TOPOLOGY_MIN_SIZE = { width: 280, height: 220 };
 const TOPOLOGY_MAX_SIZE = { width: 720, height: 560 };
+const TOPOLOGY_MAX_VIEWPORT_RATIO = { width: 0.62, height: 0.68 };
+const TOPOLOGY_LEGACY_REFERENCE_VIEWPORT = { width: 1888, height: 952 };
 const TOPOLOGY_SIZE_STORAGE_KEY = "annota:topology-size";
 const TOPOLOGY_NODE_WIDTH = 164;
 const TOPOLOGY_NODE_HEIGHT = 50;
+const TOPOLOGY_CURRENT_FOCUS_SCALE = 0.9;
+const TOPOLOGY_MIN_SCALE = 0.18;
+const TOPOLOGY_MAX_SCALE = 1.7;
+const TOPOLOGY_FIT_PADDING = 36;
+
+function topologyAvailableSize() {
+  if (typeof window === "undefined") {
+    return TOPOLOGY_LEGACY_REFERENCE_VIEWPORT;
+  }
+  return {
+    width: Math.max(TOPOLOGY_MIN_SIZE.width, window.innerWidth - 32),
+    height: Math.max(TOPOLOGY_MIN_SIZE.height, window.innerHeight - 128)
+  };
+}
 
 function clampTopologySize(size: TopologySize): TopologySize {
-  const viewportWidth = typeof window === "undefined" ? TOPOLOGY_MAX_SIZE.width : window.innerWidth - 32;
-  const viewportHeight = typeof window === "undefined" ? TOPOLOGY_MAX_SIZE.height : window.innerHeight - 128;
+  const available = topologyAvailableSize();
   const maxWidth = Math.max(
     TOPOLOGY_MIN_SIZE.width,
-    Math.min(TOPOLOGY_MAX_SIZE.width, viewportWidth)
+    Math.min(
+      TOPOLOGY_MAX_SIZE.width,
+      available.width,
+      Math.round(available.width * TOPOLOGY_MAX_VIEWPORT_RATIO.width)
+    )
   );
   const maxHeight = Math.max(
     TOPOLOGY_MIN_SIZE.height,
-    Math.min(TOPOLOGY_MAX_SIZE.height, viewportHeight)
+    Math.min(
+      TOPOLOGY_MAX_SIZE.height,
+      available.height,
+      Math.round(available.height * TOPOLOGY_MAX_VIEWPORT_RATIO.height)
+    )
   );
   return {
     width: Math.min(maxWidth, Math.max(TOPOLOGY_MIN_SIZE.width, Math.round(size.width))),
@@ -73,17 +107,59 @@ function clampTopologySize(size: TopologySize): TopologySize {
   };
 }
 
-function readStoredTopologySize(): TopologySize {
-  if (typeof window === "undefined") return TOPOLOGY_DEFAULT_SIZE;
+function topologyPreferenceFromSize(size: TopologySize): TopologySizePreference {
+  const available = topologyAvailableSize();
+  const clamped = clampTopologySize(size);
+  return {
+    version: 2,
+    widthRatio: clamped.width / available.width,
+    heightRatio: clamped.height / available.height
+  };
+}
+
+function topologySizeFromPreference(preference: TopologySizePreference): TopologySize {
+  const available = topologyAvailableSize();
+  return clampTopologySize({
+    width: available.width * preference.widthRatio,
+    height: available.height * preference.heightRatio
+  });
+}
+
+function readStoredTopologyPreference(): TopologySizePreference {
+  if (typeof window === "undefined") {
+    return topologyPreferenceFromSize(TOPOLOGY_DEFAULT_SIZE);
+  }
   try {
     const stored = JSON.parse(window.localStorage.getItem(TOPOLOGY_SIZE_STORAGE_KEY) ?? "null");
+    if (
+      stored?.version === 2 &&
+      Number.isFinite(stored.widthRatio) &&
+      stored.widthRatio > 0 &&
+      Number.isFinite(stored.heightRatio) &&
+      stored.heightRatio > 0
+    ) {
+      return {
+        version: 2,
+        widthRatio: stored.widthRatio,
+        heightRatio: stored.heightRatio
+      };
+    }
     if (Number.isFinite(stored?.width) && Number.isFinite(stored?.height)) {
-      return clampTopologySize(stored);
+      const migrated = {
+        version: 2,
+        widthRatio: stored.width / TOPOLOGY_LEGACY_REFERENCE_VIEWPORT.width,
+        heightRatio: stored.height / TOPOLOGY_LEGACY_REFERENCE_VIEWPORT.height
+      } satisfies TopologySizePreference;
+      window.localStorage.setItem(
+        TOPOLOGY_SIZE_STORAGE_KEY,
+        JSON.stringify(migrated)
+      );
+      return migrated;
     }
   } catch {
     // Invalid local preferences fall back to the stable default.
   }
-  return clampTopologySize(TOPOLOGY_DEFAULT_SIZE);
+  return topologyPreferenceFromSize(TOPOLOGY_DEFAULT_SIZE);
 }
 
 function buildLayout(articles: Record<string, ArticleNode>, rootId: string) {
@@ -118,16 +194,25 @@ export function TopologyPanel({
   currentId,
   onNavigate,
   fullScreen,
+  sharedTransition,
   onFullScreen,
-  focusShortcut
+  focusShortcut,
+  pinShortcut
 }: TopologyPanelProps) {
   const layout = useMemo(() => buildLayout(articles, rootId), [articles, rootId]);
   const [scale, setScale] = useState(0.78);
   const [pan, setPan] = useState({ x: 8, y: 12 });
   const [open, setOpen] = useState(false);
   const [pinned, setPinned] = useState(false);
-  const [size, setSize] = useState(readStoredTopologySize);
+  const sizePreferenceRef = useRef<TopologySizePreference | null>(null);
+  if (!sizePreferenceRef.current) {
+    sizePreferenceRef.current = readStoredTopologyPreference();
+  }
+  const [size, setSize] = useState(() =>
+    topologySizeFromPreference(sizePreferenceRef.current!)
+  );
   const [resizing, setResizing] = useState(false);
+  const [focusMode, setFocusMode] = useState<TopologyFocusMode>(null);
   const drag = useRef<{ id: number; startX: number; startY: number; x: number; y: number } | null>(
     null
   );
@@ -141,24 +226,131 @@ export function TopologyPanel({
   } | null>(null);
   const panelRef = useRef<HTMLElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
+  const pointerInsideRef = useRef(false);
+  const sizeRef = useRef(size);
+  const fullScreenRef = useRef(fullScreen);
+  const lastViewportSizeRef = useRef(size);
+  sizeRef.current = size;
+  fullScreenRef.current = fullScreen;
 
   const byId = useMemo(
     () => Object.fromEntries(layout.positions.map((position) => [position.id, position])),
     [layout.positions]
   );
 
-  const zoom = (next: number) => setScale(Math.max(0.42, Math.min(1.7, next)));
+  const zoom = (next: number) => {
+    setFocusMode(null);
+    setScale(Math.max(TOPOLOGY_MIN_SCALE, Math.min(TOPOLOGY_MAX_SCALE, next)));
+  };
+
+  const focusViewportSize = useCallback(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return null;
+    if (fullScreenRef.current) {
+      return {
+        width: viewport.clientWidth,
+        height: viewport.clientHeight
+      };
+    }
+    return {
+      width: sizeRef.current.width,
+      height: sizeRef.current.height
+    };
+  }, []);
 
   const focusCurrent = useCallback(() => {
     const position = byId[currentId];
-    const viewport = viewportRef.current;
+    const viewport = focusViewportSize();
     if (!position || !viewport) return;
+    const nextScale = TOPOLOGY_CURRENT_FOCUS_SCALE;
+    setScale(nextScale);
     setPan({
-      x: viewport.clientWidth / 2 - (position.x + TOPOLOGY_NODE_WIDTH / 2) * scale,
-      y: viewport.clientHeight / 2 - (position.y + TOPOLOGY_NODE_HEIGHT / 2) * scale
+      x: viewport.width / 2 - (position.x + TOPOLOGY_NODE_WIDTH / 2) * nextScale,
+      y: viewport.height / 2 - (position.y + TOPOLOGY_NODE_HEIGHT / 2) * nextScale
     });
-    setPinned(true);
-  }, [byId, currentId, scale]);
+    setFocusMode("current");
+  }, [byId, currentId, focusViewportSize]);
+
+  const focusOverall = useCallback(() => {
+    const viewport = focusViewportSize();
+    if (!viewport) return;
+    const availableWidth = Math.max(1, viewport.width - TOPOLOGY_FIT_PADDING * 2);
+    const availableHeight = Math.max(1, viewport.height - TOPOLOGY_FIT_PADDING * 2);
+    const nextScale = Math.max(
+      TOPOLOGY_MIN_SCALE,
+      Math.min(
+        TOPOLOGY_MAX_SCALE,
+        availableWidth / layout.width,
+        availableHeight / layout.height
+      )
+    );
+    setScale(nextScale);
+    setPan({
+      x: (viewport.width - layout.width * nextScale) / 2,
+      y: (viewport.height - layout.height * nextScale) / 2
+    });
+    setFocusMode("overall");
+  }, [focusViewportSize, layout.height, layout.width]);
+
+  const toggleFocus = useCallback(() => {
+    if (focusMode === "overall") {
+      focusCurrent();
+      return;
+    }
+    focusOverall();
+  }, [focusCurrent, focusMode, focusOverall]);
+
+  const togglePinned = useCallback(() => {
+    setPinned((value) => {
+      if (value && pointerInsideRef.current) {
+        setOpen(true);
+      }
+      return !value;
+    });
+  }, []);
+
+  const smallExpanded = open || pinned || resizing;
+
+  useLayoutEffect(() => {
+    if (fullScreen) {
+      focusOverall();
+    } else if (smallExpanded) {
+      focusCurrent();
+    }
+  }, [focusCurrent, focusOverall, fullScreen, smallExpanded]);
+
+  useEffect(() => {
+    const handleWindowResize = () => {
+      if (!sizePreferenceRef.current) return;
+      setSize(topologySizeFromPreference(sizePreferenceRef.current));
+    };
+    window.addEventListener("resize", handleWindowResize);
+    return () => window.removeEventListener("resize", handleWindowResize);
+  }, []);
+
+  useLayoutEffect(() => {
+    const previousSize = lastViewportSizeRef.current;
+    if (previousSize.width === size.width && previousSize.height === size.height) return;
+    lastViewportSizeRef.current = size;
+    if (fullScreen) {
+      focusOverall();
+      return;
+    }
+    if (!smallExpanded) return;
+    if (focusMode === "current") {
+      focusCurrent();
+    } else if (focusMode === "overall") {
+      focusOverall();
+    }
+  }, [
+    focusCurrent,
+    focusMode,
+    focusOverall,
+    fullScreen,
+    smallExpanded,
+    size.height,
+    size.width
+  ]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -166,12 +358,6 @@ export function TopologyPanel({
       const editing =
         target instanceof HTMLElement &&
         (target.matches("textarea, input, select") || target.isContentEditable);
-      if (
-        !matchesShortcut(event, focusShortcut) ||
-        editing
-      ) {
-        return;
-      }
       const panel = panelRef.current;
       const topologyVisible =
         fullScreen ||
@@ -179,15 +365,40 @@ export function TopologyPanel({
         open ||
         Boolean(panel?.contains(document.activeElement));
       if (!topologyVisible) return;
-      event.preventDefault();
-      focusCurrent();
+
+      if (
+        matchesShortcut(event, pinShortcut) &&
+        !editing &&
+        !fullScreen
+      ) {
+        event.preventDefault();
+        togglePinned();
+        return;
+      }
+
+      if (
+        matchesShortcut(event, focusShortcut) &&
+        (!editing || fullScreen)
+      ) {
+        event.preventDefault();
+        toggleFocus();
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [focusCurrent, focusShortcut, fullScreen, open, pinned]);
+  }, [
+    focusShortcut,
+    fullScreen,
+    open,
+    pinShortcut,
+    pinned,
+    toggleFocus,
+    togglePinned
+  ]);
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
+    setFocusMode(null);
     drag.current = {
       id: event.pointerId,
       startX: event.clientX,
@@ -222,8 +433,10 @@ export function TopologyPanel({
 
   const setAndStoreSize = (nextSize: TopologySize) => {
     const clamped = clampTopologySize(nextSize);
+    const preference = topologyPreferenceFromSize(clamped);
+    sizePreferenceRef.current = preference;
     setSize(clamped);
-    window.localStorage.setItem(TOPOLOGY_SIZE_STORAGE_KEY, JSON.stringify(clamped));
+    window.localStorage.setItem(TOPOLOGY_SIZE_STORAGE_KEY, JSON.stringify(preference));
   };
 
   const startResize = (event: ReactPointerEvent<HTMLDivElement>, edge: ResizeEdge) => {
@@ -238,8 +451,21 @@ export function TopologyPanel({
       width: size.width,
       height: size.height
     };
-    setPinned(true);
+    setFocusMode(null);
     setResizing(true);
+  };
+
+  const handleNodeDoubleClick = (
+    event: ReactMouseEvent<HTMLButtonElement>,
+    articleId: string
+  ) => {
+    if (!fullScreen) return;
+    event.preventDefault();
+    event.stopPropagation();
+    onNavigate(articleId);
+    if (!event.ctrlKey) {
+      onFullScreen(false);
+    }
   };
 
   const sizeFromPointer = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -288,7 +514,6 @@ export function TopologyPanel({
     }
     if (!nextSize) return;
     event.preventDefault();
-    setPinned(true);
     setAndStoreSize(nextSize);
   };
 
@@ -296,7 +521,8 @@ export function TopologyPanel({
     <aside
       id="article-topology-panel"
       ref={panelRef}
-      className={`topology-panel${pinned ? " is-pinned" : ""}${fullScreen ? " is-fullscreen" : ""}${resizing ? " is-resizing" : ""}`}
+      className={`topology-panel${pinned ? " is-pinned" : ""}${fullScreen ? " is-fullscreen" : ""}${sharedTransition ? " is-shared-transition" : ""}${resizing ? " is-resizing" : ""}`}
+      data-focus-mode={focusMode ?? "manual"}
       aria-label="当前知识树拓扑"
     >
       <div className="topology-content">
@@ -344,45 +570,6 @@ export function TopologyPanel({
           />
         </>
       )}
-      <header className="topology-header">
-        <div>
-          <strong>{fullScreen ? "整棵知识树" : "文章拓扑"}</strong>
-          <span>{Math.round(scale * 100)}% · {layout.positions.length} 个节点</span>
-        </div>
-        <div className="topology-actions">
-          <button type="button" onClick={() => zoom(scale - 0.12)} aria-label="缩小拓扑">
-            <ZoomOut aria-hidden="true" size={16} />
-          </button>
-          <button type="button" onClick={() => zoom(scale + 0.12)} aria-label="放大拓扑">
-            <ZoomIn aria-hidden="true" size={16} />
-          </button>
-          <button type="button" onClick={focusCurrent} aria-label="聚焦当前节点">
-            <Focus aria-hidden="true" size={16} />
-          </button>
-          {!fullScreen && (
-            <button
-              type="button"
-              className={pinned ? "is-active" : ""}
-              aria-pressed={pinned}
-              onClick={() => setPinned((value) => !value)}
-              aria-label={pinned ? "取消固定拓扑" : "固定拓扑"}
-            >
-              <Pin aria-hidden="true" size={16} />
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={() => onFullScreen(!fullScreen)}
-            aria-label={fullScreen ? "退出全屏拓扑" : "全屏查看拓扑"}
-          >
-            {fullScreen ? (
-              <Minimize2 aria-hidden="true" size={16} />
-            ) : (
-              <Maximize2 aria-hidden="true" size={16} />
-            )}
-          </button>
-        </div>
-      </header>
       <div
         ref={viewportRef}
         className="topology-viewport"
@@ -437,7 +624,10 @@ export function TopologyPanel({
                 type="button"
                 style={{ left: position.x, top: position.y }}
                 onPointerDown={(event) => event.stopPropagation()}
-                onClick={() => onNavigate(article.id)}
+                onClick={() => {
+                  if (!fullScreen) onNavigate(article.id);
+                }}
+                onDoubleClick={(event) => handleNodeDoubleClick(event, article.id)}
                 aria-current={current ? "page" : undefined}
               >
                 <span className="topology-node-dot" aria-hidden="true"></span>
@@ -450,12 +640,55 @@ export function TopologyPanel({
             );
           })}
         </div>
+        <div
+          className="topology-overlay"
+          onPointerDown={(event) => event.stopPropagation()}
+          onWheel={(event) => event.stopPropagation()}
+        >
+          <div className="topology-actions" aria-label="拓扑操作">
+            <button type="button" onClick={() => zoom(scale - 0.12)} aria-label="缩小拓扑">
+              <ZoomOut aria-hidden="true" size={16} />
+            </button>
+            <button type="button" onClick={() => zoom(scale + 0.12)} aria-label="放大拓扑">
+              <ZoomIn aria-hidden="true" size={16} />
+            </button>
+            <button
+              type="button"
+              onClick={toggleFocus}
+              aria-label={focusMode === "overall" ? "聚焦当前节点" : "聚焦整棵知识树"}
+            >
+              <Focus aria-hidden="true" size={16} />
+            </button>
+            {!fullScreen && (
+              <button
+                type="button"
+                className={pinned ? "is-active" : ""}
+                aria-pressed={pinned}
+                onClick={togglePinned}
+                aria-label={pinned ? "取消固定拓扑" : "固定拓扑"}
+              >
+                <Pin aria-hidden="true" size={16} />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => onFullScreen(!fullScreen)}
+              aria-label={fullScreen ? "退出全屏拓扑" : "全屏查看拓扑"}
+            >
+              {fullScreen ? (
+                <Minimize2 aria-hidden="true" size={16} />
+              ) : (
+                <Maximize2 aria-hidden="true" size={16} />
+              )}
+            </button>
+          </div>
+          <div className="topology-overlay-copy" aria-live="polite">
+            <span>{Math.round(scale * 100)}% · {layout.positions.length} 节点</span>
+            <span>{fullScreen ? "双击进入 · Ctrl 保留拓扑" : "拖动 · 滚轮缩放"}</span>
+            <kbd>{formatShortcut(focusShortcut)}</kbd>
+          </div>
+        </div>
       </div>
-      <footer className="topology-footer">
-        <span>滚轮缩放 · 拖动浏览 · 点击跳转</span>
-        <kbd>{formatShortcut(focusShortcut)}</kbd>
-        <span>聚焦</span>
-      </footer>
       </div>
     </aside>
   );
@@ -465,9 +698,22 @@ export function TopologyPanel({
   return (
     <div
       className={`topology-shell${expanded ? " is-open" : ""}${fullScreen ? " is-fullscreen" : ""}`}
-      onPointerLeave={() => setOpen(false)}
+      data-small-expanded={smallExpanded}
+      onPointerEnter={() => {
+        pointerInsideRef.current = true;
+      }}
+      onPointerLeave={() => {
+        pointerInsideRef.current = false;
+        if (!fullScreen) {
+          setOpen(false);
+        }
+      }}
       onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+        if (
+          !fullScreen &&
+          !pointerInsideRef.current &&
+          !event.currentTarget.contains(event.relatedTarget as Node | null)
+        ) {
           setOpen(false);
         }
       }}

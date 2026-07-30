@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
+import { flushSync } from "react-dom";
 import {
   ArrowLeft,
   BookOpenText,
@@ -39,6 +40,12 @@ const READING_PATH_MIN_WIDTH = 190;
 const READING_PATH_MAX_WIDTH = 420;
 const READING_PATH_STORAGE_KEY = "annota:reading-path-width";
 type ArticleMotion = "settle" | "forward" | "back";
+
+type ViewTransitionDocument = Document & {
+  startViewTransition?: (
+    updateCallback: () => void
+  ) => { finished: Promise<void> };
+};
 
 const READER_INTERACTIVE_TARGETS = [
   "button",
@@ -101,6 +108,8 @@ export function ReaderPage({
   const [editorResetVersion, setEditorResetVersion] = useState(0);
   const [saveState, setSaveState] = useState("已保存到本机");
   const [fullTopology, setFullTopology] = useState(false);
+  const [sharedTopologyTransition, setSharedTopologyTransition] = useState(false);
+  const [fullWidthArticle, setFullWidthArticle] = useState(false);
   const [notice, setNotice] = useState("");
   const [readingPathWidth, setReadingPathWidth] = useState(readStoredPathWidth);
   const [resizingPath, setResizingPath] = useState(false);
@@ -167,6 +176,48 @@ export function ReaderPage({
     noticeTimer.current = window.setTimeout(() => setNotice(""), 2600);
   }, []);
 
+  const setTopologyFullscreen = useCallback(
+    (value: boolean) => {
+      if (value === fullTopology) return;
+      const panel = document.getElementById("article-topology-panel");
+      const shell = panel?.parentElement;
+      const transitionDocument = document as ViewTransitionDocument;
+      const reduceMotion = window.matchMedia(
+        "(prefers-reduced-motion: reduce)"
+      ).matches;
+      const smallTopologyExpanded = shell?.dataset.smallExpanded === "true";
+      const useSharedTransition =
+        (value ? smallTopologyExpanded : sharedTopologyTransition && smallTopologyExpanded) &&
+        Boolean(transitionDocument.startViewTransition) &&
+        !reduceMotion;
+
+      if (!useSharedTransition || !transitionDocument.startViewTransition) {
+        if (!value) {
+          setSharedTopologyTransition(false);
+        }
+        setFullTopology(value);
+        return;
+      }
+
+      const root = document.documentElement;
+      root.classList.add("is-topology-transitioning");
+      root.classList.toggle("is-topology-transitioning-back", !value);
+      const transition = transitionDocument.startViewTransition(() => {
+        flushSync(() => {
+          setSharedTopologyTransition(value);
+          setFullTopology(value);
+        });
+      });
+      void transition.finished.finally(() => {
+        root.classList.remove(
+          "is-topology-transitioning",
+          "is-topology-transitioning-back"
+        );
+      });
+    },
+    [fullTopology, sharedTopologyTransition]
+  );
+
   useEffect(() => {
     setSelection(null);
     setFormatCommand(null);
@@ -188,7 +239,7 @@ export function ReaderPage({
       }
       if (matchesShortcut(event, shortcuts["toggle-topology"])) {
         event.preventDefault();
-        setFullTopology((value) => !value);
+        setTopologyFullscreen(!fullTopology);
       }
       if (
         matchesShortcut(event, shortcuts["go-root"]) &&
@@ -204,7 +255,9 @@ export function ReaderPage({
   }, [
     currentArticle?.parentId,
     currentNotebook,
+    fullTopology,
     navigateTo,
+    setTopologyFullscreen,
     shortcuts
   ]);
 
@@ -443,12 +496,14 @@ export function ReaderPage({
         >
           <InlineFormattingToolbar
             selection={selection}
+            fullWidthArticle={fullWidthArticle}
             onFormat={applyInlineFormat}
+            onToggleArticleWidth={() => setFullWidthArticle((value) => !value)}
           />
 
           <div className="article-scroll-region">
             <article
-              className="article-column"
+              className={`article-column${fullWidthArticle ? " is-full-width" : ""}`}
               data-motion={articleMotion}
               key={currentArticle.id}
             >
@@ -566,6 +621,12 @@ export function ReaderPage({
               )}
             </div>
           </aside>
+
+          <span className="formatting-selection-status" aria-live="polite">
+            {!selection || !selection.text.trim()
+              ? "选择文字后可设置格式"
+              : `已选择 ${selection.text.length} 个字符`}
+          </span>
         </section>
       </main>
 
@@ -575,8 +636,10 @@ export function ReaderPage({
         currentId={currentArticle.id}
         onNavigate={navigateTo}
         fullScreen={fullTopology}
-        onFullScreen={setFullTopology}
+        sharedTransition={sharedTopologyTransition}
+        onFullScreen={setTopologyFullscreen}
         focusShortcut={shortcuts["focus-topology"]}
+        pinShortcut={shortcuts["pin-topology"]}
       />
 
       {notice && (

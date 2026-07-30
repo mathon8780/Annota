@@ -12,6 +12,8 @@ import {
   ChevronDown,
   Highlighter,
   Italic,
+  Maximize2,
+  Minimize2,
   Palette,
   Strikethrough,
   Type,
@@ -47,7 +49,9 @@ type ColorMenuKind = "text" | "background";
 
 interface InlineFormattingToolbarProps {
   selection: SelectionState | null;
+  fullWidthArticle: boolean;
   onFormat: (type: InlineMarkType, color?: string) => void;
+  onToggleArticleWidth: () => void;
 }
 
 const formattingActions: Array<{
@@ -65,7 +69,9 @@ const formattingActions: Array<{
 
 export function InlineFormattingToolbar({
   selection,
-  onFormat
+  fullWidthArticle,
+  onFormat,
+  onToggleArticleWidth
 }: InlineFormattingToolbarProps) {
   const [textColor, setTextColor] = useState(DEFAULT_TEXT_COLOR);
   const [backgroundColor, setBackgroundColor] = useState(DEFAULT_BACKGROUND_COLOR);
@@ -205,7 +211,6 @@ export function InlineFormattingToolbar({
       aria-label="文字格式"
       ref={toolbarRef}
     >
-      <span className="formatting-toolbar-label">选区格式</span>
       <div className="formatting-action-group">
         {formattingActions.map(({ type, label, icon: Icon }) => (
           <button
@@ -289,9 +294,21 @@ export function InlineFormattingToolbar({
         {renderColorMenu("background")}
       </div>
 
-      <span className="formatting-selection-status" aria-live="polite">
-        {disabled ? "选择文字后可设置格式" : `已选择 ${selection.text.length} 个字符`}
-      </span>
+      <span className="formatting-toolbar-divider is-layout" aria-hidden="true"></span>
+      <button
+        className="formatting-width-toggle"
+        type="button"
+        aria-label={fullWidthArticle ? "恢复居中阅读宽度" : "撑满正文显示区域"}
+        aria-pressed={fullWidthArticle}
+        title={fullWidthArticle ? "恢复居中阅读宽度" : "撑满正文显示区域"}
+        onClick={onToggleArticleWidth}
+      >
+        {fullWidthArticle ? (
+          <Minimize2 aria-hidden="true" size={16} />
+        ) : (
+          <Maximize2 aria-hidden="true" size={16} />
+        )}
+      </button>
     </div>
   );
 }

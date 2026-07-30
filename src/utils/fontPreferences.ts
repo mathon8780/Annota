@@ -167,9 +167,14 @@ export function applyFontPreferences(preferences: FontPreferences) {
     "--font-reading",
     resolveFontStack(readingFontOptions, preferences.readingFamily)
   );
+  const codeFontStack = resolveFontStack(codeFontOptions, preferences.codeFamily);
   root.style.setProperty(
     "--font-mono",
-    resolveFontStack(codeFontOptions, preferences.codeFamily)
+    resolveFontStack(interfaceFontOptions, preferences.interfaceFamily)
+  );
+  root.style.setProperty(
+    "--font-code",
+    codeFontStack
   );
   root.style.setProperty("--text-xs", `${Math.round(interfaceSize * 0.86)}px`);
   root.style.setProperty("--text-sm", `${interfaceSize}px`);

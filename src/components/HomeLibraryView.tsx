@@ -6,6 +6,7 @@ import {
   type CSSProperties,
   type ReactNode
 } from "react";
+import { flushSync } from "react-dom";
 import {
   Archive,
   BookOpenText,
@@ -21,7 +22,6 @@ import {
   FolderKanban,
   Globe2,
   GraduationCap,
-  Hash,
   Layers3,
   LibraryBig,
   Lightbulb,
@@ -35,7 +35,6 @@ import {
   Shapes,
   ShieldCheck,
   Sparkles,
-  Star,
   Tags,
   Trash2,
   Wrench,
@@ -138,6 +137,17 @@ function folderAccentStyle(color: string) {
   return { "--folder-accent": color } as CSSProperties;
 }
 
+function folderTransitionStyle(color: string, key: string) {
+  const transitionName = `folder-${Array.from(key)
+    .map((character) => character.codePointAt(0)?.toString(36) ?? "0")
+    .join("-")}`;
+
+  return {
+    "--folder-accent": color,
+    "--folder-transition-name": transitionName
+  } as CSSProperties;
+}
+
 function formatFolderActivity(value: string) {
   return new Date(value).toLocaleString("zh-CN", {
     month: "numeric",
@@ -148,37 +158,12 @@ function formatFolderActivity(value: string) {
   });
 }
 
-const SECTION_COPY: Record<
-  HomeLibrarySection,
-  {
-    eyebrow: string;
-    title: string;
-    description: string;
-    emptyTitle: string;
-    emptyDescription: string;
-  }
-> = {
-  folders: {
-    eyebrow: "资料库 / 文件夹",
-    title: "按主题归档",
-    description: "沿着已有目录回到一组相关笔记，继续整理同一条知识脉络。",
-    emptyTitle: "还没有文件夹",
-    emptyDescription: "使用右下角加号创建第一个文件夹，并设置名称、颜色与图标。"
-  },
-  tags: {
-    eyebrow: "资料库 / 标签",
-    title: "从关键词进入",
-    description: "用标签横向穿过不同目录，查看围绕同一概念积累的内容。",
-    emptyTitle: "还没有可用标签",
-    emptyDescription: "为笔记添加标签后，就能从这里按关键词快速聚合。"
-  },
-  favorites: {
-    eyebrow: "资料库 / 收藏",
-    title: "留住常看的内容",
-    description: "把值得反复返回的笔记集中在一个更短的阅读清单里。",
-    emptyTitle: "收藏区还是空的",
-    emptyDescription: "有笔记后，这里会先展示一组便于体验的演示收藏。"
-  }
+const FOLDER_SECTION_COPY = {
+  eyebrow: "资料库 / 文件夹",
+  title: "按主题归档",
+  description: "沿着已有目录回到一组相关笔记，继续整理同一条知识脉络。",
+  emptyTitle: "还没有文件夹",
+  emptyDescription: "使用右下角加号创建第一个文件夹，并设置名称、颜色与图标。"
 };
 
 function compareNotebookRecency(left: Notebook, right: Notebook) {
@@ -263,7 +248,7 @@ export function HomeLibraryView({
   onUpdateFolderProfiles,
   onDeleteFolderProfiles
 }: HomeLibraryViewProps) {
-  const copy = SECTION_COPY[section];
+  const copy = FOLDER_SECTION_COPY;
   const [activeFolderKey, setActiveFolderKey] = useState<string | null>(null);
   const [folderQuery, setFolderQuery] = useState("");
   const [selectionMode, setSelectionMode] = useState(false);
@@ -284,6 +269,120 @@ export function HomeLibraryView({
     null
   );
   const folderEditorRef = useRef<HTMLDialogElement>(null);
+  const navigateToFolder = (folderKey: string | null) => {
+    const transitionDocument = document as Document & {
+      startViewTransition?: (
+        updateCallback: () => void
+      ) => { finished: Promise<void> };
+    };
+    const reduceMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)"
+    ).matches;
+
+    if (!transitionDocument.startViewTransition || reduceMotion) {
+      if (reduceMotion) {
+        setActiveFolderKey(folderKey);
+        return;
+      }
+
+      document
+        .querySelectorAll<HTMLElement>("[data-folder-motion-clone]")
+        .forEach((clone) => clone.remove());
+      document
+        .querySelectorAll<HTMLElement>("[data-folder-transition-key]")
+        .forEach((card) => {
+          card.style.opacity = "";
+          card.style.pointerEvents = "";
+        });
+
+      const sourceCards = new Map<
+        string,
+        { clone: HTMLElement; rect: DOMRect }
+      >();
+      document
+        .querySelectorAll<HTMLElement>(
+          "[data-folder-transition-key]:not([data-folder-motion-clone])"
+        )
+        .forEach((card) => {
+          const key = card.dataset.folderTransitionKey;
+          if (!key) return;
+
+          const rect = card.getBoundingClientRect();
+          const clone = card.cloneNode(true) as HTMLElement;
+          const computedStyle = window.getComputedStyle(card);
+          clone.dataset.folderMotionClone = "true";
+          clone.setAttribute("aria-hidden", "true");
+          clone.style.setProperty(
+            "--folder-accent",
+            computedStyle.getPropertyValue("--folder-accent")
+          );
+          Object.assign(clone.style, {
+            width: `${rect.width}px`,
+            height: `${rect.height}px`,
+            margin: "0",
+            position: "fixed",
+            zIndex: "400",
+            top: `${rect.top}px`,
+            left: `${rect.left}px`,
+            pointerEvents: "none",
+            transformOrigin: "top left"
+          });
+          document.body.append(clone);
+          sourceCards.set(key, { clone, rect });
+        });
+
+      flushSync(() => setActiveFolderKey(folderKey));
+
+      const destinationCards = new Map<string, HTMLElement>();
+      document
+        .querySelectorAll<HTMLElement>(
+          "[data-folder-transition-key]:not([data-folder-motion-clone])"
+        )
+        .forEach((card) => {
+          const key = card.dataset.folderTransitionKey;
+          if (!key) return;
+          card.style.opacity = "0";
+          card.style.pointerEvents = "none";
+          destinationCards.set(key, card);
+        });
+
+      sourceCards.forEach(({ clone, rect }, key) => {
+        const destination = destinationCards.get(key);
+        if (!destination) {
+          clone.remove();
+          return;
+        }
+
+        const destinationRect = destination.getBoundingClientRect();
+        const translateX = destinationRect.left - rect.left;
+        const translateY = destinationRect.top - rect.top;
+        const scaleX = destinationRect.width / Math.max(rect.width, 1);
+        const scaleY = destinationRect.height / Math.max(rect.height, 1);
+        let finished = false;
+        const finishAnimation = () => {
+          if (finished) return;
+          finished = true;
+          clone.remove();
+          destination.style.opacity = "";
+          destination.style.pointerEvents = "";
+        };
+
+        clone.addEventListener("transitionend", finishAnimation, {
+          once: true
+        });
+        window.setTimeout(finishAnimation, 520);
+        clone.style.transition =
+          "transform 440ms cubic-bezier(0.22, 1, 0.36, 1)";
+        void clone.offsetWidth;
+        clone.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scaleX}, ${scaleY})`;
+      });
+      return;
+    }
+
+    transitionDocument.startViewTransition(() => {
+      flushSync(() => setActiveFolderKey(folderKey));
+    });
+  };
   const deleteFolderDialogRef = useRef<HTMLDialogElement>(null);
 
   const articleCountByRoot = useMemo(() => {
@@ -543,38 +642,16 @@ export function HomeLibraryView({
     );
   }, [iconQuery]);
 
-  const tagGroups = useMemo(
-    () => createGroups(notebooks, (notebook) => notebook.tags),
-    [notebooks]
-  );
-
-  const favoriteNotebooks = useMemo(() => {
-    const sorted = [...notebooks].sort(compareNotebookRecency);
-    const amberFavorites = sorted.filter(
-      (notebook) => notebook.accent === "amber"
+  if (section !== "folders") {
+    return (
+      <section
+        className={`library-view library-view-${section}`}
+        aria-label={section === "tags" ? "标签" : "收藏"}
+      />
     );
-    const selectedIds = new Set(amberFavorites.map((notebook) => notebook.id));
+  }
 
-    // 数据模型尚未记录收藏状态：稳定地选取琥珀色笔记，并用最近更新项补足演示清单。
-    const recentFill = sorted
-      .filter((notebook) => !selectedIds.has(notebook.id))
-      .slice(0, Math.max(0, 3 - amberFavorites.length));
-
-    return [...amberFavorites, ...recentFill];
-  }, [notebooks]);
-
-  const sectionCount =
-    section === "folders"
-      ? folderCollections.length
-      : section === "tags"
-        ? tagGroups.length
-        : favoriteNotebooks.length;
-  const countLabel =
-    section === "folders"
-      ? `${sectionCount} 个文件夹`
-      : section === "tags"
-        ? `${sectionCount} 个标签`
-        : `${sectionCount} 篇笔记`;
+  const countLabel = `${folderCollections.length} 个文件夹`;
   const folderPageCount = (collection: FolderCollection) =>
     collection.notebooks.reduce(
       (total, notebook) =>
@@ -617,7 +694,7 @@ export function HomeLibraryView({
                 <button
                   className="library-folder-back"
                   type="button"
-                  onClick={() => setActiveFolderKey(null)}
+                  onClick={() => navigateToFolder(null)}
                 >
                   <ChevronLeft aria-hidden="true" size={16} />
                   <span>全部文件夹</span>
@@ -629,32 +706,51 @@ export function HomeLibraryView({
                 </div>
 
                 <nav aria-label="切换文件夹">
-                  {folderCollections.map((collection) => {
-                    const CollectionIcon =
-                      FOLDER_ICONS[collection.profile.icon];
-                    return (
-                      <button
-                        className={
-                          collection.key === activeFolder.key
-                            ? "is-active"
-                            : undefined
-                        }
-                        type="button"
-                        aria-current={
-                          collection.key === activeFolder.key
-                            ? "page"
-                            : undefined
-                        }
-                        key={collection.key}
-                        onClick={() => setActiveFolderKey(collection.key)}
-                        style={folderAccentStyle(collection.profile.color)}
-                      >
-                        <CollectionIcon aria-hidden="true" size={15} />
-                        <span>{collection.profile.name}</span>
-                        <small>{collection.notebooks.length}</small>
-                      </button>
-                    );
-                  })}
+                  <ul
+                    className="library-folder-rail-list"
+                    aria-label="文件夹卡片列表"
+                  >
+                    {folderCollections.map((collection) => {
+                      const CollectionIcon =
+                        FOLDER_ICONS[collection.profile.icon];
+                      const isActive = collection.key === activeFolder.key;
+                      const recentNotebook = collection.notebooks[0];
+
+                      return (
+                        <li key={collection.key}>
+                          <button
+                            className={`library-folder-rail-card${isActive ? " is-active" : ""}`}
+                            type="button"
+                            data-folder-transition-key={collection.key}
+                            aria-label={`切换到文件夹：${collection.profile.name}`}
+                            aria-current={isActive ? "page" : undefined}
+                            onClick={() => navigateToFolder(collection.key)}
+                            style={folderTransitionStyle(
+                              collection.profile.color,
+                              collection.key
+                            )}
+                          >
+                            <span
+                              className="library-folder-rail-card-icon"
+                              aria-hidden="true"
+                            >
+                              <CollectionIcon size={19} />
+                            </span>
+                            <span className="library-folder-rail-card-copy">
+                              <strong>{collection.profile.name}</strong>
+                              <small>
+                                {collection.notebooks.length} 篇笔记 ·{" "}
+                                {folderPageCount(collection)} 个页面
+                              </small>
+                              <span>
+                                {recentNotebook?.title ?? "暂无笔记内容"}
+                              </span>
+                            </span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
                 </nav>
               </aside>
 
@@ -878,14 +974,18 @@ export function HomeLibraryView({
                     <li
                       key={collection.key}
                       style={
-                        {
-                          ...folderAccentStyle(collection.profile.color),
+                          {
+                          ...folderTransitionStyle(
+                            collection.profile.color,
+                            collection.key
+                          ),
                           "--folder-card-delay": `${index * 42}ms`
                         } as CSSProperties
                       }
                     >
                       <article
                         className={`library-folder-card${selectionMode ? " is-selection-mode" : ""}${isSelected ? " is-selected" : ""}`}
+                        data-folder-transition-key={collection.key}
                       >
                         <button
                           className="library-folder-card-open"
@@ -900,7 +1000,7 @@ export function HomeLibraryView({
                             if (selectionMode) {
                               toggleFolderSelection(collection.key);
                             } else {
-                              setActiveFolderKey(collection.key);
+                              navigateToFolder(collection.key);
                             }
                           }}
                         >
@@ -1003,67 +1103,6 @@ export function HomeLibraryView({
               )}
             </div>
           )
-        ) : (
-          <EmptyLibraryState
-            title={copy.emptyTitle}
-            description={copy.emptyDescription}
-          />
-        ))}
-
-      {section === "tags" &&
-        (tagGroups.length ? (
-          <ul className="library-tag-list" aria-label="标签索引">
-            {tagGroups.map((group) => (
-              <li className="library-tag-item" key={group.key}>
-                <article
-                  className="library-tag-group"
-                  aria-labelledby={`library-tag-${group.key}`}
-                >
-                  <header className="library-tag-header">
-                    <span className="library-tag-symbol" aria-hidden="true">
-                      <Hash size={17} />
-                    </span>
-                    <div>
-                      <h3 id={`library-tag-${group.key}`}>{group.label}</h3>
-                      <p>{group.notebooks.length} 篇相关笔记</p>
-                    </div>
-                  </header>
-                  <NotebookCollection
-                    notebooks={group.notebooks}
-                    renderNotebook={renderNotebook}
-                  />
-                </article>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <EmptyLibraryState
-            title={copy.emptyTitle}
-            description={copy.emptyDescription}
-          />
-        ))}
-
-      {section === "favorites" &&
-        (favoriteNotebooks.length ? (
-          <div className="library-favorite-content">
-            <aside className="library-favorite-demo-note" aria-label="演示说明">
-              <Star aria-hidden="true" size={17} />
-              <p>
-                <strong>演示收藏</strong>
-                当前数据尚未保存收藏状态，暂以琥珀色标记与最近更新内容组成此清单。
-              </p>
-            </aside>
-            <div className="library-favorite-list">
-              <div className="library-favorite-list-heading">
-                <FileText aria-hidden="true" size={18} />
-                <h3>收藏笔记</h3>
-              </div>
-              <NotebookCollection
-                notebooks={favoriteNotebooks}
-                renderNotebook={renderNotebook}
-              />
-            </div>
-          </div>
         ) : (
           <EmptyLibraryState
             title={copy.emptyTitle}
