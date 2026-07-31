@@ -1,15 +1,28 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
-import { seedData } from "./data/seed";
-import { AppStoreProvider } from "./store/AppStore";
+import { seedData } from "./test/fixtures/seed";
+import {
+  APP_DATA_STORAGE_KEY,
+  AppStoreProvider
+} from "./store/AppStore";
+import {
+  initialModelProviders,
+  MODEL_PROVIDERS_STORAGE_KEY
+} from "./utils/modelProviders";
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
 function renderApp(clearStorage = true) {
-  if (clearStorage) window.localStorage.clear();
+  if (clearStorage) {
+    window.localStorage.clear();
+    window.localStorage.setItem(
+      APP_DATA_STORAGE_KEY,
+      JSON.stringify(seedData)
+    );
+  }
   return render(
     <AppStoreProvider>
       <App />
@@ -92,7 +105,7 @@ describe("Annota core flow", () => {
   it("always starts on the home page even when the last session ended in the reader", () => {
     window.localStorage.clear();
     window.localStorage.setItem(
-      "annota.desktop.demo.v1",
+      APP_DATA_STORAGE_KEY,
       JSON.stringify({
         ...seedData,
         currentNotebookId: seedData.notebooks[0].id,
@@ -106,36 +119,32 @@ describe("Annota core flow", () => {
     expect(screen.queryByRole("region", { name: "文章阅读区域" })).not.toBeInTheDocument();
   });
 
-  it("adds the C++ demo notes to an existing demo workspace without replacing it", () => {
-    const legacyNotebooks = seedData.notebooks.filter(
-      (notebook) => !notebook.rootId.startsWith("cpp-")
+  it("starts with an empty library when no user data exists", () => {
+    window.localStorage.clear();
+
+    const { container } = renderApp(false);
+
+    expect(container.querySelector(".home-ledger strong")).toHaveTextContent(
+      "0"
     );
-    const legacyArticles = Object.fromEntries(
-      Object.entries(seedData.articles).filter(
-        ([articleId]) => !articleId.startsWith("cpp-")
-      )
-    );
+    expect(screen.getByText("知识库还是空的")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /打开笔记：/ })).toBeNull();
+  });
+
+  it("removes bundled notes from legacy storage", () => {
+    window.localStorage.clear();
     window.localStorage.setItem(
       "annota.desktop.demo.v1",
-      JSON.stringify({
-        ...seedData,
-        notebooks: legacyNotebooks,
-        articles: legacyArticles
-      })
+      JSON.stringify(seedData)
     );
 
     const { container } = renderApp(false);
-    showRecentBrowsing();
 
     expect(container.querySelector(".home-ledger strong")).toHaveTextContent(
-      String(seedData.notebooks.length)
+      "0"
     );
-    expect(
-      screen.getByRole("button", { name: "打开笔记：虚函数与动态多态" })
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "打开笔记：模板基础与函数模板" })
-    ).toBeInTheDocument();
+    expect(screen.getByText("知识库还是空的")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /打开笔记：/ })).toBeNull();
   });
 
   it("opens folders, tags, and favorites from the home sidebar", async () => {
@@ -324,9 +333,7 @@ describe("Annota core flow", () => {
       "所有父级文章"
     ]);
     expect(contextRadios).toHaveLength(6);
-    expect(
-      within(contextGroup).getByRole("radio", { name: /所有父级文章/ })
-    ).toBeChecked();
+    expect(contextRadios[0]).toBeChecked();
 
     await user.click(
       within(contextGroup).getByRole("radio", { name: /附近段落/ })
@@ -335,16 +342,14 @@ describe("Annota core flow", () => {
     expect(
       within(contextGroup).getByRole("radio", { name: /附近段落/ })
     ).toBeChecked();
-    expect(
-      within(contextGroup).getByRole("radio", { name: /所有父级文章/ })
-    ).not.toBeChecked();
+    expect(contextRadios[0]).not.toBeChecked();
     expect(contextRadios.filter((radio) => radio.matches(":checked"))).toHaveLength(1);
     expect(within(generationPage).getByRole("status")).toHaveTextContent(
       "设置修改已自动保存"
     );
   });
 
-  it("creates a custom generation type and opens a network-free output preview", async () => {
+  it("creates a custom generation type and opens a request-free template preview", async () => {
     const user = userEvent.setup();
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const generationPage = await openGenerationPage(user);
@@ -360,12 +365,15 @@ describe("Annota core flow", () => {
     expect(
       within(generationPage).getByRole("textbox", { name: "生成类型名称" })
     ).toHaveValue("未命名类型");
+    expect(
+      within(generationPage).getAllByRole("radio")[0]
+    ).toBeChecked();
 
     await user.click(
       within(generationPage).getByRole("button", { name: "输出预览" })
     );
     const preview = await screen.findByRole("dialog", { name: "输出预览" });
-    expect(within(preview).getByText(/不调用模型/)).toBeInTheDocument();
+    expect(within(preview).getByText(/不会发起模型请求/)).toBeInTheDocument();
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
@@ -390,7 +398,7 @@ describe("Annota core flow", () => {
       within(generationPage).getByText("3 个启用")
     ).toBeInTheDocument();
     expect(within(generationPage).getByRole("status")).toHaveTextContent(
-      "所有修改都会自动保存到本次页面会话"
+      "所有修改都会自动保存到本机"
     );
     expect(
       Array.from(
@@ -454,7 +462,29 @@ describe("Annota core flow", () => {
 
   it("configures a model and list icon for each generation behavior", async () => {
     const user = userEvent.setup();
-    const generationPage = await openGenerationPage(user);
+    renderApp();
+    window.localStorage.setItem(
+      MODEL_PROVIDERS_STORAGE_KEY,
+      JSON.stringify(
+        initialModelProviders.map((provider) =>
+          provider.id === "deepseek"
+            ? {
+                ...provider,
+                apiKey: "sk-deepseek",
+                availableModels: ["deepseek-chat", "deepseek-reasoner"],
+                model: "deepseek-chat"
+              }
+            : provider
+        )
+      )
+    );
+    const sidebar = screen.getByRole("complementary", { name: "主页导航" });
+    await user.click(
+      within(sidebar).getByRole("button", { name: "生成与提示词" })
+    );
+    const generationPage = screen.getByRole("region", {
+      name: "生成与提示词内容"
+    });
     const explainButton = within(generationPage).getByRole("button", {
       name: /^解释\s*内置$/
     });
@@ -465,10 +495,10 @@ describe("Annota core flow", () => {
       name: "使用图标：语言翻译"
     });
 
-    await user.selectOptions(modelSelect, "deepseek:deepseek-v4-flash");
+    await user.selectOptions(modelSelect, "deepseek:deepseek-reasoner");
     await user.click(translateIcon);
 
-    expect(modelSelect).toHaveValue("deepseek:deepseek-v4-flash");
+    expect(modelSelect).toHaveValue("deepseek:deepseek-reasoner");
     expect(translateIcon).toHaveAttribute("aria-pressed", "true");
     expect(
       explainButton
@@ -482,7 +512,7 @@ describe("Annota core flow", () => {
     expect(
       within(
         await screen.findByRole("dialog", { name: "输出预览" })
-      ).getByText("Deepseek · deepseek-v4-flash")
+      ).getByText("Deepseek · deepseek-reasoner")
     ).toBeInTheDocument();
   });
 
@@ -919,7 +949,7 @@ describe("Annota core flow", () => {
     expect(screen.queryByRole("button", { name: /打开笔记：ECS 架构/ })).not.toBeInTheDocument();
   });
 
-  it("enables generation after a single-block selection and shows a placeholder job", async () => {
+  it("does not create generated content when no generation service is configured", async () => {
     const user = userEvent.setup();
     const { container } = renderApp();
     const article = await openFirstNotebook(user);
@@ -930,7 +960,74 @@ describe("Annota core flow", () => {
     const explain = screen.getByTitle("解释选中文字");
     expect(explain).toBeEnabled();
     await user.click(explain);
-    expect(screen.getByText("正在解释选区")).toBeInTheDocument();
+    expect(
+       screen.getByText(/没有可用模型/)
+    ).toBeInTheDocument();
+    expect(screen.queryByText("正在解释选区")).not.toBeInTheDocument();
+  });
+
+  it("uses the configured prompt and model to create a generated child article", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                title: "选择文本的实际解释",
+                summary: "模型根据当前段落生成的解释。",
+                blocks: [
+                  { type: "heading", text: "核心含义" },
+                  { type: "paragraph", text: "这是模型返回的正文内容。" }
+                ],
+                tags: ["解释", "模型生成"]
+              })
+            }
+          }
+        ]
+      })
+    } as Response);
+    window.localStorage.clear();
+    window.localStorage.setItem(
+      APP_DATA_STORAGE_KEY,
+      JSON.stringify(seedData)
+    );
+    window.localStorage.setItem(
+      MODEL_PROVIDERS_STORAGE_KEY,
+      JSON.stringify(
+        initialModelProviders.map((provider) =>
+          provider.id === "chatgpt"
+            ? {
+                ...provider,
+                apiKey: "sk-runtime",
+                availableModels: ["gpt-runtime"],
+                model: "gpt-runtime"
+              }
+            : provider
+        )
+      )
+    );
+    const user = userEvent.setup();
+    const { container } = renderApp(false);
+    const article = await openFirstNotebook(user);
+    const paragraph = article.blocks.find((block) => block.kind === "paragraph")!;
+    const block = container.querySelector(`[data-block-id="${paragraph.id}"]`)!;
+    setDocumentSelection(block, 0, 12);
+
+    await user.click(screen.getByTitle("解释选中文字"));
+    expect(
+      await screen.findByRole("button", {
+        name: /打开子文章：选择文本的实际解释/
+      })
+    ).toBeInTheDocument();
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "https://api.openai.com/v1/chat/completions",
+      expect.objectContaining({
+        method: "POST",
+        body: expect.stringContaining("<context_scope>")
+      })
+    );
   });
 
   it("keeps the article in one seamless editable surface", async () => {
@@ -994,7 +1091,7 @@ describe("Annota core flow", () => {
 
     await waitFor(() => {
       const stored = JSON.parse(
-        window.localStorage.getItem("annota.desktop.demo.v1") ?? "{}"
+        window.localStorage.getItem(APP_DATA_STORAGE_KEY) ?? "{}"
       );
       expect(
         stored.articles[article.id].blocks.find(
@@ -1061,7 +1158,7 @@ describe("Annota core flow", () => {
         article.blocks.length
       );
       const stored = JSON.parse(
-        window.localStorage.getItem("annota.desktop.demo.v1") ?? "{}"
+        window.localStorage.getItem(APP_DATA_STORAGE_KEY) ?? "{}"
       );
       expect(stored.articles[article.id].blocks).toHaveLength(article.blocks.length);
     });
@@ -1153,7 +1250,7 @@ describe("Annota core flow", () => {
       expect(
         screen.queryByRole("dialog", { name: "文字颜色选项" })
       ).not.toBeInTheDocument();
-      expect(screen.getAllByTitle("先选择正文文字")).toHaveLength(2);
+      expect(screen.getAllByTitle("先选择正文文字")).toHaveLength(3);
       screen.getAllByTitle("先选择正文文字").forEach((button) => {
         expect(button).toBeDisabled();
       });
@@ -1179,7 +1276,7 @@ describe("Annota core flow", () => {
 
     await waitFor(() => {
       const stored = JSON.parse(
-        window.localStorage.getItem("annota.desktop.demo.v1") ?? "{}"
+        window.localStorage.getItem(APP_DATA_STORAGE_KEY) ?? "{}"
       );
       expect(stored.articles[article.id].blocks.find(
         (block: { id: string }) => block.id === paragraph.id
@@ -1208,7 +1305,7 @@ describe("Annota core flow", () => {
     await user.click(screen.getByRole("button", { name: "文字颜色：蓝色" }));
     await waitFor(() => {
       const stored = JSON.parse(
-        window.localStorage.getItem("annota.desktop.demo.v1") ?? "{}"
+        window.localStorage.getItem(APP_DATA_STORAGE_KEY) ?? "{}"
       );
       expect(stored.articles[article.id].blocks.find(
         (block: { id: string }) => block.id === paragraph.id
@@ -1257,7 +1354,7 @@ describe("Annota core flow", () => {
 
     await waitFor(() => {
       const stored = JSON.parse(
-        window.localStorage.getItem("annota.desktop.demo.v1") ?? "{}"
+        window.localStorage.getItem(APP_DATA_STORAGE_KEY) ?? "{}"
       );
       const marks = stored.articles[article.id].blocks.find(
         (candidate: { id: string }) => candidate.id === paragraph.id
@@ -1328,7 +1425,7 @@ describe("Annota core flow", () => {
     );
     await waitFor(() => {
       const stored = JSON.parse(
-        window.localStorage.getItem("annota.desktop.demo.v1") ?? "{}"
+        window.localStorage.getItem(APP_DATA_STORAGE_KEY) ?? "{}"
       );
       expect(stored.articles[article.id].blocks.find(
         (block: { id: string }) => block.id === paragraph.id
@@ -1377,6 +1474,7 @@ describe("Annota core flow", () => {
     );
     expect(settingsCanvas).toHaveClass("home-main", "settings-home-main");
     expect(container.querySelector(".settings-category-index")).not.toBeInTheDocument();
+    expect(container.querySelector(".settings-display-badge")).not.toBeInTheDocument();
     expect(within(settingsCanvas).queryByText("全局")).not.toBeInTheDocument();
     const categories = [
       "外观与交互",
@@ -1559,84 +1657,63 @@ describe("Annota core flow", () => {
     expect(
       within(settingsCanvas).getByRole("button", { name: "配置 Chat GPT" })
     ).toHaveAttribute("aria-current", "page");
-    const defaultBaseUrl = within(settingsCanvas).getByRole("textbox", {
-      name: "Base URL"
-    });
-    const defaultModelsPath = within(settingsCanvas).getByRole("textbox", {
-      name: "模型列表地址"
-    });
-    const defaultEndpointPath = within(settingsCanvas).getByRole("textbox", {
-      name: "请求路径"
-    });
-    expect(defaultBaseUrl).toHaveValue("https://api.openai.com/v1");
-    expect(defaultModelsPath).toHaveValue("/models");
-    expect(defaultBaseUrl).toHaveAttribute("readonly");
-    expect(defaultModelsPath).toHaveAttribute("readonly");
-    expect(defaultEndpointPath).toHaveAttribute("readonly");
-    expect(within(settingsCanvas).getByText("使用模型")).toBeInTheDocument();
-    expect(within(settingsCanvas).queryByText("默认模型")).not.toBeInTheDocument();
-    const modelPicker = within(settingsCanvas).getByRole("combobox", {
-      name: "使用模型"
-    });
-    expect(modelPicker).toHaveAttribute("id", "default-model-chatgpt");
-    expect(modelPicker).toHaveTextContent("gpt-5-mini");
-    await user.click(
-      modelPicker
-    );
-    expect(modelPicker).toHaveAttribute("aria-expanded", "true");
+    expect(container.querySelector(".model-provider-status")).not.toBeInTheDocument();
     expect(
-      await within(settingsCanvas).findByRole("listbox", {
-        name: "Chat GPT 可用模型"
+      within(settingsCanvas).queryByRole("textbox", { name: "Base URL" })
+    ).not.toBeInTheDocument();
+    expect(
+      within(settingsCanvas).queryByRole("textbox", {
+        name: "模型列表地址"
       })
-    ).toBeInTheDocument();
+    ).not.toBeInTheDocument();
     expect(
-      within(settingsCanvas).getByText(
-        /内置目录（2026-07-28），共 23 个模型/
-      )
-    ).toBeInTheDocument();
-    expect(globalThis.fetch).not.toHaveBeenCalled();
+      within(settingsCanvas).queryByRole("textbox", { name: "请求路径" })
+    ).not.toBeInTheDocument();
     expect(
-      within(settingsCanvas).getByRole("option", { name: "gpt-5.6-sol" })
-    ).toBeInTheDocument();
-    await user.click(
-      within(settingsCanvas).getByRole("option", { name: "gpt-5.6-sol" })
-    );
-    expect(modelPicker).toHaveTextContent("gpt-5.6-sol");
+      within(settingsCanvas).queryByRole("combobox", { name: "使用模型" })
+    ).not.toBeInTheDocument();
+    expect(
+      within(settingsCanvas).queryByRole("checkbox", { name: /启用/ })
+    ).not.toBeInTheDocument();
+    expect(
+      within(settingsCanvas).queryByRole("button", {
+        name: "添加自定义服务商"
+      })
+    ).not.toBeInTheDocument();
+    const connectionTest = within(settingsCanvas).getByRole("button", {
+      name: "测试连接"
+    });
+    expect(connectionTest).toBeDisabled();
 
     await user.type(
       within(settingsCanvas).getByLabelText("API Key"),
       "sk-test"
     );
-    await user.click(modelPicker);
+    expect(connectionTest).toBeEnabled();
+    await user.click(connectionTest);
     expect(
-      await within(settingsCanvas).findByText(
-        "云端返回 3 个可用模型"
-      )
-    ).toBeInTheDocument();
-    const modelOption = within(settingsCanvas).getByRole("option", {
-      name: "gpt-5.1"
-    });
-    await user.click(modelOption);
-    expect(modelPicker).toHaveTextContent("gpt-5.1");
-    expect(modelPicker).toHaveAttribute("aria-expanded", "false");
+      await within(settingsCanvas).findByRole("button", {
+        name: "连接正常：已连接，发现 3 个可用模型"
+      })
+    ).toBeEnabled();
     expect(globalThis.fetch).toHaveBeenCalledWith(
       "https://api.openai.com/v1/models",
       expect.objectContaining({ headers: expect.any(Headers) })
     );
-    await user.click(modelPicker);
-    const modelQuery = within(settingsCanvas).getByRole("textbox", {
-      name: "搜索或输入模型 ID"
-    });
-    await user.type(modelQuery, "custom-reader-model");
-    await user.click(
-      within(settingsCanvas).getByRole("button", {
-        name: /使用自定义模型 ID custom-reader-model/
-      })
-    );
-    expect(modelPicker).toHaveTextContent("custom-reader-model");
     expect(
-      within(settingsCanvas).getByRole("button", { name: "测试连接" })
-    ).toBeDisabled();
+      JSON.parse(
+        window.localStorage.getItem(MODEL_PROVIDERS_STORAGE_KEY) ?? "[]"
+      )
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "chatgpt",
+          apiKey: "sk-test",
+          model: "gpt-4.1",
+          availableModels: ["gpt-4.1", "gpt-5-mini", "gpt-5.1"]
+        })
+      ])
+    );
     expect(container.querySelector(".model-provider-brand-icon.is-zhipu"))
       .toBeInTheDocument();
 
@@ -1660,27 +1737,8 @@ describe("Annota core flow", () => {
       })
     ).toBeInTheDocument();
     expect(
-      within(settingsCanvas).getByRole("textbox", { name: "Base URL" })
-    ).toHaveValue("https://api.deepseek.com");
-    await user.click(
-      within(settingsCanvas).getByRole("button", {
-        name: "添加自定义服务商"
-      })
-    );
-    expect(
-      within(settingsCanvas).getByRole("textbox", { name: "服务名称" })
-    ).toHaveValue("自定义服务 2");
-    expect(
-      within(settingsCanvas).getByRole("textbox", { name: "Base URL" })
-    ).not.toHaveAttribute("readonly");
-    expect(
-      within(settingsCanvas).getByRole("textbox", {
-        name: "模型列表地址"
-      })
-    ).not.toHaveAttribute("readonly");
-    expect(
-      within(settingsCanvas).getByRole("textbox", { name: "请求路径" })
-    ).not.toHaveAttribute("readonly");
+      within(settingsCanvas).getByLabelText("API Key")
+    ).toHaveValue("");
     expect(container.querySelector(".home-app")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "工作台" }));
@@ -1692,5 +1750,47 @@ describe("Annota core flow", () => {
     });
     fireEvent.keyDown(window, { key: "g", ctrlKey: true });
     expect(topologyPanel.parentElement).toHaveClass("is-fullscreen");
+  });
+
+  it("keeps the model API key after leaving and reopening settings", async () => {
+    const user = userEvent.setup();
+    renderApp();
+
+    await user.click(screen.getByRole("button", { name: "打开设置" }));
+    let settingsCanvas = screen.getByRole("region", { name: "设置内容" });
+    await user.click(
+      within(settingsCanvas).getByRole("button", { name: "AI 模型服务" })
+    );
+
+    await user.type(
+      within(settingsCanvas).getByLabelText("API Key"),
+      "sk-persisted"
+    );
+    expect(
+      JSON.parse(
+        window.localStorage.getItem(MODEL_PROVIDERS_STORAGE_KEY) ?? "[]"
+      )
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "chatgpt",
+          apiKey: "sk-persisted"
+        })
+      ])
+    );
+
+    await user.click(screen.getByRole("button", { name: "主页" }));
+    expect(
+      screen.queryByRole("region", { name: "设置内容" })
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "打开设置" }));
+    settingsCanvas = screen.getByRole("region", { name: "设置内容" });
+    await user.click(
+      within(settingsCanvas).getByRole("button", { name: "AI 模型服务" })
+    );
+    expect(within(settingsCanvas).getByLabelText("API Key")).toHaveValue(
+      "sk-persisted"
+    );
   });
 });

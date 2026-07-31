@@ -27,20 +27,23 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:"
     }
   },
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "publisher": "Annota",
+    "copyright": "Copyright © 2026 Annota",
+    "category": "Productivity",
+    "shortDescription": "本地知识树阅读、编辑与归档工具",
+    "longDescription": "Annota 是一款 Windows 优先的本地知识树应用，支持创建和导入笔记、块级编辑、全文搜索、文件夹归档、知识拓扑以及 Annota 关系包导入导出。",
     "windows": {
       "nsis": {
         "installerIcon": null,
         "installMode": "currentUser",
         "displayLanguageSelector": false
       }
-    },
-    "shortDescription": "沿选区生成可回溯子文章的本地知识树",
-    "longDescription": "Annota 是一个 Windows 优先的本地知识树阅读与编辑应用。"
+    }
   }
 }

@@ -1,5 +1,6 @@
 {
   "name": "annota-desktop",
+  "description": "Windows-first local knowledge tree reader and editor",
   "private": true,
   "version": "0.1.0",
   "type": "module",

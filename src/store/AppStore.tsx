@@ -5,10 +5,9 @@ import {
   useEffect,
   useMemo,
   useReducer,
-  useRef,
   type PropsWithChildren
 } from "react";
-import { seedData } from "../data/seed";
+import { createEmptyAppData } from "../data/empty";
 import type {
   AppData,
   ArticleNode,
@@ -16,16 +15,45 @@ import type {
   FolderProfile,
   GenerationJob,
   GenerationType,
-  Notebook
+  Notebook,
+  SelectionState
 } from "../types";
+import {
+  loadGenerationTypes,
+  renderPromptTemplate
+} from "../utils/generationConfig";
+import {
+  GENERATION_OUTPUT_INSTRUCTION,
+  generateModelText
+} from "../utils/modelGeneration";
+import {
+  assembleGenerationContext,
+  parseGeneratedArticle
+} from "../utils/generationRuntime";
+import { resolveConfiguredModel } from "../utils/modelProviders";
 
-const STORAGE_KEY = "annota.desktop.demo.v1";
+export const APP_DATA_STORAGE_KEY = "annota.desktop.library.v1";
+const LEGACY_STORAGE_KEY = "annota.desktop.demo.v1";
 const UNFILED_FOLDER_KEY = "未归档";
-const CPP_DEMO_ROOT_IDS = new Set([
+const LEGACY_DEMO_ROOT_IDS = new Set([
+  "ecs-root",
   "cpp-polymorphism-root",
   "cpp-vtable-root",
   "cpp-virtual-destructor-root",
-  "cpp-template-root"
+  "cpp-template-root",
+  "attention-root",
+  "llm-root",
+  "graph-root"
+]);
+const LEGACY_DEMO_FOLDER_KEYS = new Set([
+  "技术学习",
+  "C++ / 核心",
+  "C++ / 对象模型",
+  "C++ / 生命周期",
+  "C++ / 模板",
+  "阅读方法",
+  "概念解析",
+  "数据库"
 ]);
 
 type Action =
@@ -38,72 +66,88 @@ type Action =
   | { type: "delete-folder-profiles"; keys: string[] }
   | { type: "replace-data"; data: AppData }
   | { type: "start-job"; job: GenerationJob }
-  | { type: "job-status"; jobId: string; status: GenerationJob["status"] }
+  | {
+      type: "job-status";
+      jobId: string;
+      status: GenerationJob["status"];
+      error?: string;
+    }
   | { type: "complete-job"; jobId: string; article: ArticleNode }
   | { type: "cancel-job"; jobId: string };
 
-function cloneSeed(): AppData {
-  return JSON.parse(JSON.stringify(seedData)) as AppData;
+function parseStoredData(raw: string): AppData | null {
+  const parsed = JSON.parse(raw) as Partial<AppData>;
+  if (!Array.isArray(parsed.notebooks) || !parsed.articles) return null;
+  return {
+    notebooks: parsed.notebooks,
+    folderProfiles: Array.isArray(parsed.folderProfiles)
+      ? parsed.folderProfiles
+      : [],
+    deletedFolderKeys: Array.isArray(parsed.deletedFolderKeys)
+      ? parsed.deletedFolderKeys
+      : [],
+    articles: parsed.articles,
+    jobs: [],
+    currentNotebookId: null,
+    currentArticleId: null
+  };
 }
 
-function mergeCppDemoAdditions(data: AppData): AppData {
-  const notebookIds = new Set(data.notebooks.map((notebook) => notebook.id));
-  const notebookAdditions = seedData.notebooks.filter(
-    (notebook) =>
-      CPP_DEMO_ROOT_IDS.has(notebook.rootId) && !notebookIds.has(notebook.id)
+function removeLegacyDemoData(data: AppData): AppData {
+  const notebooks = data.notebooks.filter(
+    (notebook) => !LEGACY_DEMO_ROOT_IDS.has(notebook.rootId)
   );
-  const articleAdditions = Object.fromEntries(
-    Object.entries(seedData.articles).filter(
-      ([articleId]) => CPP_DEMO_ROOT_IDS.has(articleId) && !data.articles[articleId]
-    )
+  const retainedRootIds = new Set(notebooks.map((notebook) => notebook.rootId));
+  const retainedCategories = new Set(
+    notebooks.map((notebook) => notebook.category)
   );
-  const currentFolderProfiles = Array.isArray(data.folderProfiles)
-    ? data.folderProfiles
-    : [];
-  const deletedFolderKeys = Array.isArray(data.deletedFolderKeys)
-    ? data.deletedFolderKeys
-    : [];
-  const deletedKeys = new Set(deletedFolderKeys);
-  const folderKeys = new Set(
-    currentFolderProfiles.map((profile) => profile.key)
+  const articles = Object.fromEntries(
+    Object.entries(data.articles)
+      .filter(
+        ([, article]) =>
+          retainedRootIds.has(article.rootId) &&
+          !LEGACY_DEMO_ROOT_IDS.has(article.rootId)
+      )
+      .map(([id, article]) => [
+        id,
+        {
+          ...article,
+          childIds: article.childIds.filter(
+            (childId) =>
+              data.articles[childId] &&
+              !LEGACY_DEMO_ROOT_IDS.has(data.articles[childId].rootId)
+          )
+        }
+      ])
   );
-  const folderProfileAdditions = seedData.folderProfiles.filter(
-    (profile) =>
-      !folderKeys.has(profile.key) && !deletedKeys.has(profile.key)
-  );
-  if (
-    !notebookAdditions.length &&
-    !Object.keys(articleAdditions).length &&
-    !folderProfileAdditions.length &&
-    Array.isArray(data.folderProfiles) &&
-    Array.isArray(data.deletedFolderKeys)
-  ) {
-    return data;
-  }
   return {
     ...data,
-    notebooks: [...data.notebooks, ...notebookAdditions],
-    folderProfiles: [...currentFolderProfiles, ...folderProfileAdditions],
-    deletedFolderKeys,
-    articles: { ...articleAdditions, ...data.articles }
+    notebooks,
+    folderProfiles: data.folderProfiles.filter(
+      (profile) =>
+        !LEGACY_DEMO_FOLDER_KEYS.has(profile.key) ||
+        retainedCategories.has(profile.key)
+    ),
+    articles,
+    jobs: [],
+    currentNotebookId: null,
+    currentArticleId: null
   };
 }
 
 function loadInitialData(): AppData {
-  if (typeof window === "undefined") return cloneSeed();
+  if (typeof window === "undefined") return createEmptyAppData();
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return cloneSeed();
-    const parsed = JSON.parse(raw) as AppData;
-    if (!Array.isArray(parsed.notebooks) || !parsed.articles) return cloneSeed();
-    return mergeCppDemoAdditions({
-      ...parsed,
-      jobs: [],
-      currentNotebookId: null,
-      currentArticleId: null
-    });
+    const current = window.localStorage.getItem(APP_DATA_STORAGE_KEY);
+    if (current) return parseStoredData(current) ?? createEmptyAppData();
+    const legacy = window.localStorage.getItem(LEGACY_STORAGE_KEY);
+    if (!legacy) return createEmptyAppData();
+    const parsedLegacy = parseStoredData(legacy);
+    return parsedLegacy
+      ? removeLegacyDemoData(parsedLegacy)
+      : createEmptyAppData();
   } catch {
-    return cloneSeed();
+    return createEmptyAppData();
   }
 }
 
@@ -217,7 +261,9 @@ function reducer(state: AppData, action: Action): AppData {
       return {
         ...state,
         jobs: state.jobs.map((job) =>
-          job.id === action.jobId ? { ...job, status: action.status } : job
+          job.id === action.jobId
+            ? { ...job, status: action.status, error: action.error }
+            : job
         )
       };
     case "cancel-job":
@@ -267,12 +313,10 @@ interface AppStoreValue {
   exportCurrentTree: () => void;
   startGeneration: (
     parentId: string,
-    blockId: string,
-    quote: string,
+    selection: SelectionState,
     type: GenerationType
-  ) => string;
+  ) => { ok: boolean; message: string };
   cancelGeneration: (jobId: string) => void;
-  resetDemo: () => void;
 }
 
 const AppStoreContext = createContext<AppStoreValue | null>(null);
@@ -298,60 +342,16 @@ function textToBlocks(text: string, prefix: string): ContentBlock[] {
     });
 }
 
-function generatedCopy(type: GenerationType, quote: string): {
-  title: string;
-  summary: string;
-  blocks: ContentBlock[];
-} {
-  const short = quote.length > 22 ? `${quote.slice(0, 22)}…` : quote;
-  if (type === "translate") {
-    return {
-      title: `“${short}”的双语对照`,
-      summary: "本地演示生成的双语学习节点；接入模型后会替换为真实翻译结果。",
-      blocks: [
-        { id: "generated-b1", kind: "quote", text: quote },
-        {
-          id: "generated-b2",
-          kind: "paragraph",
-          text: "Translation preview: This node preserves the selected source and its reading path. Configure an OpenAI Compatible service to generate the complete bilingual result."
-        }
-      ]
-    };
-  }
-  return {
-    title: `理解“${short}”`,
-    summary: "从定义、因果关系与应用边界三个角度拆解选中内容。",
-    blocks: [
-      { id: "generated-b1", kind: "quote", text: quote },
-      {
-        id: "generated-b2",
-        kind: "paragraph",
-        text: "这是本地任务流的演示结果：系统会保留选区、父文档与生成类型，并将完整结果作为新的可编辑子文章写入知识树。"
-      },
-      {
-        id: "generated-b3",
-        kind: "paragraph",
-        text: "接入 OpenAI Compatible 服务后，这里将使用选区附近上下文与父级摘要生成真实解释；当前版本不会伪装为已经完成远端调用。"
-      }
-    ]
-  };
-}
-
 export function AppStoreProvider({ children }: PropsWithChildren) {
   const [data, dispatch] = useReducer(reducer, undefined, loadInitialData);
-  const generationTimers = useRef<Record<string, number>>({});
 
   useEffect(() => {
     const persistable = { ...data, jobs: [] };
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(persistable));
+    window.localStorage.setItem(
+      APP_DATA_STORAGE_KEY,
+      JSON.stringify(persistable)
+    );
   }, [data]);
-
-  useEffect(
-    () => () => {
-      Object.values(generationTimers.current).forEach((timer) => window.clearTimeout(timer));
-    },
-    []
-  );
 
   const openNotebook = useCallback((notebookId: string, articleId?: string) => {
     dispatch({ type: "open-notebook", notebookId, articleId });
@@ -465,7 +465,7 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
         .filter((entry) => Boolean(entry[1]))
     );
     const payload = {
-      format: "annota-demo-v1",
+      format: "annota-v1",
       exportedAt: new Date().toISOString(),
       notebooks: [notebook],
       folderProfiles: data.folderProfiles.filter(
@@ -489,61 +489,125 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
   }, [data]);
 
   const startGeneration = useCallback(
-    (parentId: string, blockId: string, quote: string, type: GenerationType) => {
-      const id = `job-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    (
+      parentId: string,
+      selection: SelectionState,
+      typeId: GenerationType
+    ) => {
+      const parent = data.articles[parentId];
+      const generationType = loadGenerationTypes().find(
+        (item) => item.id === typeId && item.enabled
+      );
+      if (!parent || !generationType) {
+        return {
+          ok: false,
+          message: "该生成类型当前不可用，请检查“生成与提示词”设置。"
+        };
+      }
+      const resolvedModel = resolveConfiguredModel(
+        generationType.modelBindingId
+      );
+      if (!resolvedModel) {
+        return {
+          ok: false,
+          message:
+            "没有可用模型。请先在“AI 模型服务”填写 API Key、通过联通检测，再为该生成类型选择模型。"
+        };
+      }
+
+      const stamp = Date.now();
+      const jobId = `generation-${stamp}-${Math.random()
+        .toString(36)
+        .slice(2, 8)}`;
       const job: GenerationJob = {
-        id,
+        id: jobId,
         parentId,
-        blockId,
-        quote,
-        type,
+        blockId: selection.blockId,
+        quote: selection.text,
+        type: generationType.id,
+        typeName: generationType.name,
+        model: `${resolvedModel.provider.name} · ${resolvedModel.model}`,
         status: "queued",
         createdAt: new Date().toISOString()
       };
       dispatch({ type: "start-job", job });
-      generationTimers.current[id] = window.setTimeout(() => {
-        dispatch({ type: "job-status", jobId: id, status: "generating" });
-        generationTimers.current[id] = window.setTimeout(() => {
-          const parent = data.articles[parentId];
-          if (!parent) return;
-          const copy = generatedCopy(type, quote);
-          const articleId = `node-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`;
+
+      void (async () => {
+        dispatch({ type: "job-status", jobId, status: "generating" });
+        try {
+          const context = assembleGenerationContext(
+            data.articles,
+            parent,
+            selection,
+            generationType.contextScope
+          );
+          const systemPrompt =
+            renderPromptTemplate(
+              generationType.systemPrompt,
+              context.values
+            ) + GENERATION_OUTPUT_INSTRUCTION;
+          const userPrompt = `${renderPromptTemplate(
+            generationType.userPrompt,
+            context.values
+          )}\n\n<context_scope>${context.suppliedContext}</context_scope>`;
+          const response = await generateModelText({
+            baseUrl: resolvedModel.provider.baseUrl,
+            endpointPath: resolvedModel.provider.endpointPath,
+            apiKey: resolvedModel.provider.apiKey,
+            protocol: resolvedModel.provider.protocol,
+            model: resolvedModel.model,
+            systemPrompt,
+            userPrompt
+          });
+          const articleId = `article-${stamp}-${Math.random()
+            .toString(36)
+            .slice(2, 8)}`;
+          const generated = parseGeneratedArticle(
+            response,
+            `${generationType.name}：${selection.text.slice(0, 28)}`,
+            articleId
+          );
           const now = new Date().toISOString();
           const article: ArticleNode = {
             id: articleId,
             rootId: parent.rootId,
-            parentId,
-            title: copy.title,
-            summary: copy.summary,
-            type: type === "translate" ? "翻译" : "解释",
-            tags: [type === "translate" ? "翻译" : "解释", "AI 生成"],
-            blocks: copy.blocks.map((block, index) => ({
-              ...block,
-              id: `${articleId}-b${index + 1}`
-            })),
+            parentId: parent.id,
+            title: generated.title,
+            summary: generated.summary,
+            type: generationType.relationLabel || generationType.name,
+            tags: generated.tags,
+            blocks: generated.blocks,
             childIds: [],
             createdAt: now,
             updatedAt: now,
-            source: { parentId, blockId, quote, generationType: type }
+            source: {
+              parentId: parent.id,
+              blockId: selection.blockId,
+              quote: selection.text,
+              generationType: generationType.id
+            }
           };
-          dispatch({ type: "complete-job", jobId: id, article });
-          delete generationTimers.current[id];
-        }, 900);
-      }, 350);
-      return id;
+          dispatch({ type: "complete-job", jobId, article });
+        } catch (error) {
+          dispatch({
+            type: "job-status",
+            jobId,
+            status: "failed",
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+      })();
+
+      return {
+        ok: true,
+        message: `已使用 ${resolvedModel.provider.name} · ${resolvedModel.model} 开始“${generationType.name}”。`
+      };
     },
     [data.articles]
   );
 
   const cancelGeneration = useCallback((jobId: string) => {
-    window.clearTimeout(generationTimers.current[jobId]);
-    delete generationTimers.current[jobId];
     dispatch({ type: "cancel-job", jobId });
-  }, []);
-
-  const resetDemo = useCallback(() => {
-    window.localStorage.removeItem(STORAGE_KEY);
-    dispatch({ type: "replace-data", data: cloneSeed() });
   }, []);
 
   const currentArticle = data.currentArticleId ? data.articles[data.currentArticleId] ?? null : null;
@@ -566,8 +630,7 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
       importPackage,
       exportCurrentTree,
       startGeneration,
-      cancelGeneration,
-      resetDemo
+      cancelGeneration
     }),
     [
       data,
@@ -584,8 +647,7 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
       importPackage,
       exportCurrentTree,
       startGeneration,
-      cancelGeneration,
-      resetDemo
+      cancelGeneration
     ]
   );
 

@@ -11,7 +11,6 @@ import {
   BookOpenText,
   Boxes,
   ChevronDown,
-  Clock3,
   FileInput,
   FolderTree,
   Import,
@@ -130,8 +129,7 @@ export function HomePage({
     updateFolderProfile,
     updateFolderProfiles,
     deleteFolderProfiles,
-    importPackage,
-    resetDemo
+    importPackage
   } = useAppStore();
   const [activeHomeView, setActiveHomeView] = useState<
     "home" | "generation" | HomeLibrarySection
@@ -171,6 +169,11 @@ export function HomePage({
         .slice(0, 3),
     [data.notebooks]
   );
+  const todayLabel = new Intl.DateTimeFormat("zh-CN", {
+    month: "long",
+    day: "numeric",
+    weekday: "long"
+  }).format(new Date());
 
   const timelineGroups = useMemo(() => {
     return notebooks.reduce<
@@ -375,10 +378,6 @@ export function HomePage({
                 <Import aria-hidden="true" size={16} />
                 <span>导入材料</span>
               </button>
-              <button type="button" onClick={resetDemo}>
-                <Clock3 aria-hidden="true" size={16} />
-                <span>重置演示数据</span>
-              </button>
               <button
                 className={settingsOpen ? "is-active" : undefined}
                 type="button"
@@ -461,10 +460,10 @@ export function HomePage({
                   >
                     <div className="home-intro">
                       <div>
-                        <p className="context-line">周二，7 月 28 日</p>
+                        <p className="context-line">{todayLabel}</p>
                         <h1 id="home-overview-title">继续生长你的知识树</h1>
                         <p>
-                          从最近阅读处继续，或导入一份材料开始新的学习路径。每次解释与翻译都会保留来源。
+                          从最近阅读处继续，或新建、导入一份材料开始新的学习路径。内容保存在当前设备。
                         </p>
                       </div>
                     </div>
@@ -516,30 +515,60 @@ export function HomePage({
                         </div>
                         <span>按最近打开或修改时间排列</span>
                       </header>
-                      <div className="notebook-grid home-recent-preview-grid">
-                        {recentPreview.map((notebook) => (
-                          <NotebookCard
-                            key={notebook.id}
-                            notebook={notebook}
-                            descendants={countDescendants(
-                              notebook.rootId,
-                              data.articles
-                            )}
-                            subNotesLabel={terms.subNotes}
-                            onOpen={() => openNotebook(notebook.id)}
-                          />
-                        ))}
-                      </div>
+                      {recentPreview.length ? (
+                        <div className="notebook-grid home-recent-preview-grid">
+                          {recentPreview.map((notebook) => (
+                            <NotebookCard
+                              key={notebook.id}
+                              notebook={notebook}
+                              descendants={countDescendants(
+                                notebook.rootId,
+                                data.articles
+                              )}
+                              subNotesLabel={terms.subNotes}
+                              onOpen={() => openNotebook(notebook.id)}
+                            />
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="home-empty home-first-run">
+                          <BookOpenText aria-hidden="true" size={24} />
+                          <strong>知识库还是空的</strong>
+                          <span>
+                            创建第一篇笔记，或导入 Markdown、TXT 与 Annota 关系包。
+                          </span>
+                          <div>
+                            <button
+                              className="button primary"
+                              type="button"
+                              onClick={() => newDialogRef.current?.showModal()}
+                            >
+                              <Plus aria-hidden="true" size={16} />
+                              {terms.newNote}
+                            </button>
+                            <button
+                              className="button secondary"
+                              type="button"
+                              onClick={() => fileRef.current?.click()}
+                            >
+                              <FileInput aria-hidden="true" size={16} />
+                              导入材料
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </section>
 
-                    <button
-                      className="home-scroll-cue"
-                      type="button"
-                      onClick={showRecent}
-                    >
-                      <span>下滑查看{terms.recent}</span>
-                      <ChevronDown aria-hidden="true" size={17} />
-                    </button>
+                    {recentPreview.length > 0 && (
+                      <button
+                        className="home-scroll-cue"
+                        type="button"
+                        onClick={showRecent}
+                      >
+                        <span>下滑查看{terms.recent}</span>
+                        <ChevronDown aria-hidden="true" size={17} />
+                      </button>
+                    )}
                   </section>
 
                   <section
@@ -616,15 +645,25 @@ export function HomePage({
                     ) : (
                       <div className="home-empty">
                         <Search aria-hidden="true" size={22} />
-                        <strong>没有符合筛选条件的主笔记</strong>
-                        <span>清除筛选，或导入一份新的 Markdown / TXT 材料。</span>
-                        <button
-                          className="button secondary"
-                          type="button"
-                          onClick={() => setFilter("")}
-                        >
-                          清除筛选
-                        </button>
+                        <strong>
+                          {filter
+                            ? "没有符合筛选条件的主笔记"
+                            : "还没有最近浏览记录"}
+                        </strong>
+                        <span>
+                          {filter
+                            ? "清除筛选，或导入一份新的 Markdown / TXT 材料。"
+                            : "新建或导入内容后，会在这里按最近打开时间排列。"}
+                        </span>
+                        {filter && (
+                          <button
+                            className="button secondary"
+                            type="button"
+                            onClick={() => setFilter("")}
+                          >
+                            清除筛选
+                          </button>
+                        )}
                       </div>
                     )}
                   </section>
@@ -754,7 +793,7 @@ export function HomePage({
             id="new-note-name"
             value={newTitle}
             onChange={(event) => setNewTitle(event.target.value)}
-            placeholder="例如：ECS 架构学习笔记"
+            placeholder="例如：项目研究笔记"
             autoFocus
           />
           <small>标题可稍后修改；正文会自动保存在本机。</small>

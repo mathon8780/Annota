@@ -5,16 +5,19 @@ import {
   ArrowLeft,
   BookOpenText,
   Check,
+  CircleHelp,
   CircleStop,
   Download,
   FileInput,
   Home,
   Languages,
+  Lightbulb,
   LoaderCircle,
   MessageSquareText,
   Network,
   Save,
-  Sparkles
+  Sparkles,
+  Tag
 } from "lucide-react";
 import { useAppStore } from "../store/AppStore";
 import type {
@@ -25,6 +28,10 @@ import type {
   SelectionState
 } from "../types";
 import type { ContentTerms } from "../utils/contentDisplay";
+import {
+  loadGenerationTypes,
+  type GenerationTypeIconId
+} from "../utils/generationConfig";
 import {
   formatShortcut,
   matchesShortcut
@@ -40,6 +47,14 @@ const READING_PATH_MIN_WIDTH = 190;
 const READING_PATH_MAX_WIDTH = 420;
 const READING_PATH_STORAGE_KEY = "annota:reading-path-width";
 type ArticleMotion = "settle" | "forward" | "back";
+const generationActionIcons: Record<GenerationTypeIconId, typeof Sparkles> = {
+  explain: MessageSquareText,
+  translate: Languages,
+  question: CircleHelp,
+  terms: Tag,
+  reading: BookOpenText,
+  insight: Lightbulb
+};
 
 type ViewTransitionDocument = Document & {
   startViewTransition?: (
@@ -112,6 +127,10 @@ export function ReaderPage({
   const [fullWidthArticle, setFullWidthArticle] = useState(false);
   const [notice, setNotice] = useState("");
   const [readingPathWidth, setReadingPathWidth] = useState(readStoredPathWidth);
+  const generationTypes = useMemo(
+    () => loadGenerationTypes().filter((type) => type.enabled),
+    []
+  );
   const [resizingPath, setResizingPath] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const noticeTimer = useRef<number>();
@@ -324,10 +343,12 @@ export function ReaderPage({
       showNotice("先在一个正文块内选择要处理的文字。");
       return;
     }
-    startGeneration(currentArticle.id, selection.blockId, selection.text, type);
-    showNotice(`${type === "translate" ? "翻译" : "解释"}任务已加入右侧列表。`);
-    setSelection(null);
-    window.getSelection()?.removeAllRanges();
+    const result = startGeneration(
+      currentArticle.id,
+      selection,
+      type
+    );
+    showNotice(result.message);
   };
 
   const applyInlineFormat = (type: InlineMarkType, color?: string) => {
@@ -386,26 +407,31 @@ export function ReaderPage({
         </div>
 
         <div className="generation-actions" aria-label={terms.highlightCreate}>
-          <button
-            className="generation-button"
-            type="button"
-            disabled={!selection}
-            onClick={() => runGeneration("explain")}
-            title={selection ? "解释选中文字" : "先选择正文文字"}
-          >
-            <MessageSquareText aria-hidden="true" size={16} />
-            解释
-          </button>
-          <button
-            className="generation-button"
-            type="button"
-            disabled={!selection}
-            onClick={() => runGeneration("translate")}
-            title={selection ? "翻译选中文字" : "先选择正文文字"}
-          >
-            <Languages aria-hidden="true" size={16} />
-            翻译
-          </button>
+          {generationTypes.map((generationType) => {
+            const GenerationIcon = generationActionIcons[generationType.icon];
+            return (
+              <button
+                className="generation-button"
+                type="button"
+                disabled={!selection}
+                onClick={() => runGeneration(generationType.id)}
+                title={
+                  selection
+                    ? `${generationType.name}选中文字`
+                    : "先选择正文文字"
+                }
+                key={generationType.id}
+                style={
+                  {
+                    "--generation-action-color": generationType.color
+                  } as CSSProperties
+                }
+              >
+                <GenerationIcon aria-hidden="true" size={16} />
+                {generationType.name}
+              </button>
+            );
+          })}
         </div>
 
         <div className="reader-actions">
@@ -571,17 +597,35 @@ export function ReaderPage({
             <div className="children-list">
               {activeJobs.map((job) => (
                 <div className="generation-card" key={job.id} role="status">
-                  <span className="child-card-icon is-loading">
-                    <LoaderCircle aria-hidden="true" size={17} />
+                  <span
+                    className={`child-card-icon${
+                      job.status === "failed" ? " is-error" : " is-loading"
+                    }`}
+                  >
+                    {job.status === "failed" ? (
+                      <CircleStop aria-hidden="true" size={17} />
+                    ) : (
+                      <LoaderCircle aria-hidden="true" size={17} />
+                    )}
                   </span>
                   <div>
-                    <strong>{job.type === "translate" ? "正在翻译选区" : "正在解释选区"}</strong>
+                    <strong>
+                      {job.status === "failed"
+                        ? `${job.typeName}失败`
+                        : `正在${job.typeName}选区`}
+                    </strong>
                     <p>“{job.quote.slice(0, 58)}{job.quote.length > 58 ? "…" : ""}”</p>
-                    <span>{job.status === "queued" ? "排队中" : "正在生成本地演示节点"}</span>
+                    <span>
+                      {job.status === "failed"
+                        ? job.error ?? "模型服务请求失败"
+                        : job.status === "queued"
+                          ? "排队中"
+                          : `${job.model ?? "模型服务"} · 正在生成`}
+                    </span>
                   </div>
                   <button type="button" onClick={() => cancelGeneration(job.id)}>
                     <CircleStop aria-hidden="true" size={15} />
-                    取消
+                    {job.status === "failed" ? "关闭" : "取消"}
                   </button>
                 </div>
               ))}
@@ -616,7 +660,7 @@ export function ReaderPage({
                 <div className="children-empty">
                   <MessageSquareText aria-hidden="true" size={20} />
                   <strong>还没有下一级{terms.subNotes}</strong>
-                  <p>在左侧正文中选择一段文字，然后点击顶部“解释”或“翻译”。</p>
+                  <p>在左侧正文中选择一段文字，然后点击顶部任一生成类型。</p>
                 </div>
               )}
             </div>

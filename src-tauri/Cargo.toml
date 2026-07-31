@@ -1,7 +1,7 @@
 [package]
 name = "annota"
 version = "0.1.0"
-description = "Local-first knowledge tree reader for Windows"
+description = "Windows-first local knowledge tree reader and editor"
 authors = ["Annota"]
 edition = "2021"
 

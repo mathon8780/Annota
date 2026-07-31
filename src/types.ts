@@ -1,5 +1,5 @@
 export type BlockKind = "paragraph" | "h1" | "h2" | "h3" | "quote";
-export type GenerationType = "explain" | "translate";
+export type GenerationType = string;
 export type JobStatus = "queued" | "generating" | "failed";
 export type ViewName = "home" | "reader";
 export type InlineMarkType =
@@ -96,6 +96,9 @@ export interface GenerationJob {
   blockId: string;
   quote: string;
   type: GenerationType;
+  typeName: string;
+  model?: string;
+  error?: string;
   status: JobStatus;
   createdAt: string;
 }

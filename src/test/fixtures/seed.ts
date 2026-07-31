@@ -4,7 +4,7 @@ import type {
   ContentBlock,
   FolderProfile,
   Notebook
-} from "../types";
+} from "../../types";
 
 const now = new Date("2026-07-26T09:30:00+08:00").toISOString();
 

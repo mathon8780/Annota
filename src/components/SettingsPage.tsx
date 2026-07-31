@@ -17,11 +17,11 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  CircleAlert,
   Database,
   Eye,
   EyeOff,
   Info,
-  KeyRound,
   Keyboard,
   Landmark,
   LayoutTemplate,
@@ -142,6 +142,7 @@ interface ModelProvider {
   endpointPath: string;
   apiKey: string;
   model: string;
+  availableModels: string[];
   enabled: boolean;
   isDefault: boolean;
 }
@@ -153,6 +154,15 @@ interface ModelCatalog {
   models: string[];
   error?: string;
 }
+
+type ConnectionTestStatus = "idle" | "loading" | "success" | "error";
+
+interface ConnectionTest {
+  status: ConnectionTestStatus;
+  message?: string;
+}
+
+export const MODEL_PROVIDERS_STORAGE_KEY = "annota:model-providers.v1";
 
 const initialModelProviders: ModelProvider[] = [
   {
@@ -168,6 +178,7 @@ const initialModelProviders: ModelProvider[] = [
     endpointPath: "/chat/completions",
     apiKey: "",
     model: "gpt-5-mini",
+    availableModels: [],
     enabled: true,
     isDefault: true
   },
@@ -184,6 +195,7 @@ const initialModelProviders: ModelProvider[] = [
     endpointPath: "/chat/completions",
     apiKey: "",
     model: "gemini-3.6-flash",
+    availableModels: [],
     enabled: false,
     isDefault: false
   },
@@ -200,6 +212,7 @@ const initialModelProviders: ModelProvider[] = [
     endpointPath: "/chat/completions",
     apiKey: "",
     model: "kimi-k3",
+    availableModels: [],
     enabled: false,
     isDefault: false
   },
@@ -216,6 +229,7 @@ const initialModelProviders: ModelProvider[] = [
     endpointPath: "/chat/completions",
     apiKey: "",
     model: "deepseek-v4-flash",
+    availableModels: [],
     enabled: true,
     isDefault: false
   },
@@ -232,6 +246,7 @@ const initialModelProviders: ModelProvider[] = [
     endpointPath: "/messages",
     apiKey: "",
     model: "claude-sonnet-5",
+    availableModels: [],
     enabled: false,
     isDefault: false
   },
@@ -248,6 +263,7 @@ const initialModelProviders: ModelProvider[] = [
     endpointPath: "/chat/completions",
     apiKey: "",
     model: "glm-5.2",
+    availableModels: [],
     enabled: false,
     isDefault: false
   },
@@ -264,10 +280,138 @@ const initialModelProviders: ModelProvider[] = [
     endpointPath: "/chat/completions",
     apiKey: "",
     model: "",
+    availableModels: [],
     enabled: false,
     isDefault: false
   }
 ];
+
+const providerTones: ProviderTone[] = [
+  "cobalt",
+  "indigo",
+  "cyan",
+  "violet",
+  "slate"
+];
+const providerBrands: ProviderBrand[] = [
+  "chatgpt",
+  "gemini",
+  "kimi",
+  "deepseek",
+  "claude",
+  "zhipu",
+  "custom"
+];
+const providerProtocols: ProviderProtocol[] = [
+  "openai-compatible",
+  "anthropic-messages"
+];
+
+function isStoredModelProvider(value: unknown): value is ModelProvider {
+  if (!value || typeof value !== "object") return false;
+  const provider = value as Partial<ModelProvider>;
+  return (
+    typeof provider.id === "string" &&
+    typeof provider.name === "string" &&
+    typeof provider.shortName === "string" &&
+    (provider.kind === "default" || provider.kind === "custom") &&
+    providerTones.includes(provider.tone as ProviderTone) &&
+    providerBrands.includes(provider.brand as ProviderBrand) &&
+    providerProtocols.includes(provider.protocol as ProviderProtocol) &&
+    typeof provider.baseUrl === "string" &&
+    typeof provider.modelsPath === "string" &&
+    typeof provider.endpointPath === "string" &&
+    typeof provider.apiKey === "string" &&
+    typeof provider.model === "string" &&
+    typeof provider.enabled === "boolean" &&
+    typeof provider.isDefault === "boolean"
+  );
+}
+
+function normalizeDefaultProvider(providers: ModelProvider[]) {
+  const defaultProviderId =
+    providers.find((provider) => provider.isDefault)?.id ??
+    initialModelProviders[0].id;
+  return providers.map((provider) => ({
+    ...provider,
+    isDefault: provider.id === defaultProviderId
+  }));
+}
+
+function loadModelProviders() {
+  const fallback = initialModelProviders.map((provider) => ({ ...provider }));
+
+  try {
+    const raw = window.localStorage.getItem(MODEL_PROVIDERS_STORAGE_KEY);
+    if (!raw) return fallback;
+
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return fallback;
+
+    const storedProviders = parsed.filter(isStoredModelProvider);
+    const storedById = new Map(
+      storedProviders.map((provider) => [provider.id, provider])
+    );
+    const builtInIds = new Set(
+      initialModelProviders
+        .filter((provider) => provider.kind === "default")
+        .map((provider) => provider.id)
+    );
+    const builtInProviders = initialModelProviders
+      .filter((provider) => provider.kind === "default")
+      .map((provider) => {
+        const stored = storedById.get(provider.id);
+        if (!stored) return { ...provider };
+        return {
+          ...provider,
+          protocol: stored.protocol,
+          endpointPath: stored.endpointPath,
+          apiKey: stored.apiKey,
+          model: stored.model,
+          availableModels: Array.isArray(stored.availableModels)
+            ? stored.availableModels
+            : [],
+          enabled: stored.enabled,
+          isDefault: stored.isDefault
+        };
+      });
+    const customProviders = storedProviders
+      .filter(
+        (provider) =>
+          provider.kind === "custom" && !builtInIds.has(provider.id)
+      )
+      .map((provider) => ({
+        ...provider,
+        availableModels: Array.isArray(provider.availableModels)
+          ? provider.availableModels
+          : []
+      }));
+
+    return normalizeDefaultProvider([...builtInProviders, ...customProviders]);
+  } catch {
+    return fallback;
+  }
+}
+
+function saveModelProviders(providers: ModelProvider[]) {
+  try {
+    window.localStorage.setItem(
+      MODEL_PROVIDERS_STORAGE_KEY,
+      JSON.stringify(providers)
+    );
+  } catch {
+    // Storage can be unavailable in restricted previews; keep the page usable.
+  }
+}
+
+function getNextCustomProviderNumber(providers: ModelProvider[]) {
+  return (
+    providers.reduce((largest, provider) => {
+      const match = /^custom-(\d+)$/.exec(provider.id);
+      return match ? Math.max(largest, Number(match[1])) : largest;
+    }, 1) + 1
+  );
+}
 
 function ModelProviderMark({
   provider,
@@ -360,7 +504,7 @@ const settingCategories: SettingCategory[] = [
     id: "models",
     label: "AI 模型服务",
     eyebrow: "模型连接",
-    description: "管理不同模型服务商的接口、密钥与默认模型。",
+    description: "为模型服务配置 API Key，并检测联通状态与可用模型。",
     icon: Bot,
     groups: []
   },
@@ -635,16 +779,6 @@ export function SettingsPage({
                   {activeCategory.label}
                 </h2>
                 <p>{activeCategory.description}</p>
-              </div>
-              <div className="settings-display-badge">
-                <Info aria-hidden="true" size={14} />
-                {activeCategory.id === "appearance"
-                  ? "字体与风格已启用"
-                  : activeCategory.id === "shortcuts"
-                    ? "可自定义"
-                  : activeCategory.id === "models"
-                    ? "接口配置预览"
-                    : "页面展示"}
               </div>
             </header>
 
@@ -1062,18 +1196,24 @@ function ContentStyleSettings({
 }
 
 function ModelProviderSettings() {
-  const [providers, setProviders] = useState(initialModelProviders);
+  const [providers, setProviders] = useState(loadModelProviders);
   const [selectedProviderId, setSelectedProviderId] = useState("chatgpt");
   const [showApiKey, setShowApiKey] = useState(false);
-  const [nextCustomProviderNumber, setNextCustomProviderNumber] = useState(2);
+  const [nextCustomProviderNumber, setNextCustomProviderNumber] = useState(
+    () => getNextCustomProviderNumber(providers)
+  );
   const [modelCatalogs, setModelCatalogs] = useState<
     Record<string, ModelCatalog>
+  >({});
+  const [connectionTests, setConnectionTests] = useState<
+    Record<string, ConnectionTest>
   >({});
   const [openModelPickerId, setOpenModelPickerId] = useState<string | null>(
     null
   );
   const [modelQuery, setModelQuery] = useState("");
   const modelRequestIds = useRef<Record<string, number>>({});
+  const connectionRequestIds = useRef<Record<string, number>>({});
   const selectedProvider =
     providers.find((provider) => provider.id === selectedProviderId) ??
     providers[0];
@@ -1097,6 +1237,17 @@ function ModelProviderSettings() {
     model.toLocaleLowerCase("en-US").includes(normalizedModelQuery)
   );
   const modelPickerOpen = openModelPickerId === selectedProvider.id;
+  const selectedConnectionTest = connectionTests[selectedProvider.id] ?? {
+    status: "idle"
+  };
+  const connectionTestLabel =
+    selectedConnectionTest.status === "loading"
+      ? "正在测试"
+      : selectedConnectionTest.status === "success"
+        ? "连接正常"
+        : selectedConnectionTest.status === "error"
+          ? "连接失败"
+          : "测试连接";
   const modelCatalogMessage =
     selectedCatalog.status === "loading"
       ? "正在读取服务商的云端模型列表…"
@@ -1120,10 +1271,31 @@ function ModelProviderSettings() {
     (provider) => provider.kind === "custom"
   );
 
+  useEffect(() => {
+    saveModelProviders(providers);
+  }, [providers]);
+
+  const resetConnectionTest = (providerId: string) => {
+    connectionRequestIds.current[providerId] =
+      (connectionRequestIds.current[providerId] ?? 0) + 1;
+    setConnectionTests((current) => ({
+      ...current,
+      [providerId]: { status: "idle" }
+    }));
+  };
+
   const updateProvider = (
     providerId: string,
     patch: Partial<ModelProvider>
   ) => {
+    if (
+      "baseUrl" in patch ||
+      "modelsPath" in patch ||
+      "apiKey" in patch ||
+      "protocol" in patch
+    ) {
+      resetConnectionTest(providerId);
+    }
     setProviders((current) =>
       current.map((provider) => {
         if (patch.isDefault && provider.id !== providerId) {
@@ -1190,6 +1362,54 @@ function ModelProviderSettings() {
     }
   };
 
+  const testProviderConnection = async (provider: ModelProvider) => {
+    const requestId = (connectionRequestIds.current[provider.id] ?? 0) + 1;
+    connectionRequestIds.current[provider.id] = requestId;
+    setConnectionTests((current) => ({
+      ...current,
+      [provider.id]: { status: "loading" }
+    }));
+
+    try {
+      const models = await discoverModels({
+        baseUrl: provider.baseUrl,
+        modelsPath: provider.modelsPath,
+        apiKey: provider.apiKey,
+        protocol: provider.protocol
+      });
+      if (connectionRequestIds.current[provider.id] !== requestId) return;
+
+      setModelCatalogs((current) => ({
+        ...current,
+        [provider.id]: { status: "ready", models }
+      }));
+      updateProvider(provider.id, {
+        availableModels: models,
+        model: models.includes(provider.model) ? provider.model : models[0]
+      });
+      setConnectionTests((current) => ({
+        ...current,
+        [provider.id]: {
+          status: "success",
+          message: `已连接，发现 ${models.length} 个可用模型`
+        }
+      }));
+    } catch (error) {
+      if (connectionRequestIds.current[provider.id] !== requestId) return;
+      updateProvider(provider.id, {
+        availableModels: [],
+        model: ""
+      });
+      setConnectionTests((current) => ({
+        ...current,
+        [provider.id]: {
+          status: "error",
+          message: error instanceof Error ? error.message : String(error)
+        }
+      }));
+    }
+  };
+
   const toggleModelPicker = () => {
     if (modelPickerOpen) {
       setOpenModelPickerId(null);
@@ -1228,6 +1448,7 @@ function ModelProviderSettings() {
       endpointPath: "/chat/completions",
       apiKey: "",
       model: "",
+      availableModels: [],
       enabled: false,
       isDefault: false
     };
@@ -1254,7 +1475,7 @@ function ModelProviderSettings() {
     <section className="model-provider-section">
       <header>
         <span>{title}</span>
-        {allowAdd && (
+        {false && allowAdd && (
           <button
             className="model-provider-add"
             type="button"
@@ -1298,7 +1519,7 @@ function ModelProviderSettings() {
                   </small>
                 </span>
               </button>
-              <label className="model-provider-switch">
+              {false && <label className="model-provider-switch">
                 <span className="sr-only">启用 {provider.name}</span>
                 <input
                   type="checkbox"
@@ -1310,7 +1531,7 @@ function ModelProviderSettings() {
                   }
                 />
                 <span aria-hidden="true" />
-              </label>
+              </label>}
             </div>
           );
         })}
@@ -1325,7 +1546,7 @@ function ModelProviderSettings() {
           <Server aria-hidden="true" size={16} />
           <div>
             <h3>模型服务列表</h3>
-            <p>选择服务商后，在右侧定义它的接口。</p>
+            <p>选择服务商，填写 API Key 并检测可用模型。</p>
           </div>
         </div>
         {renderProviderList("默认服务商", defaultProviders)}
@@ -1345,28 +1566,83 @@ function ModelProviderSettings() {
                 {selectedProvider.kind === "default" ? "内置服务" : "自定义服务"}
               </span>
             </div>
-            <p>定义请求地址、鉴权方式和该服务默认使用的模型。</p>
+            <p>API Key 仅用于检测联通并执行阅读页生成。</p>
           </div>
           <button
-            className="model-provider-test"
+            className={`model-provider-test is-${selectedConnectionTest.status}`}
             type="button"
-            disabled
-            title="真实 API 调用尚未接入"
+            aria-label={`${connectionTestLabel}${
+              selectedConnectionTest.message
+                ? `：${selectedConnectionTest.message}`
+                : ""
+            }`}
+            disabled={
+              !selectedProvider.apiKey.trim() ||
+              selectedConnectionTest.status === "loading"
+            }
+            title={
+              !selectedProvider.apiKey.trim()
+                ? "请先填写 API Key"
+                : selectedConnectionTest.message ??
+                  "使用模型列表接口测试连通性与鉴权"
+            }
+            onClick={() => void testProviderConnection(selectedProvider)}
           >
-            <Radio aria-hidden="true" size={15} />
-            测试连接
+            {selectedConnectionTest.status === "loading" ? (
+              <RefreshCw aria-hidden="true" className="is-spinning" size={15} />
+            ) : selectedConnectionTest.status === "success" ? (
+              <Check aria-hidden="true" size={15} />
+            ) : selectedConnectionTest.status === "error" ? (
+              <CircleAlert aria-hidden="true" size={15} />
+            ) : (
+              <Radio aria-hidden="true" size={15} />
+            )}
+            <span aria-live="polite">{connectionTestLabel}</span>
           </button>
         </header>
 
-        <div className="model-provider-status" role="note">
-          <KeyRound aria-hidden="true" size={16} />
-          <span>
-            展开“使用模型”时会请求当前模型列表地址；真实生成请求尚未接入，API
-            Key 也尚未写入 Windows 安全存储。
-          </span>
-        </div>
-
         <form className="model-provider-form" onSubmit={(event) => event.preventDefault()}>
+          <fieldset className="model-provider-key-only">
+            <legend>API Key</legend>
+            <label className="model-field is-wide">
+              <span>API Key</span>
+              <span className="model-secret-input">
+                <input
+                  aria-label="API Key"
+                  type={showApiKey ? "text" : "password"}
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={selectedProvider.apiKey}
+                  placeholder={`输入 ${selectedProvider.name} API Key`}
+                  onChange={(event) => {
+                    updateProvider(selectedProvider.id, {
+                      apiKey: event.target.value,
+                      availableModels: [],
+                      model: ""
+                    });
+                    resetModelCatalog(selectedProvider.id);
+                  }}
+                />
+                <button
+                  type="button"
+                  aria-label={showApiKey ? "隐藏 API Key" : "显示 API Key"}
+                  onClick={() => setShowApiKey((current) => !current)}
+                >
+                  {showApiKey ? (
+                    <EyeOff aria-hidden="true" size={16} />
+                  ) : (
+                    <Eye aria-hidden="true" size={16} />
+                  )}
+                </button>
+              </span>
+              <small>
+                密钥保存在当前设备；测试成功后，可用模型会同步到“生成与提示词”。
+              </small>
+            </label>
+          </fieldset>
+
+          {false && (
+          <>
           <fieldset>
             <legend>服务身份</legend>
             <div className="model-provider-form-grid">
@@ -1719,9 +1995,11 @@ function ModelProviderSettings() {
               </span>
             </label>
           </fieldset>
+          </>
+          )}
         </form>
 
-        {selectedProvider.kind === "custom" && (
+        {false && selectedProvider.kind === "custom" && (
           <div className="model-provider-danger">
             <div>
               <strong>移除自定义服务</strong>

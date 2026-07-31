@@ -20,10 +20,16 @@ import {
 import {
   type CSSProperties,
   type ReactNode,
+  useEffect,
   useMemo,
   useRef,
   useState
 } from "react";
+import {
+  configuredModels,
+  loadModelProviders,
+  modelBindingLabel
+} from "../utils/modelProviders";
 
 type ContextScope =
   | "containingParagraph"
@@ -58,6 +64,7 @@ type GenerationTypeDraft = {
 };
 
 type PreviewTab = "messages" | "schema" | "context";
+const GENERATION_TYPES_STORAGE_KEY = "annota.generation-types.v1";
 
 const allowedVariables = [
   "selection.text",
@@ -162,51 +169,6 @@ const typeIcons: Record<GenerationTypeIconId, LucideIcon> =
     typeIconOptions.map(({ id, Icon }) => [id, Icon])
   ) as Record<GenerationTypeIconId, LucideIcon>;
 
-const behaviorModelOptions = [
-  {
-    id: "global-default",
-    label: "跟随全局默认",
-    detail: "使用模型服务中的默认模型"
-  },
-  {
-    id: "chatgpt:gpt-5-mini",
-    label: "Chat GPT · gpt-5-mini",
-    detail: "OpenAI Compatible"
-  },
-  {
-    id: "deepseek:deepseek-v4-flash",
-    label: "Deepseek · deepseek-v4-flash",
-    detail: "OpenAI Compatible"
-  },
-  {
-    id: "gemini:gemini-3.6-flash",
-    label: "Gemini · gemini-3.6-flash",
-    detail: "OpenAI Compatible"
-  },
-  {
-    id: "kimi:kimi-k3",
-    label: "Kimi · kimi-k3",
-    detail: "OpenAI Compatible"
-  },
-  {
-    id: "claude:claude-sonnet-5",
-    label: "Claude · claude-sonnet-5",
-    detail: "Anthropic Messages"
-  },
-  {
-    id: "glm:glm-5.2",
-    label: "GLM · glm-5.2",
-    detail: "OpenAI Compatible"
-  }
-] as const;
-
-function getModelLabel(modelBindingId: string) {
-  return (
-    behaviorModelOptions.find((option) => option.id === modelBindingId)?.label ??
-    modelBindingId
-  );
-}
-
 const explainDefaults: GenerationTypeDraft = {
   id: "explain",
   name: "解释",
@@ -220,7 +182,7 @@ const explainDefaults: GenerationTypeDraft = {
     "你的任务是把用户选中的学习材料解释为一篇可独立阅读、可继续派生的子文章。使用 {{output.language}}，覆盖核心定义、运作方式、适用边界与容易混淆之处。",
   userPrompt:
     "请解释 <selection>{{selection.text}}</selection>。\n\n<document_title>{{document.title}}</document_title>\n<section_path>{{section.path}}</section_path>\n<containing_block>{{block.text}}</containing_block>\n<additional_instruction>{{generation.instruction}}</additional_instruction>",
-  contextScope: "allParentArticles"
+  contextScope: "containingParagraph"
 };
 
 const translateDefaults: GenerationTypeDraft = {
@@ -230,13 +192,13 @@ const translateDefaults: GenerationTypeDraft = {
   color: "#7454c5",
   isBuiltIn: true,
   enabled: true,
-  modelBindingId: "gemini:gemini-3.6-flash",
+  modelBindingId: "global-default",
   relationLabel: "翻译",
   systemPrompt:
     "生成一篇忠实、可学习的双语翻译子文章。保留代码标识、公式和专有名词，目标语言为 {{output.language}}。",
   userPrompt:
     "请翻译 <selection>{{selection.text}}</selection>。\n\n<containing_block>{{block.text}}</containing_block>\n<section_path>{{section.path}}</section_path>\n<document_title>{{document.title}}</document_title>",
-  contextScope: "section"
+  contextScope: "containingParagraph"
 };
 
 const initialTypes: GenerationTypeDraft[] = [
@@ -249,13 +211,13 @@ const initialTypes: GenerationTypeDraft[] = [
     color: "#2f8468",
     isBuiltIn: false,
     enabled: true,
-    modelBindingId: "deepseek:deepseek-v4-flash",
+    modelBindingId: "global-default",
     relationLabel: "追问",
     systemPrompt:
       "围绕选区提出由浅入深的问题，帮助读者主动检查理解。所有问题使用 {{output.language}}。",
     userPrompt:
       "为 <selection>{{selection.text}}</selection> 设计一组递进问题，并参考 {{section.path}}。",
-    contextScope: "section"
+    contextScope: "containingParagraph"
   },
   {
     id: "terms",
@@ -264,7 +226,7 @@ const initialTypes: GenerationTypeDraft[] = [
     color: "#b56827",
     isBuiltIn: false,
     enabled: false,
-    modelBindingId: "chatgpt:gpt-5-mini",
+    modelBindingId: "global-default",
     relationLabel: "术语",
     systemPrompt:
       "提炼选区中的关键术语，给出简洁定义与使用边界。使用 {{output.language}}。",
@@ -275,34 +237,56 @@ const initialTypes: GenerationTypeDraft[] = [
 ];
 
 const previewValues: Record<(typeof allowedVariables)[number], string> = {
-  "selection.text": "System 对满足特定组件条件的实体集合执行逻辑。",
-  "selection.prefix": "在 ECS 中，Component 只保存数据；",
-  "selection.suffix": "它通常由调度器按阶段执行。",
-  "block.text":
-    "System 对满足特定组件条件的实体集合执行逻辑，并在游戏循环中按顺序更新。",
-  "section.path": "ECS / System 更新顺序",
-  "section.text":
-    "System 读取组件数据、执行逻辑，并把结果写回对应组件。",
-  "document.title": "ECS 架构与 System 更新顺序",
-  "document.summary": "介绍 Entity、Component 与 System 的职责边界。",
-  "parent.title": "游戏架构基础",
-  "parent.summary": "从数据组织与执行流程理解游戏架构。",
-  "generation.instruction": "请用一个游戏循环中的例子说明。",
-  "output.language": "简体中文"
+  "selection.text": "〈阅读器中的选中文字〉",
+  "selection.prefix": "〈选区前文〉",
+  "selection.suffix": "〈选区后文〉",
+  "block.text": "〈选区所在段落〉",
+  "section.path": "〈当前章节路径〉",
+  "section.text": "〈当前章节正文〉",
+  "document.title": "〈当前文档标题〉",
+  "document.summary": "〈当前文档摘要〉",
+  "parent.title": "〈父级文章标题〉",
+  "parent.summary": "〈父级文章摘要〉",
+  "generation.instruction": "〈本次附加要求〉",
+  "output.language": "〈目标语言〉"
 };
 
 const outputSchema = `{
-  "title": "System 的职责与执行边界",
-  "summary": "解释 System 如何读取组件数据并按约束更新。",
+  "title": "string",
+  "summary": "string",
   "blocks": [
-    { "type": "heading", "level": 2, "text": "核心定义" },
-    { "type": "paragraph", "text": "System 是对满足特定组件条件的实体集合执行逻辑的单元。" }
+    { "type": "heading | paragraph | quote", "text": "string" }
   ],
-  "tags": ["ECS", "System"]
+  "tags": ["string"]
 }`;
 
 function cloneType(type: GenerationTypeDraft): GenerationTypeDraft {
   return { ...type };
+}
+
+function loadGenerationTypes(): GenerationTypeDraft[] {
+  try {
+    const raw = window.localStorage.getItem(GENERATION_TYPES_STORAGE_KEY);
+    if (!raw) return initialTypes.map(cloneType);
+    const parsed = JSON.parse(raw) as GenerationTypeDraft[];
+    if (
+      !Array.isArray(parsed) ||
+      !parsed.length ||
+      parsed.some(
+        (type) =>
+          !type ||
+          typeof type.id !== "string" ||
+          typeof type.name !== "string" ||
+          typeof type.systemPrompt !== "string" ||
+          typeof type.userPrompt !== "string"
+      )
+    ) {
+      return initialTypes.map(cloneType);
+    }
+    return parsed.map(cloneType);
+  } catch {
+    return initialTypes.map(cloneType);
+  }
 }
 
 function extractVariables(value: string) {
@@ -342,7 +326,7 @@ function ReviewSection({
 }
 
 export function GenerationPage() {
-  const [types, setTypes] = useState(() => initialTypes.map(cloneType));
+  const [types, setTypes] = useState(loadGenerationTypes);
   const [activeTypeId, setActiveTypeId] = useState("explain");
   const [activePromptTarget, setActivePromptTarget] =
     useState<PromptTarget>("userPrompt");
@@ -350,6 +334,18 @@ export function GenerationPage() {
   const [previewTab, setPreviewTab] = useState<PreviewTab>("messages");
   const [liveStatus, setLiveStatus] = useState("");
   const newTypeSequence = useRef(1);
+  const modelProviders = useMemo(loadModelProviders, []);
+  const behaviorModelOptions = useMemo(
+    () => configuredModels(modelProviders),
+    [modelProviders]
+  );
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      GENERATION_TYPES_STORAGE_KEY,
+      JSON.stringify(types)
+    );
+  }, [types]);
 
   const activeType =
     types.find((type) => type.id === activeTypeId) ?? types[0];
@@ -397,8 +393,8 @@ export function GenerationPage() {
     );
     setLiveStatus(
       promptChanged
-        ? "提示词修改已自动保存到本次页面会话。"
-        : "设置修改已自动保存到本次页面会话。"
+        ? "提示词修改已自动保存到本机。"
+        : "设置修改已自动保存到本机。"
     );
   };
 
@@ -411,11 +407,12 @@ export function GenerationPage() {
       icon: "question",
       color: "#2f8468",
       isBuiltIn: false,
-      relationLabel: "派生"
+      relationLabel: "派生",
+      contextScope: "containingParagraph"
     };
     setTypes((currentTypes) => [...currentTypes, nextType]);
     setActiveTypeId(id);
-    setLiveStatus("已创建本地类型，内容已自动保存在本次页面会话。");
+    setLiveStatus("已创建自定义类型，内容已保存到本机。");
   };
 
   const deleteType = (typeId: string) => {
@@ -483,9 +480,9 @@ export function GenerationPage() {
                 管理生成类型、提示词模板和上下文策略。所有修改都会即时自动保存。
               </p>
             </div>
-            <div className="settings-display-badge generation-demo-badge">
+            <div className="settings-display-badge generation-config-badge">
               <Info aria-hidden="true" size={14} />
-              交互演示 · 本地草稿
+              本机提示词配置
             </div>
           </header>
 
@@ -553,7 +550,7 @@ export function GenerationPage() {
                                 )
                               );
                               setLiveStatus(
-                                `${type.name}已${enabled ? "启用" : "停用"}，设置已自动保存到本次页面会话。`
+                                `${type.name}已${enabled ? "启用" : "停用"}，设置已自动保存到本机。`
                               );
                             }}
                           />
@@ -648,16 +645,48 @@ export function GenerationPage() {
                           modelBindingId
                         }));
                         setLiveStatus(
-                          `${activeType.name}将使用 ${getModelLabel(modelBindingId)}；这是本地行为绑定演示。`
+                          `${activeType.name}将使用 ${modelBindingLabel(
+                            modelBindingId,
+                            modelProviders
+                          )}。`
                         );
                       }}
                     >
-                      {behaviorModelOptions.map((option) => (
-                        <option key={option.id} value={option.id}>
-                          {option.label}
-                        </option>
-                      ))}
+                      <option value="global-default">
+                        自动选择已联通模型
+                      </option>
+                      {!behaviorModelOptions.some(
+                        (option) => option.id === activeType.modelBindingId
+                      ) &&
+                        activeType.modelBindingId !== "global-default" && (
+                          <option value={activeType.modelBindingId} disabled>
+                            原绑定不可用 ·{" "}
+                            {modelBindingLabel(
+                              activeType.modelBindingId,
+                              modelProviders
+                            )}
+                          </option>
+                        )}
+                      {modelProviders.map((provider) => {
+                        const providerModels = behaviorModelOptions.filter(
+                          (option) => option.providerId === provider.id
+                        );
+                        return providerModels.length ? (
+                          <optgroup label={provider.name} key={provider.id}>
+                            {providerModels.map((option) => (
+                              <option key={option.id} value={option.id}>
+                                {option.model}
+                              </option>
+                            ))}
+                          </optgroup>
+                        ) : null;
+                      })}
                     </select>
+                    {behaviorModelOptions.length === 0 && (
+                      <small>
+                        请先在 AI 模型服务中填写 API Key 并通过联通检测。
+                      </small>
+                    )}
                   </label>
                   <label className="generation-field generation-color-field">
                     <span>标记颜色</span>
@@ -859,7 +888,7 @@ export function GenerationPage() {
                 aria-live="polite"
               >
                 {liveStatus ||
-                  "所有修改都会自动保存到本次页面会话。"}
+                  "所有修改都会自动保存到本机。"}
               </span>
             </div>
             <div>
@@ -904,7 +933,7 @@ export function GenerationPage() {
               <div>
                 <span>Local render</span>
                 <h3 id="generation-preview-title">输出预览</h3>
-                <p>只渲染消息与结构，不调用模型，也不会消耗额度。</p>
+                <p>检查将发送的消息与结构；此处不会发起模型请求。</p>
               </div>
               <button
                 type="button"
@@ -942,7 +971,12 @@ export function GenerationPage() {
                     <Bot aria-hidden="true" size={15} />
                     <span>
                       <strong>行为模型</strong>
-                      <small>{getModelLabel(activeType.modelBindingId)}</small>
+                      <small>
+                        {modelBindingLabel(
+                          activeType.modelBindingId,
+                          modelProviders
+                        )}
+                      </small>
                     </span>
                   </div>
                   <div>

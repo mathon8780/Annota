@@ -220,6 +220,141 @@ async fn discover_models(request: ModelDiscoveryRequest) -> Result<Vec<String>, 
     Ok(models)
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelGenerationRequest {
+    base_url: String,
+    endpoint_path: String,
+    api_key: String,
+    protocol: String,
+    model: String,
+    system_prompt: String,
+    user_prompt: String,
+}
+
+fn model_endpoint_url(base_url: &str, endpoint_path: &str) -> Result<reqwest::Url, String> {
+    let base_url = base_url.trim();
+    let endpoint_path = endpoint_path.trim();
+    let value = if endpoint_path.starts_with("http://") || endpoint_path.starts_with("https://") {
+        endpoint_path.to_string()
+    } else {
+        if base_url.is_empty() {
+            return Err("模型服务缺少请求地址".to_string());
+        }
+        format!(
+            "{}/{}",
+            base_url.trim_end_matches('/'),
+            endpoint_path.trim_start_matches('/').trim().to_string()
+        )
+    };
+    let url = reqwest::Url::parse(&value).map_err(|error| format!("模型请求地址无效：{error}"))?;
+    match url.scheme() {
+        "http" | "https" => Ok(url),
+        _ => Err("模型请求地址只支持 HTTP 或 HTTPS".to_string()),
+    }
+}
+
+fn generated_text(payload: &serde_json::Value, protocol: &str) -> Option<String> {
+    if protocol == "anthropic-messages" {
+        return payload
+            .get("content")
+            .and_then(serde_json::Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.get("text").and_then(serde_json::Value::as_str))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+    }
+    payload
+        .pointer("/choices/0/message/content")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+#[tauri::command]
+async fn generate_text(request: ModelGenerationRequest) -> Result<String, String> {
+    use std::time::Duration;
+
+    if request.api_key.trim().is_empty() {
+        return Err("所选模型没有配置 API Key".to_string());
+    }
+    if request.model.trim().is_empty() {
+        return Err("生成类型没有选择可用模型".to_string());
+    }
+
+    let url = model_endpoint_url(&request.base_url, &request.endpoint_path)?;
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(12))
+        .timeout(Duration::from_secs(90))
+        .build()
+        .map_err(|error| format!("无法创建模型请求：{error}"))?;
+    let mut builder = client.post(url);
+    let body = if request.protocol == "anthropic-messages" {
+        builder = builder
+            .header("x-api-key", request.api_key.trim())
+            .header("anthropic-version", "2023-06-01");
+        serde_json::json!({
+            "model": request.model,
+            "max_tokens": 2400,
+            "system": request.system_prompt,
+            "messages": [{ "role": "user", "content": request.user_prompt }]
+        })
+    } else {
+        builder = builder.bearer_auth(request.api_key.trim());
+        serde_json::json!({
+            "model": request.model,
+            "messages": [
+                { "role": "system", "content": request.system_prompt },
+                { "role": "user", "content": request.user_prompt }
+            ]
+        })
+    };
+    let response = builder
+        .json(&body)
+        .send()
+        .await
+        .map_err(|error| format!("无法访问模型服务：{error}"))?;
+    let status = response.status();
+    let response_body = response
+        .text()
+        .await
+        .map_err(|error| format!("无法读取模型响应：{error}"))?;
+    if !status.is_success() {
+        let code = status.as_u16();
+        if code == 401 || code == 403 {
+            return Err(format!("鉴权失败（HTTP {code}），请检查 API Key"));
+        }
+        if code == 429 {
+            return Err("模型服务请求过于频繁（HTTP 429），请稍后再试".to_string());
+        }
+        let detail = serde_json::from_str::<serde_json::Value>(&response_body)
+            .ok()
+            .and_then(|payload| {
+                payload
+                    .pointer("/error/message")
+                    .or_else(|| payload.get("message"))
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            });
+        return Err(match detail {
+            Some(detail) => format!("模型服务返回 HTTP {code}：{detail}"),
+            None => format!("模型服务返回 HTTP {code}"),
+        });
+    }
+    let payload = serde_json::from_str::<serde_json::Value>(&response_body)
+        .map_err(|error| format!("模型响应不是有效的 JSON：{error}"))?;
+    generated_text(&payload, &request.protocol)
+        .ok_or_else(|| "模型服务没有返回可用内容".to_string())
+}
+
 #[cfg(all(test, windows))]
 mod tests {
     use super::system_font_families;
@@ -288,7 +423,11 @@ pub fn run() {
                 eprintln!("failed to persist window size: {error}");
             }
         })
-        .invoke_handler(tauri::generate_handler![list_system_fonts, discover_models])
+        .invoke_handler(tauri::generate_handler![
+            list_system_fonts,
+            discover_models,
+            generate_text
+        ])
         .run(tauri::generate_context!())
         .expect("failed to run Annota");
 }
