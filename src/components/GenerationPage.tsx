@@ -2,6 +2,7 @@ import {
   BookOpenText,
   Bot,
   Braces,
+  Check,
   CircleHelp,
   Eye,
   Info,
@@ -163,6 +164,17 @@ const typeIconOptions: Array<{
   { id: "reading", label: "阅读笔记", Icon: BookOpenText },
   { id: "insight", label: "灵感提炼", Icon: Lightbulb }
 ];
+
+const generationColorPresets = [
+  { value: "#315fdb", label: "钴蓝" },
+  { value: "#6453c6", label: "靛紫" },
+  { value: "#a04f86", label: "莓红" },
+  { value: "#c05245", label: "朱红" },
+  { value: "#b56827", label: "琥珀" },
+  { value: "#2f8468", label: "松绿" },
+  { value: "#287c91", label: "湖蓝" },
+  { value: "#596579", label: "石墨" }
+] as const;
 
 const typeIcons: Record<GenerationTypeIconId, LucideIcon> =
   Object.fromEntries(
@@ -349,6 +361,9 @@ export function GenerationPage() {
 
   const activeType =
     types.find((type) => type.id === activeTypeId) ?? types[0];
+  const activeModelBindingAvailable = behaviorModelOptions.some(
+    (option) => option.id === activeType.modelBindingId
+  );
   const promptVariables = useMemo(
     () =>
       extractVariables(
@@ -637,7 +652,12 @@ export function GenerationPage() {
                     <span>调用模型</span>
                     <select
                       aria-label="调用模型"
-                      value={activeType.modelBindingId}
+                      value={
+                        activeType.modelBindingId === "global-default" ||
+                        activeModelBindingAvailable
+                          ? activeType.modelBindingId
+                          : "global-default"
+                      }
                       onChange={(event) => {
                         const modelBindingId = event.target.value;
                         updateActiveType((type) => ({
@@ -655,18 +675,6 @@ export function GenerationPage() {
                       <option value="global-default">
                         自动选择已联通模型
                       </option>
-                      {!behaviorModelOptions.some(
-                        (option) => option.id === activeType.modelBindingId
-                      ) &&
-                        activeType.modelBindingId !== "global-default" && (
-                          <option value={activeType.modelBindingId} disabled>
-                            原绑定不可用 ·{" "}
-                            {modelBindingLabel(
-                              activeType.modelBindingId,
-                              modelProviders
-                            )}
-                          </option>
-                        )}
                       {modelProviders.map((provider) => {
                         const providerModels = behaviorModelOptions.filter(
                           (option) => option.providerId === provider.id
@@ -688,23 +696,39 @@ export function GenerationPage() {
                       </small>
                     )}
                   </label>
-                  <label className="generation-field generation-color-field">
-                    <span>标记颜色</span>
-                    <span className="generation-color-row">
-                      <input
-                        aria-label="标记颜色"
-                        type="color"
-                        value={activeType.color}
-                        onChange={(event) =>
-                          updateActiveType((type) => ({
-                            ...type,
-                            color: event.target.value
-                          }))
-                        }
-                      />
-                      <code>{activeType.color.toUpperCase()}</code>
-                    </span>
-                  </label>
+                  <fieldset
+                    className="generation-field generation-color-field"
+                    aria-label="标记颜色"
+                  >
+                    <legend>标记颜色</legend>
+                    <div className="generation-color-presets">
+                      {generationColorPresets.map((preset) => (
+                        <button
+                          type="button"
+                          key={preset.value}
+                          aria-label={`使用标记颜色：${preset.label}`}
+                          aria-pressed={
+                            activeType.color.toLocaleLowerCase() === preset.value
+                          }
+                          title={preset.label}
+                          style={
+                            {
+                              "--generation-preset-color": preset.value
+                            } as CSSProperties
+                          }
+                          onClick={() =>
+                            updateActiveType((type) => ({
+                              ...type,
+                              color: preset.value
+                            }))
+                          }
+                        >
+                          <span aria-hidden="true" />
+                          <Check aria-hidden="true" size={12} />
+                        </button>
+                      ))}
+                    </div>
+                  </fieldset>
                   <fieldset
                     className="generation-icon-field"
                     aria-label="生成类型图标"

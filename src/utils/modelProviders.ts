@@ -23,6 +23,7 @@ export interface ModelProvider {
   apiKey: string;
   model: string;
   availableModels: string[];
+  enabledModels: string[];
   enabled: boolean;
   isDefault: boolean;
 }
@@ -52,6 +53,7 @@ export const initialModelProviders: ModelProvider[] = [
     apiKey: "",
     model: "",
     availableModels: [],
+    enabledModels: [],
     enabled: true,
     isDefault: true
   },
@@ -69,6 +71,7 @@ export const initialModelProviders: ModelProvider[] = [
     apiKey: "",
     model: "",
     availableModels: [],
+    enabledModels: [],
     enabled: false,
     isDefault: false
   },
@@ -86,6 +89,7 @@ export const initialModelProviders: ModelProvider[] = [
     apiKey: "",
     model: "",
     availableModels: [],
+    enabledModels: [],
     enabled: false,
     isDefault: false
   },
@@ -103,6 +107,7 @@ export const initialModelProviders: ModelProvider[] = [
     apiKey: "",
     model: "",
     availableModels: [],
+    enabledModels: [],
     enabled: true,
     isDefault: false
   },
@@ -120,6 +125,7 @@ export const initialModelProviders: ModelProvider[] = [
     apiKey: "",
     model: "",
     availableModels: [],
+    enabledModels: [],
     enabled: false,
     isDefault: false
   },
@@ -137,6 +143,7 @@ export const initialModelProviders: ModelProvider[] = [
     apiKey: "",
     model: "",
     availableModels: [],
+    enabledModels: [],
     enabled: false,
     isDefault: false
   }
@@ -226,13 +233,20 @@ export function loadModelProviders() {
       const stored = storedById.get(provider.id);
       if (!stored) return { ...provider };
       const availableModels = normalizeModels(stored.availableModels);
+      const storedEnabledModels = Array.isArray(stored.enabledModels)
+        ? normalizeModels(stored.enabledModels)
+        : [];
+      const enabledModels = storedEnabledModels.filter((model) =>
+        availableModels.includes(model)
+      );
       return {
         ...provider,
         apiKey: stored.apiKey,
-        model: availableModels.includes(stored.model)
+        model: enabledModels.includes(stored.model)
           ? stored.model
-          : availableModels[0] ?? "",
+          : enabledModels[0] ?? "",
         availableModels,
+        enabledModels,
         enabled: stored.enabled,
         isDefault: stored.isDefault
       };
@@ -242,10 +256,23 @@ export function loadModelProviders() {
         (provider) =>
           provider.kind === "custom" && !builtInIds.has(provider.id)
       )
-      .map((provider) => ({
-        ...provider,
-        availableModels: normalizeModels(provider.availableModels)
-      }));
+      .map((provider) => {
+        const availableModels = normalizeModels(provider.availableModels);
+        const storedEnabledModels = Array.isArray(provider.enabledModels)
+          ? normalizeModels(provider.enabledModels)
+          : [];
+        const enabledModels = storedEnabledModels.filter((model) =>
+          availableModels.includes(model)
+        );
+        return {
+          ...provider,
+          model: enabledModels.includes(provider.model)
+            ? provider.model
+            : enabledModels[0] ?? "",
+          availableModels,
+          enabledModels
+        };
+      });
 
     return normalizeDefaultProvider([...builtInProviders, ...customProviders]);
   } catch {
@@ -266,8 +293,10 @@ export function saveModelProviders(providers: ModelProvider[]) {
 
 export function configuredModels(providers = loadModelProviders()) {
   return providers.flatMap<ConfiguredModel>((provider) =>
-    provider.apiKey.trim()
-      ? provider.availableModels.map((model) => ({
+    provider.enabled && provider.apiKey.trim()
+      ? provider.enabledModels
+          .filter((model) => provider.availableModels.includes(model))
+          .map((model) => ({
           id: `${provider.id}:${model}`,
           providerId: provider.id,
           providerName: provider.name,
@@ -284,16 +313,23 @@ export function resolveConfiguredModel(
 ) {
   const availableProviders = providers.filter(
     (provider) =>
-      provider.apiKey.trim() && provider.availableModels.length > 0
+      provider.enabled &&
+      provider.apiKey.trim() &&
+      provider.enabledModels.some((model) =>
+        provider.availableModels.includes(model)
+      )
   );
   if (!availableProviders.length) return null;
 
   if (bindingId === "global-default") {
     const provider =
       availableProviders.find((item) => item.isDefault) ?? availableProviders[0];
-    const model = provider.availableModels.includes(provider.model)
+    const enabledModels = provider.enabledModels.filter((model) =>
+      provider.availableModels.includes(model)
+    );
+    const model = enabledModels.includes(provider.model)
       ? provider.model
-      : provider.availableModels[0];
+      : enabledModels[0];
     return { provider, model };
   }
 
@@ -302,7 +338,10 @@ export function resolveConfiguredModel(
   const providerId = bindingId.slice(0, separator);
   const model = bindingId.slice(separator + 1);
   const provider = availableProviders.find((item) => item.id === providerId);
-  return provider?.availableModels.includes(model) ? { provider, model } : null;
+  return provider?.availableModels.includes(model) &&
+    provider.enabledModels.includes(model)
+    ? { provider, model }
+    : null;
 }
 
 export function modelBindingLabel(

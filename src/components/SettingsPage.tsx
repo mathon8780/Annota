@@ -16,6 +16,7 @@ import {
   Bot,
   Check,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   CircleAlert,
   Database,
@@ -143,6 +144,7 @@ interface ModelProvider {
   apiKey: string;
   model: string;
   availableModels: string[];
+  enabledModels: string[];
   enabled: boolean;
   isDefault: boolean;
 }
@@ -179,6 +181,7 @@ const initialModelProviders: ModelProvider[] = [
     apiKey: "",
     model: "gpt-5-mini",
     availableModels: [],
+    enabledModels: [],
     enabled: true,
     isDefault: true
   },
@@ -196,6 +199,7 @@ const initialModelProviders: ModelProvider[] = [
     apiKey: "",
     model: "gemini-3.6-flash",
     availableModels: [],
+    enabledModels: [],
     enabled: false,
     isDefault: false
   },
@@ -213,6 +217,7 @@ const initialModelProviders: ModelProvider[] = [
     apiKey: "",
     model: "kimi-k3",
     availableModels: [],
+    enabledModels: [],
     enabled: false,
     isDefault: false
   },
@@ -230,6 +235,7 @@ const initialModelProviders: ModelProvider[] = [
     apiKey: "",
     model: "deepseek-v4-flash",
     availableModels: [],
+    enabledModels: [],
     enabled: true,
     isDefault: false
   },
@@ -247,6 +253,7 @@ const initialModelProviders: ModelProvider[] = [
     apiKey: "",
     model: "claude-sonnet-5",
     availableModels: [],
+    enabledModels: [],
     enabled: false,
     isDefault: false
   },
@@ -264,6 +271,7 @@ const initialModelProviders: ModelProvider[] = [
     apiKey: "",
     model: "glm-5.2",
     availableModels: [],
+    enabledModels: [],
     enabled: false,
     isDefault: false
   },
@@ -281,6 +289,7 @@ const initialModelProviders: ModelProvider[] = [
     apiKey: "",
     model: "",
     availableModels: [],
+    enabledModels: [],
     enabled: false,
     isDefault: false
   }
@@ -338,6 +347,19 @@ function normalizeDefaultProvider(providers: ModelProvider[]) {
   }));
 }
 
+function normalizeModels(value: unknown) {
+  return Array.isArray(value)
+    ? Array.from(
+        new Set(
+          value
+            .filter((model): model is string => typeof model === "string")
+            .map((model) => model.trim())
+            .filter(Boolean)
+        )
+      )
+    : [];
+}
+
 function loadModelProviders() {
   const fallback = initialModelProviders.map((provider) => ({ ...provider }));
 
@@ -362,15 +384,23 @@ function loadModelProviders() {
       .map((provider) => {
         const stored = storedById.get(provider.id);
         if (!stored) return { ...provider };
+        const availableModels = normalizeModels(stored.availableModels);
+        const storedEnabledModels = Array.isArray(stored.enabledModels)
+          ? normalizeModels(stored.enabledModels)
+          : [];
+        const enabledModels = storedEnabledModels.filter((model) =>
+          availableModels.includes(model)
+        );
         return {
           ...provider,
           protocol: stored.protocol,
           endpointPath: stored.endpointPath,
           apiKey: stored.apiKey,
-          model: stored.model,
-          availableModels: Array.isArray(stored.availableModels)
-            ? stored.availableModels
-            : [],
+          model: enabledModels.includes(stored.model)
+            ? stored.model
+            : enabledModels[0] ?? "",
+          availableModels,
+          enabledModels,
           enabled: stored.enabled,
           isDefault: stored.isDefault
         };
@@ -380,12 +410,23 @@ function loadModelProviders() {
         (provider) =>
           provider.kind === "custom" && !builtInIds.has(provider.id)
       )
-      .map((provider) => ({
-        ...provider,
-        availableModels: Array.isArray(provider.availableModels)
-          ? provider.availableModels
-          : []
-      }));
+      .map((provider) => {
+        const availableModels = normalizeModels(provider.availableModels);
+        const storedEnabledModels = Array.isArray(provider.enabledModels)
+          ? normalizeModels(provider.enabledModels)
+          : [];
+        const enabledModels = storedEnabledModels.filter((model) =>
+          availableModels.includes(model)
+        );
+        return {
+          ...provider,
+          model: enabledModels.includes(provider.model)
+            ? provider.model
+            : enabledModels[0] ?? "",
+          availableModels,
+          enabledModels
+        };
+      });
 
     return normalizeDefaultProvider([...builtInProviders, ...customProviders]);
   } catch {
@@ -1229,12 +1270,22 @@ function ModelProviderSettings() {
       : selectedBuiltInModels;
   const selectableModels = Array.from(
     new Set(
-      [...activeCatalogModels, selectedProvider.model].filter(Boolean)
+      [
+        ...activeCatalogModels,
+        ...selectedProvider.enabledModels,
+        selectedProvider.model
+      ].filter(Boolean)
     )
   );
   const normalizedModelQuery = modelQuery.trim().toLocaleLowerCase("en-US");
   const filteredModels = selectableModels.filter((model) =>
     model.toLocaleLowerCase("en-US").includes(normalizedModelQuery)
+  );
+  const filteredEnabledModels = filteredModels.filter((model) =>
+    selectedProvider.enabledModels.includes(model)
+  );
+  const filteredDisabledModels = filteredModels.filter(
+    (model) => !selectedProvider.enabledModels.includes(model)
   );
   const modelPickerOpen = openModelPickerId === selectedProvider.id;
   const selectedConnectionTest = connectionTests[selectedProvider.id] ?? {
@@ -1349,6 +1400,16 @@ function ModelProviderSettings() {
         ...current,
         [provider.id]: { status: "ready", models }
       }));
+      const enabledModels = provider.enabledModels.filter((model) =>
+        models.includes(model)
+      );
+      updateProvider(provider.id, {
+        availableModels: models,
+        enabledModels,
+        model: enabledModels.includes(provider.model)
+          ? provider.model
+          : enabledModels[0] ?? ""
+      });
     } catch (error) {
       if (modelRequestIds.current[provider.id] !== requestId) return;
       setModelCatalogs((current) => ({
@@ -1383,9 +1444,15 @@ function ModelProviderSettings() {
         ...current,
         [provider.id]: { status: "ready", models }
       }));
+      const enabledModels = provider.enabledModels.filter((model) =>
+        models.includes(model)
+      );
       updateProvider(provider.id, {
         availableModels: models,
-        model: models.includes(provider.model) ? provider.model : models[0]
+        enabledModels,
+        model: enabledModels.includes(provider.model)
+          ? provider.model
+          : enabledModels[0] ?? ""
       });
       setConnectionTests((current) => ({
         ...current,
@@ -1397,8 +1464,7 @@ function ModelProviderSettings() {
     } catch (error) {
       if (connectionRequestIds.current[provider.id] !== requestId) return;
       updateProvider(provider.id, {
-        availableModels: [],
-        model: ""
+        availableModels: []
       });
       setConnectionTests((current) => ({
         ...current,
@@ -1433,6 +1499,35 @@ function ModelProviderSettings() {
     setModelQuery("");
   };
 
+  const toggleEnabledModel = (model: string) => {
+    const isEnabled = selectedProvider.enabledModels.includes(model);
+    const enabledModels = isEnabled
+      ? selectedProvider.enabledModels.filter((candidate) => candidate !== model)
+      : [...selectedProvider.enabledModels, model];
+    updateProvider(selectedProvider.id, {
+      enabledModels,
+      model: enabledModels.includes(selectedProvider.model)
+        ? selectedProvider.model
+        : enabledModels[0] ?? ""
+    });
+  };
+
+  const enableAllModels = () => {
+    updateProvider(selectedProvider.id, {
+      enabledModels: selectableModels,
+      model: selectableModels.includes(selectedProvider.model)
+        ? selectedProvider.model
+        : selectableModels[0] ?? ""
+    });
+  };
+
+  const disableAllModels = () => {
+    updateProvider(selectedProvider.id, {
+      enabledModels: [],
+      model: ""
+    });
+  };
+
   const addCustomProvider = () => {
     const id = `custom-${nextCustomProviderNumber}`;
     const customProvider: ModelProvider = {
@@ -1449,6 +1544,7 @@ function ModelProviderSettings() {
       apiKey: "",
       model: "",
       availableModels: [],
+      enabledModels: [],
       enabled: false,
       isDefault: false
     };
@@ -1492,7 +1588,9 @@ function ModelProviderSettings() {
           const isSelected = provider.id === selectedProvider.id;
           return (
             <div
-              className={`model-provider-item${isSelected ? " is-selected" : ""}`}
+              className={`model-provider-item${isSelected ? " is-selected" : ""}${
+                provider.enabled ? "" : " is-disabled"
+              }`}
               key={provider.id}
             >
               <button
@@ -1511,18 +1609,20 @@ function ModelProviderSettings() {
                 <span className="model-provider-copy">
                   <strong>{provider.name}</strong>
                   <small>
-                    {provider.isDefault
-                      ? "当前默认"
-                      : provider.apiKey
-                        ? "密钥已填写"
-                        : "等待配置"}
+                    {provider.enabled ? "已开启" : "已关闭"} ·{" "}
+                    {provider.apiKey ? "密钥已填写" : "等待配置"}
                   </small>
                 </span>
               </button>
-              {false && <label className="model-provider-switch">
-                <span className="sr-only">启用 {provider.name}</span>
+              <label className="model-provider-switch">
+                <span className="sr-only">
+                  {provider.enabled ? "关闭" : "开启"} {provider.name}
+                </span>
                 <input
                   type="checkbox"
+                  aria-label={`${provider.enabled ? "关闭" : "开启"} ${
+                    provider.name
+                  }`}
                   checked={provider.enabled}
                   onChange={(event) =>
                     updateProvider(provider.id, {
@@ -1531,7 +1631,7 @@ function ModelProviderSettings() {
                   }
                 />
                 <span aria-hidden="true" />
-              </label>}
+              </label>
             </div>
           );
         })}
@@ -1617,8 +1717,7 @@ function ModelProviderSettings() {
                   onChange={(event) => {
                     updateProvider(selectedProvider.id, {
                       apiKey: event.target.value,
-                      availableModels: [],
-                      model: ""
+                      availableModels: []
                     });
                     resetModelCatalog(selectedProvider.id);
                   }}
@@ -1639,6 +1738,142 @@ function ModelProviderSettings() {
                 密钥保存在当前设备；测试成功后，可用模型会同步到“生成与提示词”。
               </small>
             </label>
+          </fieldset>
+
+          <fieldset className="model-provider-model-selection">
+            <legend>
+              <span>启用模型</span>
+              <small>{selectedProvider.enabledModels.length} 个已启用</small>
+            </legend>
+            <div className="model-selection-toolbar">
+              <span className={`is-${selectedCatalog.status}`} role="status">
+                {modelCatalogMessage}
+              </span>
+              <div className="model-selection-actions">
+                <button
+                  type="button"
+                  disabled={
+                    selectableModels.length === 0 ||
+                    selectableModels.every((model) =>
+                      selectedProvider.enabledModels.includes(model)
+                    )
+                  }
+                  onClick={enableAllModels}
+                >
+                  全选
+                </button>
+                <button
+                  type="button"
+                  disabled={selectedProvider.enabledModels.length === 0}
+                  onClick={disableAllModels}
+                >
+                  全不选
+                </button>
+                <button
+                  type="button"
+                  aria-label={`刷新 ${selectedProvider.name} 模型列表`}
+                  title={hasApiKey ? "读取云端模型列表" : "请先填写 API Key"}
+                  disabled={selectedCatalog.status === "loading" || !hasApiKey}
+                  onClick={() => void loadProviderModels(selectedProvider)}
+                >
+                  <RefreshCw
+                    aria-hidden="true"
+                    className={
+                      selectedCatalog.status === "loading"
+                        ? "is-spinning"
+                        : undefined
+                    }
+                    size={14}
+                  />
+                  刷新列表
+                </button>
+              </div>
+            </div>
+            <label className="model-selection-search">
+              <Search aria-hidden="true" size={14} />
+              <span className="sr-only">搜索模型</span>
+              <input
+                aria-label="搜索模型"
+                autoComplete="off"
+                spellCheck={false}
+                value={modelQuery}
+                placeholder="搜索模型"
+                onChange={(event) => setModelQuery(event.target.value)}
+              />
+            </label>
+            <div
+              className="model-selection-columns"
+              role="group"
+              aria-label={`${selectedProvider.name} 模型选择`}
+            >
+              <section
+                className="model-selection-column is-enabled"
+                aria-label="已启用模型"
+              >
+                <header>
+                  <strong>已启用</strong>
+                  <span>{selectedProvider.enabledModels.length}</span>
+                </header>
+                <div className="model-selection-list">
+                  {filteredEnabledModels.map((model) => (
+                    <button
+                      type="button"
+                      aria-label={`停用模型 ${model}`}
+                      key={model}
+                      onClick={() => toggleEnabledModel(model)}
+                    >
+                      <span>{model}</span>
+                      <ChevronRight aria-hidden="true" size={14} />
+                    </button>
+                  ))}
+                  {filteredEnabledModels.length === 0 && (
+                    <p className="model-selection-empty">
+                      {modelQuery.trim()
+                        ? "没有匹配的已启用模型"
+                        : "尚未启用模型"}
+                    </p>
+                  )}
+                </div>
+              </section>
+
+              <section
+                className="model-selection-column is-disabled"
+                aria-label="未启用模型"
+              >
+                <header>
+                  <strong>未启用</strong>
+                  <span>
+                    {selectableModels.length -
+                      selectedProvider.enabledModels.length}
+                  </span>
+                </header>
+                <div className="model-selection-list">
+                  {filteredDisabledModels.map((model) => (
+                    <button
+                      type="button"
+                      aria-label={`启用模型 ${model}`}
+                      key={model}
+                      onClick={() => toggleEnabledModel(model)}
+                    >
+                      <ChevronLeft aria-hidden="true" size={14} />
+                      <span>{model}</span>
+                    </button>
+                  ))}
+                  {filteredDisabledModels.length === 0 && (
+                    <p className="model-selection-empty">
+                      {modelQuery.trim()
+                        ? "没有匹配的未启用模型"
+                        : selectableModels.length === 0
+                          ? "暂无模型，请先测试连接"
+                          : "全部模型均已启用"}
+                    </p>
+                  )}
+                </div>
+              </section>
+            </div>
+            <p className="model-selection-note">
+              点击模型即可在两列间移动；只有左侧模型会进入调用列表。
+            </p>
           </fieldset>
 
           {false && (

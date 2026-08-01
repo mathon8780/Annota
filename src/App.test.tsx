@@ -403,13 +403,21 @@ describe("Annota core flow", () => {
     expect(
       Array.from(
         generationPage.querySelectorAll(
-          ".generation-identity-grid > label > span:first-child"
+          ".generation-identity-grid > label > span:first-child, .generation-identity-grid > fieldset > legend"
         )
       ).map((label) => label.textContent)
     ).toEqual(["生成类型名称", "调用模型", "标记颜色"]);
     expect(
       within(generationPage).queryByRole("textbox", { name: "关系标签" })
     ).not.toBeInTheDocument();
+    expect(
+      within(generationPage).queryByRole("textbox", { name: "标记颜色" })
+    ).not.toBeInTheDocument();
+    expect(
+      within(generationPage).getAllByRole("button", {
+        name: /使用标记颜色：/
+      })
+    ).toHaveLength(8);
     expect(
       within(generationPage).queryByText(
         "指定执行此行为时使用的模型；Demo 不会发起真实请求。"
@@ -466,16 +474,28 @@ describe("Annota core flow", () => {
     window.localStorage.setItem(
       MODEL_PROVIDERS_STORAGE_KEY,
       JSON.stringify(
-        initialModelProviders.map((provider) =>
-          provider.id === "deepseek"
-            ? {
+        initialModelProviders.map((provider) => {
+          if (provider.id === "deepseek") {
+            return {
                 ...provider,
                 apiKey: "sk-deepseek",
                 availableModels: ["deepseek-chat", "deepseek-reasoner"],
-                model: "deepseek-chat"
-              }
-            : provider
-        )
+                enabledModels: ["deepseek-reasoner"],
+                model: "deepseek-reasoner"
+              };
+          }
+          if (provider.id === "chatgpt") {
+            return {
+              ...provider,
+              apiKey: "sk-disabled",
+              availableModels: ["gpt-disabled"],
+              enabledModels: ["gpt-disabled"],
+              model: "gpt-disabled",
+              enabled: false
+            };
+          }
+          return provider;
+        })
       )
     );
     const sidebar = screen.getByRole("complementary", { name: "主页导航" });
@@ -495,6 +515,12 @@ describe("Annota core flow", () => {
       name: "使用图标：语言翻译"
     });
 
+    expect(
+      within(modelSelect).queryByRole("option", { name: "deepseek-chat" })
+    ).not.toBeInTheDocument();
+    expect(
+      within(modelSelect).queryByRole("option", { name: "gpt-disabled" })
+    ).not.toBeInTheDocument();
     await user.selectOptions(modelSelect, "deepseek:deepseek-reasoner");
     await user.click(translateIcon);
 
@@ -1002,6 +1028,7 @@ describe("Annota core flow", () => {
                 ...provider,
                 apiKey: "sk-runtime",
                 availableModels: ["gpt-runtime"],
+                enabledModels: ["gpt-runtime"],
                 model: "gpt-runtime"
               }
             : provider
@@ -1673,13 +1700,36 @@ describe("Annota core flow", () => {
       within(settingsCanvas).queryByRole("combobox", { name: "使用模型" })
     ).not.toBeInTheDocument();
     expect(
-      within(settingsCanvas).queryByRole("checkbox", { name: /启用/ })
-    ).not.toBeInTheDocument();
+      within(settingsCanvas).getByRole("group", { name: "Chat GPT 模型选择" })
+    ).toBeInTheDocument();
+    const enabledModels = within(settingsCanvas).getByRole("region", {
+      name: "已启用模型"
+    });
+    const disabledModels = within(settingsCanvas).getByRole("region", {
+      name: "未启用模型"
+    });
+    expect(within(enabledModels).getByText("尚未启用模型")).toBeInTheDocument();
+    expect(
+      within(disabledModels).getAllByRole("button", { name: /启用模型/ }).length
+    ).toBeGreaterThan(0);
     expect(
       within(settingsCanvas).queryByRole("button", {
         name: "添加自定义服务商"
       })
     ).not.toBeInTheDocument();
+    const chatGptSwitch = within(settingsCanvas).getByRole("checkbox", {
+      name: "关闭 Chat GPT"
+    });
+    expect(chatGptSwitch).toBeChecked();
+    await user.click(chatGptSwitch);
+    const closedChatGptSwitch = within(settingsCanvas).getByRole("checkbox", {
+      name: "开启 Chat GPT"
+    });
+    expect(closedChatGptSwitch).not.toBeChecked();
+    await user.click(closedChatGptSwitch);
+    expect(
+      within(settingsCanvas).getByRole("checkbox", { name: "关闭 Chat GPT" })
+    ).toBeChecked();
     const connectionTest = within(settingsCanvas).getByRole("button", {
       name: "测试连接"
     });
@@ -1701,6 +1751,26 @@ describe("Annota core flow", () => {
       expect.objectContaining({ headers: expect.any(Headers) })
     );
     expect(
+      within(enabledModels).getByText("尚未启用模型")
+    ).toBeInTheDocument();
+    await user.click(
+      within(settingsCanvas).getByRole("button", { name: "全选" })
+    );
+    expect(
+      within(enabledModels).getAllByRole("button", { name: /停用模型/ })
+    ).toHaveLength(3);
+    await user.click(
+      within(settingsCanvas).getByRole("button", { name: "全不选" })
+    );
+    const gptMiniToggle = within(settingsCanvas).getByRole("button", {
+      name: "启用模型 gpt-5-mini"
+    });
+    const gpt51Toggle = within(settingsCanvas).getByRole("button", {
+      name: "启用模型 gpt-5.1"
+    });
+    await user.click(gptMiniToggle);
+    await user.click(gpt51Toggle);
+    expect(
       JSON.parse(
         window.localStorage.getItem(MODEL_PROVIDERS_STORAGE_KEY) ?? "[]"
       )
@@ -1709,8 +1779,9 @@ describe("Annota core flow", () => {
         expect.objectContaining({
           id: "chatgpt",
           apiKey: "sk-test",
-          model: "gpt-4.1",
-          availableModels: ["gpt-4.1", "gpt-5-mini", "gpt-5.1"]
+          model: "gpt-5-mini",
+          availableModels: ["gpt-4.1", "gpt-5-mini", "gpt-5.1"],
+          enabledModels: ["gpt-5-mini", "gpt-5.1"]
         })
       ])
     );
