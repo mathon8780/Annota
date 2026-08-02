@@ -3,6 +3,12 @@
 /dist/
 /.vite/
 /coverage/
+/.vitest/
+/.cache/
+/.npm/
+/.pnpm-store/
+/.yarn/cache/
+/.yarn/unplugged/
 
 # TypeScript/Vite generated files
 *.tsbuildinfo
@@ -26,12 +32,22 @@
 *.swp
 *.swo
 *.pid
+*.pid.lock
 *.dmp
+/.tmp-*
+/tmp/
+/temp/
+/.eslintcache
+/.stylelintcache
 
-# Local planning and browser test artifacts
+# Local design, planning, and browser test artifacts
+/.hallmark/
 /.planning/
+/docs/superpowers/
 /test-results/
 /playwright-report/
+/blob-report/
+/playwright/.cache/
 
 # Editors and operating systems
 /.idea/
