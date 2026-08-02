@@ -21,7 +21,7 @@ import {
   Waves,
   BoxSelect
 } from "lucide-react";
-import type { InlineMarkType, SelectionState } from "../types";
+import type { MarkdownFormatType, SelectionState } from "../types";
 
 const DEFAULT_TEXT_COLOR = "#ca8a04";
 const DEFAULT_BACKGROUND_COLOR = "#fef08a";
@@ -50,12 +50,12 @@ type ColorMenuKind = "text" | "background";
 interface InlineFormattingToolbarProps {
   selection: SelectionState | null;
   fullWidthArticle: boolean;
-  onFormat: (type: InlineMarkType, color?: string) => void;
+  onFormat: (type: MarkdownFormatType, color?: string) => void;
   onToggleArticleWidth: () => void;
 }
 
 const formattingActions: Array<{
-  type: InlineMarkType;
+  type: MarkdownFormatType;
   label: string;
   icon: typeof Bold;
 }> = [

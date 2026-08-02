@@ -1,8 +1,7 @@
-export type BlockKind = "paragraph" | "h1" | "h2" | "h3" | "quote";
 export type GenerationType = string;
 export type JobStatus = "queued" | "generating" | "failed";
 export type ViewName = "home" | "reader";
-export type InlineMarkType =
+export type MarkdownFormatType =
   | "bold"
   | "italic"
   | "strikethrough"
@@ -12,21 +11,6 @@ export type InlineMarkType =
   | "textColor"
   | "backgroundColor";
 
-export interface InlineMark {
-  id: string;
-  type: InlineMarkType;
-  start: number;
-  end: number;
-  color?: string;
-}
-
-export interface ContentBlock {
-  id: string;
-  kind: BlockKind;
-  text: string;
-  marks?: InlineMark[];
-}
-
 export interface ArticleNode {
   id: string;
   rootId: string;
@@ -35,7 +19,6 @@ export interface ArticleNode {
   summary: string;
   type: string;
   tags: string[];
-  blocks: ContentBlock[];
   childIds: string[];
   createdAt: string;
   updatedAt: string;
@@ -108,13 +91,15 @@ export interface SelectionState {
   blockId: string;
   start: number;
   end: number;
+  documentStart?: number;
+  documentEnd?: number;
   rect?: { left: number; top: number; width: number };
 }
 
 export interface InlineFormatCommand {
   id: number;
   selection: SelectionState;
-  type: InlineMarkType;
+  type: MarkdownFormatType;
   color?: string;
 }
 

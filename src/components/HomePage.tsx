@@ -36,6 +36,8 @@ import type {
   ShortcutBinding,
   ShortcutPreferences
 } from "../utils/shortcuts";
+import type { AppThemeId } from "../utils/themePreferences";
+import type { ReadingPathMode } from "../utils/readingPathPreferences";
 import {
   HomeLibraryView,
   type HomeLibrarySection
@@ -44,13 +46,17 @@ import { GenerationPage } from "./GenerationPage";
 import { SettingsPage } from "./SettingsPage";
 
 interface HomePageProps {
+  appTheme: AppThemeId;
   contentStyle: ContentStyleId;
   customContentStyle: CustomContentStyle;
+  readingPathMode: ReadingPathMode;
   shortcuts: ShortcutPreferences;
   terms: ContentTerms;
   settingsOpen: boolean;
   onContentStyleChange: (style: ContentStyleId) => void;
   onCustomContentStyleChange: (style: CustomContentStyle) => void;
+  onAppThemeChange: (theme: AppThemeId) => void;
+  onReadingPathModeChange: (mode: ReadingPathMode) => void;
   onShortcutChange: (
     actionId: ShortcutActionId,
     binding: ShortcutBinding
@@ -109,13 +115,17 @@ function timelineDateKey(value: string) {
 }
 
 export function HomePage({
+  appTheme,
   contentStyle,
   customContentStyle,
+  readingPathMode,
   shortcuts,
   terms,
   settingsOpen,
   onContentStyleChange,
   onCustomContentStyleChange,
+  onAppThemeChange,
+  onReadingPathModeChange,
   onShortcutChange,
   onResetShortcuts,
   onOpenSearch,
@@ -208,9 +218,9 @@ export function HomePage({
     if (recent) recent.inert = activePage !== "recent";
   }, [activePage]);
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     const title = newTitle.trim() || "未命名笔记";
-    createNotebook(title);
+    await createNotebook(title);
     setNewTitle("");
     newDialogRef.current?.close();
   };
@@ -218,7 +228,7 @@ export function HomePage({
   const handleFile = async (file?: File) => {
     if (!file) return;
     const text = await file.text();
-    importPackage(text, file.name);
+    await importPackage(text, file.name);
     if (fileRef.current) fileRef.current.value = "";
   };
 
@@ -399,11 +409,15 @@ export function HomePage({
         >
           {settingsOpen ? (
             <SettingsPage
+              appTheme={appTheme}
               contentStyle={contentStyle}
               customContentStyle={customContentStyle}
+              readingPathMode={readingPathMode}
               shortcuts={shortcuts}
               onContentStyleChange={onContentStyleChange}
               onCustomContentStyleChange={onCustomContentStyleChange}
+              onAppThemeChange={onAppThemeChange}
+              onReadingPathModeChange={onReadingPathModeChange}
               onShortcutChange={onShortcutChange}
               onResetShortcuts={onResetShortcuts}
             />

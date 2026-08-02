@@ -1,17 +1,23 @@
 import type {
   AppData,
   ArticleNode,
-  ContentBlock,
   FolderProfile,
   Notebook
 } from "../../types";
 
 const now = new Date("2026-07-26T09:30:00+08:00").toISOString();
 
-const blocks = (prefix: string, items: Array<[ContentBlock["kind"], string]>): ContentBlock[] =>
+type TestBlockKind = "paragraph" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "quote";
+interface TestBlock {
+  id: string;
+  kind: TestBlockKind;
+  text: string;
+}
+
+const blocks = (prefix: string, items: Array<[TestBlockKind, string]>): TestBlock[] =>
   items.map(([kind, text], index) => ({ id: `${prefix}-b${index + 1}`, kind, text }));
 
-const articles: Record<string, ArticleNode> = {
+const articleFixtures: Record<string, ArticleNode & { blocks: TestBlock[] }> = {
   "ecs-root": {
     id: "ecs-root",
     rootId: "ecs-root",
@@ -223,6 +229,27 @@ const articles: Record<string, ArticleNode> = {
     ])
   }
 };
+
+function blocksToTestMarkdown(items: TestBlock[]) {
+  return items
+    .map((block) => {
+      const prefix = /^h[1-6]$/.test(block.kind)
+        ? `${"#".repeat(Number(block.kind.slice(1)))} `
+        : block.kind === "quote"
+          ? "> "
+          : "";
+      return `${prefix}${block.text}\n^${block.id}`;
+    })
+    .join("\n\n");
+}
+
+export const seedMarkdownDocuments = Object.fromEntries(
+  Object.entries(articleFixtures).map(([id, article]) => [id, blocksToTestMarkdown(article.blocks)])
+);
+
+const articles = Object.fromEntries(
+  Object.entries(articleFixtures).map(([id, { blocks: _blocks, ...article }]) => [id, article])
+) as Record<string, ArticleNode>;
 
 const notebooks: Notebook[] = [
   {

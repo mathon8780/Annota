@@ -11,13 +11,17 @@ import { createEmptyAppData } from "../data/empty";
 import type {
   AppData,
   ArticleNode,
-  ContentBlock,
   FolderProfile,
   GenerationJob,
   GenerationType,
   Notebook,
   SelectionState
 } from "../types";
+import {
+  clearBrowserMarkdownDocuments,
+  loadMarkdownDocument,
+  saveMarkdownDocument
+} from "../editor/markdownRepository";
 import {
   loadGenerationTypes,
   renderPromptTemplate
@@ -32,35 +36,17 @@ import {
 } from "../utils/generationRuntime";
 import { resolveConfiguredModel } from "../utils/modelProviders";
 
-export const APP_DATA_STORAGE_KEY = "annota.desktop.library.v1";
+export const APP_DATA_STORAGE_KEY = "annota.desktop.library.v2";
 const LEGACY_STORAGE_KEY = "annota.desktop.demo.v1";
+const RETIRED_LIBRARY_STORAGE_KEY = "annota.desktop.library.v1";
+const CONTENT_RESET_STORAGE_KEY = "annota:content-reset.single-markdown-v1";
 const UNFILED_FOLDER_KEY = "未归档";
-const LEGACY_DEMO_ROOT_IDS = new Set([
-  "ecs-root",
-  "cpp-polymorphism-root",
-  "cpp-vtable-root",
-  "cpp-virtual-destructor-root",
-  "cpp-template-root",
-  "attention-root",
-  "llm-root",
-  "graph-root"
-]);
-const LEGACY_DEMO_FOLDER_KEYS = new Set([
-  "技术学习",
-  "C++ / 核心",
-  "C++ / 对象模型",
-  "C++ / 生命周期",
-  "C++ / 模板",
-  "阅读方法",
-  "概念解析",
-  "数据库"
-]);
 
 type Action =
   | { type: "open-notebook"; notebookId: string; articleId?: string }
   | { type: "navigate"; articleId: string }
   | { type: "go-home" }
-  | { type: "update-article"; articleId: string; blocks: ContentBlock[] }
+  | { type: "touch-article"; articleId: string }
   | { type: "create-notebook"; notebook: Notebook; article: ArticleNode }
   | { type: "update-folder-profiles"; profiles: FolderProfile[] }
   | { type: "delete-folder-profiles"; keys: string[] }
@@ -75,6 +61,39 @@ type Action =
   | { type: "complete-job"; jobId: string; article: ArticleNode }
   | { type: "cancel-job"; jobId: string };
 
+function metadataOnlyArticles(value: unknown): Record<string, ArticleNode> {
+  if (!value || typeof value !== "object") return {};
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).flatMap(([id, candidate]) => {
+      if (!candidate || typeof candidate !== "object") return [];
+      const record = candidate as Partial<ArticleNode>;
+      if (
+        typeof record.id !== "string" ||
+        typeof record.rootId !== "string" ||
+        typeof record.title !== "string"
+      ) {
+        return [];
+      }
+      const article: ArticleNode = {
+        id: record.id,
+        rootId: record.rootId,
+        parentId: typeof record.parentId === "string" ? record.parentId : null,
+        title: record.title,
+        summary: typeof record.summary === "string" ? record.summary : "",
+        type: typeof record.type === "string" ? record.type : "文章",
+        tags: Array.isArray(record.tags) ? record.tags.filter((tag): tag is string => typeof tag === "string") : [],
+        childIds: Array.isArray(record.childIds)
+          ? record.childIds.filter((childId): childId is string => typeof childId === "string")
+          : [],
+        createdAt: typeof record.createdAt === "string" ? record.createdAt : new Date().toISOString(),
+        updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : new Date().toISOString(),
+        source: record.source
+      };
+      return [[id, article]];
+    })
+  ) as Record<string, ArticleNode>;
+}
+
 function parseStoredData(raw: string): AppData | null {
   const parsed = JSON.parse(raw) as Partial<AppData>;
   if (!Array.isArray(parsed.notebooks) || !parsed.articles) return null;
@@ -86,49 +105,7 @@ function parseStoredData(raw: string): AppData | null {
     deletedFolderKeys: Array.isArray(parsed.deletedFolderKeys)
       ? parsed.deletedFolderKeys
       : [],
-    articles: parsed.articles,
-    jobs: [],
-    currentNotebookId: null,
-    currentArticleId: null
-  };
-}
-
-function removeLegacyDemoData(data: AppData): AppData {
-  const notebooks = data.notebooks.filter(
-    (notebook) => !LEGACY_DEMO_ROOT_IDS.has(notebook.rootId)
-  );
-  const retainedRootIds = new Set(notebooks.map((notebook) => notebook.rootId));
-  const retainedCategories = new Set(
-    notebooks.map((notebook) => notebook.category)
-  );
-  const articles = Object.fromEntries(
-    Object.entries(data.articles)
-      .filter(
-        ([, article]) =>
-          retainedRootIds.has(article.rootId) &&
-          !LEGACY_DEMO_ROOT_IDS.has(article.rootId)
-      )
-      .map(([id, article]) => [
-        id,
-        {
-          ...article,
-          childIds: article.childIds.filter(
-            (childId) =>
-              data.articles[childId] &&
-              !LEGACY_DEMO_ROOT_IDS.has(data.articles[childId].rootId)
-          )
-        }
-      ])
-  );
-  return {
-    ...data,
-    notebooks,
-    folderProfiles: data.folderProfiles.filter(
-      (profile) =>
-        !LEGACY_DEMO_FOLDER_KEYS.has(profile.key) ||
-        retainedCategories.has(profile.key)
-    ),
-    articles,
+    articles: metadataOnlyArticles(parsed.articles),
     jobs: [],
     currentNotebookId: null,
     currentArticleId: null
@@ -138,14 +115,16 @@ function removeLegacyDemoData(data: AppData): AppData {
 function loadInitialData(): AppData {
   if (typeof window === "undefined") return createEmptyAppData();
   try {
+    if (window.localStorage.getItem(CONTENT_RESET_STORAGE_KEY) !== "done") {
+      window.localStorage.removeItem(RETIRED_LIBRARY_STORAGE_KEY);
+      window.localStorage.removeItem(LEGACY_STORAGE_KEY);
+      clearBrowserMarkdownDocuments();
+      window.localStorage.setItem(CONTENT_RESET_STORAGE_KEY, "done");
+      return createEmptyAppData();
+    }
     const current = window.localStorage.getItem(APP_DATA_STORAGE_KEY);
     if (current) return parseStoredData(current) ?? createEmptyAppData();
-    const legacy = window.localStorage.getItem(LEGACY_STORAGE_KEY);
-    if (!legacy) return createEmptyAppData();
-    const parsedLegacy = parseStoredData(legacy);
-    return parsedLegacy
-      ? removeLegacyDemoData(parsedLegacy)
-      : createEmptyAppData();
+    return createEmptyAppData();
   } catch {
     return createEmptyAppData();
   }
@@ -181,10 +160,13 @@ function reducer(state: AppData, action: Action): AppData {
       };
     case "go-home":
       return { ...state, currentNotebookId: null, currentArticleId: null };
-    case "update-article": {
+    case "touch-article": {
       const article = state.articles[action.articleId];
       if (!article) return state;
-      const nextArticle = { ...article, blocks: action.blocks, updatedAt: new Date().toISOString() };
+      const nextArticle = {
+        ...article,
+        updatedAt: new Date().toISOString()
+      };
       return {
         ...state,
         articles: { ...state.articles, [article.id]: nextArticle },
@@ -304,13 +286,13 @@ interface AppStoreValue {
   openNotebook: (notebookId: string, articleId?: string) => void;
   navigateTo: (articleId: string) => void;
   goHome: () => void;
-  updateBlocks: (articleId: string, blocks: ContentBlock[]) => void;
-  createNotebook: (title: string, text?: string) => string;
+  touchArticle: (articleId: string) => void;
+  createNotebook: (title: string, text?: string) => Promise<string>;
   updateFolderProfile: (profile: FolderProfile) => void;
   updateFolderProfiles: (profiles: FolderProfile[]) => void;
   deleteFolderProfiles: (keys: string[]) => void;
-  importPackage: (text: string, fileName: string) => { ok: boolean; message: string };
-  exportCurrentTree: () => void;
+  importPackage: (text: string, fileName: string) => Promise<{ ok: boolean; message: string }>;
+  exportCurrentTree: () => Promise<void>;
   startGeneration: (
     parentId: string,
     selection: SelectionState,
@@ -323,23 +305,6 @@ const AppStoreContext = createContext<AppStoreValue | null>(null);
 
 function safeTitle(fileName: string): string {
   return fileName.replace(/\.(md|markdown|txt|annota|json)$/i, "").trim() || "未命名笔记";
-}
-
-function textToBlocks(text: string, prefix: string): ContentBlock[] {
-  const normalized = text.replace(/\r\n?/g, "\n").trim();
-  if (!normalized) return [{ id: `${prefix}-b1`, kind: "paragraph", text: "" }];
-  return normalized
-    .split(/\n{2,}/)
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .map((part, index) => {
-      const heading = /^(#{1,3})\s+/.exec(part);
-      return {
-        id: `${prefix}-b${index + 1}`,
-        kind: heading ? (`h${heading[1].length}` as ContentBlock["kind"]) : "paragraph",
-        text: heading ? part.replace(/^#{1,3}\s+/, "") : part
-      };
-    });
 }
 
 export function AppStoreProvider({ children }: PropsWithChildren) {
@@ -363,11 +328,11 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
 
   const goHome = useCallback(() => dispatch({ type: "go-home" }), []);
 
-  const updateBlocks = useCallback((articleId: string, blocksToSave: ContentBlock[]) => {
-    dispatch({ type: "update-article", articleId, blocks: blocksToSave });
+  const touchArticle = useCallback((articleId: string) => {
+    dispatch({ type: "touch-article", articleId });
   }, []);
 
-  const createNotebook = useCallback((title: string, text = "") => {
+  const createNotebook = useCallback(async (title: string, text = "") => {
     const stamp = Date.now();
     const rootId = `root-${stamp}`;
     const notebookId = `notebook-${stamp}`;
@@ -385,7 +350,6 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
       childIds: [],
       createdAt: now,
       updatedAt: now,
-      blocks: textToBlocks(text, rootId)
     };
     const notebook: Notebook = {
       id: notebookId,
@@ -398,6 +362,7 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
       lastOpenedNodeId: rootId,
       accent: "cobalt"
     };
+    await saveMarkdownDocument(rootId, text.replace(/\r\n?/g, "\n"));
     dispatch({ type: "create-notebook", notebook, article });
     return notebookId;
   }, []);
@@ -415,13 +380,28 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
   }, []);
 
   const importPackage = useCallback(
-    (text: string, fileName: string) => {
+    async (text: string, fileName: string) => {
       if (/\.annota$|\.json$/i.test(fileName)) {
         try {
-          const parsed = JSON.parse(text) as Partial<AppData> & { format?: string };
-          if (!Array.isArray(parsed.notebooks) || !parsed.articles) {
-            return { ok: false, message: "关系包缺少 notebooks 或 articles 数据。" };
+          const parsed = JSON.parse(text) as Partial<AppData> & {
+            format?: string;
+            documents?: Record<string, string>;
+          };
+          if (
+            parsed.format !== "annota-v2" ||
+            !Array.isArray(parsed.notebooks) ||
+            !parsed.articles ||
+            !parsed.documents
+          ) {
+            return { ok: false, message: "仅支持包含 Markdown 文档的 annota-v2 关系包。" };
           }
+          await Promise.all(
+            Object.entries(parsed.documents).map(([id, markdown]) =>
+              typeof markdown === "string"
+                ? saveMarkdownDocument(id, markdown)
+                : Promise.reject(new Error("关系包包含无效 Markdown 文档"))
+            )
+          );
           dispatch({
             type: "replace-data",
             data: {
@@ -432,7 +412,7 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
               deletedFolderKeys: Array.isArray(parsed.deletedFolderKeys)
                 ? parsed.deletedFolderKeys
                 : [],
-              articles: parsed.articles,
+              articles: metadataOnlyArticles(parsed.articles),
               jobs: [],
               currentNotebookId: null,
               currentArticleId: null
@@ -443,13 +423,13 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
           return { ok: false, message: "无法解析关系包；请确认文件未损坏。" };
         }
       }
-      createNotebook(safeTitle(fileName), text);
+      await createNotebook(safeTitle(fileName), text);
       return { ok: true, message: "主笔记已导入并打开。" };
     },
     [createNotebook]
   );
 
-  const exportCurrentTree = useCallback(() => {
+  const exportCurrentTree = useCallback(async () => {
     const notebook = data.notebooks.find((item) => item.id === data.currentNotebookId);
     if (!notebook) return;
     const ids = new Set<string>();
@@ -464,8 +444,13 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
         .map((id) => [id, data.articles[id]])
         .filter((entry) => Boolean(entry[1]))
     );
+    const documents = Object.fromEntries(
+      await Promise.all(
+        Array.from(ids).map(async (id) => [id, (await loadMarkdownDocument(id)).content])
+      )
+    );
     const payload = {
-      format: "annota-v1",
+      format: "annota-v2",
       exportedAt: new Date().toISOString(),
       notebooks: [notebook],
       folderProfiles: data.folderProfiles.filter(
@@ -473,6 +458,7 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
       ),
       deletedFolderKeys: [],
       articles,
+      documents,
       jobs: [],
       currentNotebookId: null,
       currentArticleId: null
@@ -535,8 +521,22 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
       void (async () => {
         dispatch({ type: "job-status", jobId, status: "generating" });
         try {
+          const contextArticleIds: string[] = [];
+          let contextCursor: ArticleNode | undefined = parent;
+          while (contextCursor) {
+            contextArticleIds.unshift(contextCursor.id);
+            contextCursor = contextCursor.parentId
+              ? data.articles[contextCursor.parentId]
+              : undefined;
+          }
+          const documents = Object.fromEntries(
+            await Promise.all(
+              contextArticleIds.map(async (id) => [id, (await loadMarkdownDocument(id)).content])
+            )
+          );
           const context = assembleGenerationContext(
             data.articles,
+            documents,
             parent,
             selection,
             generationType.contextScope
@@ -564,8 +564,7 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
             .slice(2, 8)}`;
           const generated = parseGeneratedArticle(
             response,
-            `${generationType.name}：${selection.text.slice(0, 28)}`,
-            articleId
+            `${generationType.name}：${selection.text.slice(0, 28)}`
           );
           const now = new Date().toISOString();
           const article: ArticleNode = {
@@ -576,7 +575,6 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
             summary: generated.summary,
             type: generationType.relationLabel || generationType.name,
             tags: generated.tags,
-            blocks: generated.blocks,
             childIds: [],
             createdAt: now,
             updatedAt: now,
@@ -587,6 +585,7 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
               generationType: generationType.id
             }
           };
+          await saveMarkdownDocument(articleId, generated.markdown);
           dispatch({ type: "complete-job", jobId, article });
         } catch (error) {
           dispatch({
@@ -622,7 +621,7 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
       openNotebook,
       navigateTo,
       goHome,
-      updateBlocks,
+      touchArticle,
       createNotebook,
       updateFolderProfile,
       updateFolderProfiles,
@@ -639,7 +638,7 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
       openNotebook,
       navigateTo,
       goHome,
-      updateBlocks,
+      touchArticle,
       createNotebook,
       updateFolderProfile,
       updateFolderProfiles,

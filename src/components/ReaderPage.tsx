@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
+import type {
+  CSSProperties,
+  KeyboardEvent as ReactKeyboardEvent,
+  PointerEvent as ReactPointerEvent
+} from "react";
 import { flushSync } from "react-dom";
 import {
   ArrowLeft,
@@ -24,10 +28,15 @@ import type {
   ArticleNode,
   GenerationType,
   InlineFormatCommand,
-  InlineMarkType,
+  MarkdownFormatType,
   SelectionState
 } from "../types";
 import type { ContentTerms } from "../utils/contentDisplay";
+import {
+  loadContentZoom,
+  saveContentZoom,
+  stepContentZoom
+} from "../utils/contentZoom";
 import {
   loadGenerationTypes,
   type GenerationTypeIconId
@@ -37,7 +46,11 @@ import {
   matchesShortcut
 } from "../utils/shortcuts";
 import type { ShortcutPreferences } from "../utils/shortcuts";
-import { BlockEditor } from "./BlockEditor";
+import {
+  reconcileReadingTrail,
+  type ReadingPathMode
+} from "../utils/readingPathPreferences";
+import { MarkdownEditor } from "./MarkdownEditor";
 import { Brand } from "./Brand";
 import { InlineFormattingToolbar } from "./InlineFormattingToolbar";
 import { TopologyPanel } from "./TopologyPanel";
@@ -86,6 +99,34 @@ function readStoredPathWidth() {
     : READING_PATH_DEFAULT_WIDTH;
 }
 
+function rootPixelValue(property: string, fallback: number) {
+  const value = Number.parseFloat(
+    window.getComputedStyle(document.documentElement).getPropertyValue(property)
+  );
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function articleContentZoomStyle(zoom: number) {
+  const scaled = (pixels: number) =>
+    `${Math.round(pixels * zoom * 100) / 100}px`;
+  const readingFontSize = rootPixelValue("--reading-font-size", 16);
+  return {
+    "--reader-content-scale": String(zoom),
+    "--reader-reading-font-size": scaled(readingFontSize),
+    "--reader-body-line-height": scaled(readingFontSize * 1.45),
+    "--reader-code-font-size": scaled(rootPixelValue("--code-font-size", 13)),
+    "--reader-text-xs": scaled(12),
+    "--reader-text-sm": scaled(14),
+    "--reader-text-base": scaled(16),
+    "--reader-text-lg": scaled(18),
+    "--reader-text-xl": scaled(20),
+    "--reader-text-2xl": scaled(24),
+    "--reader-text-3xl": scaled(32),
+    "--reader-title-min": scaled(32),
+    "--reader-title-max": scaled(48)
+  } as CSSProperties;
+}
+
 function descendants(id: string, articles: Record<string, ArticleNode>) {
   const seen = new Set<string>();
   const visit = (nodeId: string) => {
@@ -100,9 +141,11 @@ function descendants(id: string, articles: Record<string, ArticleNode>) {
 }
 
 export function ReaderPage({
+  readingPathMode,
   shortcuts,
   terms
 }: {
+  readingPathMode: ReadingPathMode;
   shortcuts: ShortcutPreferences;
   terms: ContentTerms;
 }) {
@@ -112,7 +155,7 @@ export function ReaderPage({
     currentNotebook,
     navigateTo,
     goHome,
-    updateBlocks,
+    touchArticle,
     importPackage,
     exportCurrentTree,
     startGeneration,
@@ -127,12 +170,15 @@ export function ReaderPage({
   const [fullWidthArticle, setFullWidthArticle] = useState(false);
   const [notice, setNotice] = useState("");
   const [readingPathWidth, setReadingPathWidth] = useState(readStoredPathWidth);
+  const [contentZoom, setContentZoom] = useState(loadContentZoom);
   const generationTypes = useMemo(
     () => loadGenerationTypes().filter((type) => type.enabled),
     []
   );
   const [resizingPath, setResizingPath] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const readerSurfaceRef = useRef<HTMLElement>(null);
+  const contentZoomRef = useRef(contentZoom);
   const noticeTimer = useRef<number>();
   const formatCommandSequence = useRef(0);
   const pathResizeRef = useRef<{
@@ -158,6 +204,35 @@ export function ReaderPage({
     }
     return result;
   }, [currentArticle, data.articles]);
+  const currentPathIds = useMemo(() => path.map((article) => article.id), [path]);
+  const [retainedPathIds, setRetainedPathIds] = useState<readonly string[]>(
+    () => currentPathIds
+  );
+  const resolvedRetainedPathIds = reconcileReadingTrail(
+    retainedPathIds,
+    currentPathIds
+  );
+  const displayedPath = useMemo(
+    () =>
+      (readingPathMode === "retain-branch"
+        ? resolvedRetainedPathIds
+        : currentPathIds
+      )
+        .map((id) => data.articles[id])
+        .filter((article): article is ArticleNode => Boolean(article)),
+    [
+      currentPathIds,
+      data.articles,
+      readingPathMode,
+      resolvedRetainedPathIds
+    ]
+  );
+
+  useEffect(() => {
+    if (resolvedRetainedPathIds !== retainedPathIds) {
+      setRetainedPathIds(resolvedRetainedPathIds);
+    }
+  }, [resolvedRetainedPathIds, retainedPathIds]);
 
   const childNodes = useMemo(
     () =>
@@ -194,6 +269,20 @@ export function ReaderPage({
     window.clearTimeout(noticeTimer.current);
     noticeTimer.current = window.setTimeout(() => setNotice(""), 2600);
   }, []);
+
+  const handleContentZoomWheel = useCallback(
+    (event: WheelEvent) => {
+      if (!event.ctrlKey || event.deltaY === 0) return;
+      event.preventDefault();
+      const nextZoom = stepContentZoom(contentZoomRef.current, event.deltaY);
+      if (nextZoom === contentZoomRef.current) return;
+      const savedZoom = saveContentZoom(nextZoom);
+      contentZoomRef.current = savedZoom;
+      setContentZoom(savedZoom);
+      showNotice(`显示比例 ${Math.round(savedZoom * 100)}%`);
+    },
+    [showNotice]
+  );
 
   const setTopologyFullscreen = useCallback(
     (value: boolean) => {
@@ -280,6 +369,13 @@ export function ReaderPage({
     shortcuts
   ]);
 
+  useEffect(() => {
+    const surface = readerSurfaceRef.current;
+    if (!surface) return;
+    surface.addEventListener("wheel", handleContentZoomWheel, { passive: false });
+    return () => surface.removeEventListener("wheel", handleContentZoomWheel);
+  }, [currentArticle?.id, handleContentZoomWheel]);
+
   if (!currentArticle || !currentNotebook) return null;
 
   const setAndStorePathWidth = (width: number) => {
@@ -351,7 +447,7 @@ export function ReaderPage({
     showNotice(result.message);
   };
 
-  const applyInlineFormat = (type: InlineMarkType, color?: string) => {
+  const applyInlineFormat = (type: MarkdownFormatType, color?: string) => {
     if (!selection || selection.start === selection.end) {
       showNotice("先在正文中选择要设置格式的文字。");
       return;
@@ -379,7 +475,7 @@ export function ReaderPage({
 
   const handleFile = async (file?: File) => {
     if (!file) return;
-    const result = importPackage(await file.text(), file.name);
+    const result = await importPackage(await file.text(), file.name);
     showNotice(result.message);
     if (fileRef.current) fileRef.current.value = "";
   };
@@ -450,7 +546,7 @@ export function ReaderPage({
             <FileInput aria-hidden="true" size={17} />
             <span className="sr-only">导入材料</span>
           </button>
-          <button className="icon-button" type="button" onClick={exportCurrentTree} title="导出当前知识树">
+          <button className="icon-button" type="button" onClick={() => void exportCurrentTree()} title="导出当前知识树">
             <Download aria-hidden="true" size={17} />
             <span className="sr-only">导出当前知识树</span>
           </button>
@@ -461,16 +557,23 @@ export function ReaderPage({
         <aside className="reading-path" aria-label="阅读路径">
           <header>
             <span>阅读路径</span>
-            <small>{path.length} 层</small>
+            <small>{displayedPath.length} 层</small>
           </header>
           <div className="path-stack">
-            {path.map((article, index) => (
-              <div className="path-step" key={article.id}>
+            {displayedPath.map((article, index) => {
+              const isCurrent = article.id === currentArticle.id;
+              const isRetained = index >= currentPathIds.length;
+              return (
+              <div
+                className={`path-step${isRetained ? " is-retained" : ""}`}
+                key={article.id}
+              >
                 <button
-                  className={article.id === currentArticle.id ? "is-current" : ""}
+                  className={isCurrent ? "is-current" : ""}
                   type="button"
                   onClick={() => navigateTo(article.id)}
-                  aria-current={article.id === currentArticle.id ? "page" : undefined}
+                  aria-current={isCurrent ? "page" : undefined}
+                  aria-label={isRetained ? `继续阅读：${article.title}` : undefined}
                 >
                   <span className="path-step-index">{String(index + 1).padStart(2, "0")}</span>
                   <span>
@@ -480,9 +583,10 @@ export function ReaderPage({
                     </small>
                   </span>
                 </button>
-                {index < path.length - 1 && <span className="path-line" aria-hidden="true"></span>}
+                {index < displayedPath.length - 1 && <span className="path-line" aria-hidden="true"></span>}
               </div>
-            ))}
+              );
+            })}
           </div>
           <div className="path-context">
             <BookOpenText aria-hidden="true" size={17} />
@@ -516,6 +620,7 @@ export function ReaderPage({
         </div>
 
         <section
+          ref={readerSurfaceRef}
           className="reader-surface"
           aria-label="文章阅读区域"
           onPointerDown={handleReaderSurfacePointerDown}
@@ -530,36 +635,22 @@ export function ReaderPage({
           <div className="article-scroll-region">
             <article
               className={`article-column${fullWidthArticle ? " is-full-width" : ""}`}
+              data-content-zoom={contentZoom}
               data-motion={articleMotion}
               key={currentArticle.id}
+              style={articleContentZoomStyle(contentZoom)}
             >
               <header className="article-header">
-                <div className="article-eyebrow">
-                  <span>{currentArticle.type}</span>
-                  <span>{new Date(currentArticle.updatedAt).toLocaleDateString("zh-CN")}</span>
-                </div>
                 <h1>{currentArticle.title}</h1>
-                <p>{currentArticle.summary}</p>
-                {currentArticle.source && (
-                  <button
-                    className="source-anchor"
-                    type="button"
-                    onClick={() => navigateTo(currentArticle.source!.parentId)}
-                  >
-                    <ArrowLeft aria-hidden="true" size={15} />
-                    回到来源：“{currentArticle.source.quote.slice(0, 42)}
-                    {currentArticle.source.quote.length > 42 ? "…" : ""}”
-                  </button>
-                )}
               </header>
 
-              <BlockEditor
+              <MarkdownEditor
                 articleId={currentArticle.id}
-                blocks={currentArticle.blocks}
                 formatCommand={formatCommand}
                 resetVersion={editorResetVersion}
                 saveShortcut={shortcuts["save-article"]}
-                onChange={(blocks) => updateBlocks(currentArticle.id, blocks)}
+                contentZoom={contentZoom}
+                onPersist={() => touchArticle(currentArticle.id)}
                 onSelection={setSelection}
                 onSaveState={setSaveState}
               />
@@ -666,11 +757,6 @@ export function ReaderPage({
             </div>
           </aside>
 
-          <span className="formatting-selection-status" aria-live="polite">
-            {!selection || !selection.text.trim()
-              ? "选择文字后可设置格式"
-              : `已选择 ${selection.text.length} 个字符`}
-          </span>
         </section>
       </main>
 

@@ -1,0 +1,10 @@
+# Use Rust's bundled MSVC-compatible linker on Windows. Rust 1.97 can
+# misclassify localized link.exe progress output as a linker warning.
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld.exe"
+
+[target.aarch64-pc-windows-msvc]
+linker = "rust-lld.exe"
+
+[target.i686-pc-windows-msvc]
+linker = "rust-lld.exe"

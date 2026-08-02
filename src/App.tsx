@@ -3,6 +3,8 @@ import { BookOpenText, CornerDownLeft, Search, X } from "lucide-react";
 import { HomePage } from "./components/HomePage";
 import { ReaderPage } from "./components/ReaderPage";
 import { WindowTitleBar } from "./components/WindowTitleBar";
+import { markdownToPlainText } from "./editor/markdownDocument";
+import { loadMarkdownDocument } from "./editor/markdownRepository";
 import { useAppStore } from "./store/AppStore";
 import {
   applyContentStyle,
@@ -26,16 +28,30 @@ import type {
   ShortcutActionId,
   ShortcutBinding
 } from "./utils/shortcuts";
+import {
+  applyAppTheme,
+  loadAppTheme,
+  saveAppTheme
+} from "./utils/themePreferences";
+import type { AppThemeId } from "./utils/themePreferences";
+import {
+  loadReadingPathMode,
+  saveReadingPathMode
+} from "./utils/readingPathPreferences";
+import type { ReadingPathMode } from "./utils/readingPathPreferences";
 
 export default function App() {
   const { data, currentArticle, openNotebook } = useAppStore();
   const [commandOpen, setCommandOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [searchDocuments, setSearchDocuments] = useState<Record<string, string>>({});
   const [contentStyle, setContentStyle] = useState(loadContentStyle);
   const [customContentStyle, setCustomContentStyle] = useState(
     loadCustomContentStyle
   );
+  const [appTheme, setAppTheme] = useState(loadAppTheme);
+  const [readingPathMode, setReadingPathMode] = useState(loadReadingPathMode);
   const [shortcuts, setShortcuts] = useState(loadShortcutPreferences);
   const commandRef = useRef<HTMLDialogElement>(null);
   const contentTerms = contentStyleDefinition(
@@ -49,13 +65,33 @@ export default function App() {
     if (!normalized) return values.slice(0, 8);
     return values
       .filter((article) =>
-        [article.title, article.summary, article.tags.join(" "), article.blocks.map((b) => b.text).join(" ")]
+        [
+          article.title,
+          article.summary,
+          article.tags.join(" "),
+          markdownToPlainText(searchDocuments[article.id] ?? "")
+        ]
           .join(" ")
           .toLocaleLowerCase("zh-CN")
           .includes(normalized)
       )
       .slice(0, 12);
-  }, [data.articles, query]);
+  }, [data.articles, query, searchDocuments]);
+
+  useEffect(() => {
+    if (!commandOpen) return;
+    let active = true;
+    void Promise.all(
+      Object.keys(data.articles).map(async (id) => [id, (await loadMarkdownDocument(id)).content] as const)
+    ).then((entries) => {
+      if (active) setSearchDocuments(Object.fromEntries(entries));
+    }).catch(() => {
+      if (active) setSearchDocuments({});
+    });
+    return () => {
+      active = false;
+    };
+  }, [commandOpen, data.articles]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -71,6 +107,10 @@ export default function App() {
   useEffect(() => {
     applyContentStyle(contentStyle);
   }, [contentStyle]);
+
+  useEffect(() => {
+    applyAppTheme(appTheme);
+  }, [appTheme]);
 
   useEffect(() => {
     const dialog = commandRef.current;
@@ -101,6 +141,16 @@ export default function App() {
     saveCustomContentStyle(nextStyle);
   };
 
+  const changeAppTheme = (nextTheme: AppThemeId) => {
+    setAppTheme(nextTheme);
+    saveAppTheme(nextTheme);
+  };
+
+  const changeReadingPathMode = (nextMode: ReadingPathMode) => {
+    setReadingPathMode(nextMode);
+    saveReadingPathMode(nextMode);
+  };
+
   const changeShortcut = (
     actionId: ShortcutActionId,
     binding: ShortcutBinding
@@ -124,16 +174,24 @@ export default function App() {
       <div className="desktop-content">
         <div className="route-stage">
           {currentArticle ? (
-            <ReaderPage shortcuts={shortcuts} terms={contentTerms} />
+            <ReaderPage
+              readingPathMode={readingPathMode}
+              shortcuts={shortcuts}
+              terms={contentTerms}
+            />
           ) : (
             <HomePage
+              appTheme={appTheme}
               contentStyle={contentStyle}
               customContentStyle={customContentStyle}
+              readingPathMode={readingPathMode}
               shortcuts={shortcuts}
               terms={contentTerms}
               settingsOpen={settingsOpen}
               onContentStyleChange={changeContentStyle}
               onCustomContentStyleChange={changeCustomContentStyle}
+              onAppThemeChange={changeAppTheme}
+              onReadingPathModeChange={changeReadingPathMode}
               onShortcutChange={changeShortcut}
               onResetShortcuts={resetShortcuts}
               onOpenSearch={() => setCommandOpen(true)}

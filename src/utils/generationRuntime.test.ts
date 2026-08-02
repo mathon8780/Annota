@@ -1,11 +1,8 @@
 import type { ArticleNode, SelectionState } from "../types";
+import { markdownRanges } from "../editor/markdownDocument";
 import { assembleGenerationContext } from "./generationRuntime";
 
-function article(
-  id: string,
-  parentId: string | null,
-  blocks: ArticleNode["blocks"]
-): ArticleNode {
+function article(id: string, parentId: string | null): ArticleNode {
   return {
     id,
     rootId: "root",
@@ -14,7 +11,6 @@ function article(
     summary: `${id} summary`,
     type: parentId ? "解释" : "主文章",
     tags: [],
-    blocks,
     childIds: [],
     createdAt: "2026-07-30T00:00:00.000Z",
     updatedAt: "2026-07-30T00:00:00.000Z"
@@ -22,27 +18,29 @@ function article(
 }
 
 describe("generation context assembly", () => {
-  it("expands monotonically from the selected paragraph to all ancestors", () => {
-    const root = article("root", null, [
-      { id: "root-b1", kind: "paragraph", text: "root context" }
-    ]);
-    const parent = article("parent", "root", [
-      { id: "parent-b1", kind: "paragraph", text: "parent context" }
-    ]);
-    const current = article("current", "parent", [
-      { id: "heading", kind: "h2", text: "Section" },
-      ...Array.from({ length: 8 }, (_, index) => ({
-        id: `p${index + 1}`,
-        kind: "paragraph" as const,
-        text: `paragraph ${index + 1}`
-      }))
-    ]);
+  it("derives progressively wider context directly from Markdown documents", () => {
+    const root = article("root", null);
+    const parent = article("parent", "root");
+    const current = article("current", "parent");
     const articles = { root, parent, current };
+    const documents = {
+      root: "root context\n^root-p1",
+      parent: "parent context\n^parent-p1",
+      current: [
+        "## Section\n^heading",
+        ...Array.from({ length: 8 }, (_, index) => `paragraph ${index + 1}\n^p${index + 1}`)
+      ].join("\n\n")
+    };
+    const selectedRange = markdownRanges(documents.current, current.id).find(
+      (range) => range.id === "p4"
+    )!;
     const selection: SelectionState = {
       text: "graph",
       blockId: "p4",
       start: 2,
-      end: 7
+      end: 7,
+      documentStart: selectedRange.from + 2,
+      documentEnd: selectedRange.from + 7
     };
     const scopes = [
       "containingParagraph",
@@ -53,7 +51,7 @@ describe("generation context assembly", () => {
       "allParentArticles"
     ] as const;
     const contexts = scopes.map((scope) =>
-      assembleGenerationContext(articles, current, selection, scope)
+      assembleGenerationContext(articles, documents, current, selection, scope)
     );
 
     expect(contexts[0].suppliedContext).toBe("paragraph 4");
@@ -64,14 +62,10 @@ describe("generation context assembly", () => {
     expect(contexts[4].suppliedContext).toContain("parent context");
     expect(contexts[5].suppliedContext).toContain("root context");
     expect(contexts.map((context) => context.suppliedContext.length)).toEqual(
-      [...contexts]
-        .map((context) => context.suppliedContext.length)
-        .sort((left, right) => left - right)
+      [...contexts].map((context) => context.suppliedContext.length).sort((left, right) => left - right)
     );
     expect(contexts[0].values["selection.prefix"]).toBe("pa");
     expect(contexts[0].values["selection.suffix"]).toBe("ph 4");
-    expect(contexts[0].values["section.path"]).toBe(
-      "root / parent / current"
-    );
+    expect(contexts[0].values["section.path"]).toBe("root / parent / current");
   });
 });

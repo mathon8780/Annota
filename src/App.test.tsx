@@ -1,7 +1,10 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { EditorView } from "@codemirror/view";
 import App from "./App";
-import { seedData } from "./test/fixtures/seed";
+import { markdownRanges } from "./editor/markdownDocument";
+import { clearBrowserMarkdownDocuments } from "./editor/markdownRepository";
+import { seedData, seedMarkdownDocuments } from "./test/fixtures/seed";
 import {
   APP_DATA_STORAGE_KEY,
   AppStoreProvider
@@ -10,19 +13,24 @@ import {
   initialModelProviders,
   MODEL_PROVIDERS_STORAGE_KEY
 } from "./utils/modelProviders";
+import { APP_THEME_STORAGE_KEY } from "./utils/themePreferences";
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
+function seedStoredAppData(data = seedData) {
+  window.localStorage.clear();
+  clearBrowserMarkdownDocuments();
+  window.localStorage.setItem("annota:content-reset.single-markdown-v1", "done");
+  window.localStorage.setItem(APP_DATA_STORAGE_KEY, JSON.stringify(data));
+  Object.entries(seedMarkdownDocuments).forEach(([id, markdown]) => {
+    window.localStorage.setItem(`annota:markdown-document.v1:${id}`, markdown);
+  });
+}
+
 function renderApp(clearStorage = true) {
-  if (clearStorage) {
-    window.localStorage.clear();
-    window.localStorage.setItem(
-      APP_DATA_STORAGE_KEY,
-      JSON.stringify(seedData)
-    );
-  }
+  if (clearStorage) seedStoredAppData();
   return render(
     <AppStoreProvider>
       <App />
@@ -71,47 +79,74 @@ function dispatchPointer(
   fireEvent(target, event);
 }
 
-function setDocumentSelection(block: Element, start: number, end: number) {
-  const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
-  const points: Array<{ node: Text; start: number; end: number }> = [];
-  let offset = 0;
-  while (walker.nextNode()) {
-    const node = walker.currentNode as Text;
-    points.push({ node, start: offset, end: offset + node.data.length });
-    offset += node.data.length;
-  }
-  const locate = (position: number) => {
-    const point =
-      points.find((candidate) => position <= candidate.end) ??
-      points[points.length - 1];
-    if (!point) throw new Error("Cannot select text in an empty document block.");
-    return {
-      node: point.node,
-      offset: Math.min(point.node.data.length, Math.max(0, position - point.start))
-    };
-  };
-  const from = locate(start);
-  const to = locate(end);
-  const range = document.createRange();
-  range.setStart(from.node, from.offset);
-  range.setEnd(to.node, to.offset);
-  const selection = window.getSelection();
-  selection?.removeAllRanges();
-  selection?.addRange(range);
-  fireEvent.mouseUp(block);
+function markdownEditorView() {
+  const content = screen.getByRole("textbox", { name: "编辑文章正文" });
+  const view = EditorView.findFromDOM(content as HTMLElement);
+  if (!view) throw new Error("CodeMirror editor is not ready.");
+  return view;
+}
+
+function markdownRange(article: (typeof seedData.articles)[string], blockId: string) {
+  const range = markdownRanges(seedMarkdownDocuments[article.id] ?? "", article.id)
+    .find((candidate) => candidate.id === blockId);
+  if (!range) throw new Error(`Unknown Markdown range ${blockId}`);
+  return range;
+}
+
+function firstParagraph(article: (typeof seedData.articles)[string]) {
+  const range = markdownRanges(seedMarkdownDocuments[article.id] ?? "", article.id)
+    .find((candidate) => candidate.kind === "paragraph");
+  if (!range) throw new Error(`Article ${article.id} has no Markdown paragraph`);
+  return range;
+}
+
+function markdownBlockStart(article: (typeof seedData.articles)[string], blockId: string) {
+  const range = markdownRange(article, blockId);
+  const source = seedMarkdownDocuments[article.id] ?? "";
+  const start = source.indexOf(range.text, range.from);
+  if (start < 0) throw new Error(`Cannot locate range ${blockId} in Markdown source.`);
+  return start;
+}
+
+function setDocumentSelection(
+  article: (typeof seedData.articles)[string],
+  blockId: string,
+  start: number,
+  end: number
+) {
+  const view = markdownEditorView();
+  const block = markdownRange(article, blockId);
+  const selectedText = block.text.slice(start, end);
+  const locatedSelection = selectedText
+    ? view.state.doc.toString().indexOf(selectedText)
+    : -1;
+  const from =
+    locatedSelection >= 0
+      ? locatedSelection
+      : markdownBlockStart(article, blockId) + start;
+  const to = locatedSelection >= 0 ? locatedSelection + selectedText.length : from;
+  act(() => {
+    view.dispatch({
+      selection: { anchor: from, head: to }
+    });
+    view.focus();
+  });
+}
+
+function replaceMarkdown(from: number, to: number, insert: string) {
+  const view = markdownEditorView();
+  act(() => {
+    view.dispatch({ changes: { from, to, insert } });
+  });
 }
 
 describe("Annota core flow", () => {
   it("always starts on the home page even when the last session ended in the reader", () => {
-    window.localStorage.clear();
-    window.localStorage.setItem(
-      APP_DATA_STORAGE_KEY,
-      JSON.stringify({
-        ...seedData,
-        currentNotebookId: seedData.notebooks[0].id,
-        currentArticleId: seedData.notebooks[0].rootId
-      })
-    );
+    seedStoredAppData({
+      ...seedData,
+      currentNotebookId: seedData.notebooks[0].id,
+      currentArticleId: seedData.notebooks[0].rootId
+    });
 
     renderApp(false);
 
@@ -145,6 +180,19 @@ describe("Annota core flow", () => {
     );
     expect(screen.getByText("知识库还是空的")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /打开笔记：/ })).toBeNull();
+  });
+
+  it("clears retired article metadata and browser Markdown content on upgrade", () => {
+    window.localStorage.clear();
+    window.localStorage.setItem("annota.desktop.library.v1", JSON.stringify(seedData));
+    window.localStorage.setItem("annota:markdown-document.v1:ecs-root", "不应保留的旧正文");
+
+    const { container } = renderApp(false);
+
+    expect(container.querySelector(".home-ledger strong")).toHaveTextContent("0");
+    expect(window.localStorage.getItem("annota.desktop.library.v1")).toBeNull();
+    expect(window.localStorage.getItem("annota:markdown-document.v1:ecs-root")).toBeNull();
+    expect(window.localStorage.getItem("annota:content-reset.single-markdown-v1")).toBe("done");
   });
 
   it("opens folders, tags, and favorites from the home sidebar", async () => {
@@ -406,7 +454,7 @@ describe("Annota core flow", () => {
           ".generation-identity-grid > label > span:first-child, .generation-identity-grid > fieldset > legend"
         )
       ).map((label) => label.textContent)
-    ).toEqual(["生成类型名称", "调用模型", "标记颜色"]);
+    ).toEqual(["生成类型名称", "调用模型", "标记颜色", "列表图标"]);
     expect(
       within(generationPage).queryByRole("textbox", { name: "关系标签" })
     ).not.toBeInTheDocument();
@@ -643,7 +691,7 @@ describe("Annota core flow", () => {
     ).toBeInTheDocument();
     expect(container.querySelector(".home-workspace > .home-topbar")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "返回主页" })).not.toBeInTheDocument();
-    await openFirstNotebook(user);
+    const article = await openFirstNotebook(user);
 
     expect(
       screen.getByRole("heading", { name: "ECS 架构：从数据布局到系统调度" })
@@ -662,10 +710,12 @@ describe("Annota core flow", () => {
       "246"
     );
 
-    const editor = screen.getByRole("textbox", { name: "编辑文章正文" });
-    const firstBlock = editor.querySelector<HTMLElement>("[data-block-id]")!;
-    setDocumentSelection(firstBlock, 0, 1);
-    fireEvent.mouseUp(editor);
+    setDocumentSelection(
+      article,
+      markdownRanges(seedMarkdownDocuments[article.id], article.id)[0].id,
+      0,
+      1
+    );
     expect(container.querySelector(".article-column")).toHaveAttribute("data-motion", "settle");
 
     const childrenPanel = screen.getByRole("complementary", { name: "下一级子文章" });
@@ -702,6 +752,98 @@ describe("Annota core flow", () => {
 
     expect(screen.getByRole("separator", { name: "调整阅读路径宽度" }))
       .toHaveAttribute("aria-valuenow", "326");
+  });
+
+  it("retains the unread descendant tail when moving up and replaces it on another branch", async () => {
+    const user = userEvent.setup();
+    const { container } = renderApp();
+    await openFirstNotebook(user);
+
+    let childrenPanel = screen.getByRole("complementary", { name: "下一级子文章" });
+    await user.click(
+      within(childrenPanel).getByRole("button", {
+        name: /System 的更新顺序与依赖调度/
+      })
+    );
+    childrenPanel = screen.getByRole("complementary", { name: "下一级子文章" });
+    await user.click(
+      within(childrenPanel).getByRole("button", {
+        name: /为什么物理查询会破坏批处理节奏/
+      })
+    );
+
+    const readingPath = screen.getByRole("complementary", { name: "阅读路径" });
+    await user.click(
+      within(readingPath).getByRole("button", {
+        name: /System 的更新顺序与依赖调度/
+      })
+    );
+
+    let retainedStep = container.querySelector(
+      ".path-step.is-retained"
+    );
+    expect(retainedStep).toHaveTextContent("为什么物理查询会破坏批处理节奏");
+    expect(
+      within(readingPath).getByRole("button", {
+        name: "继续阅读：为什么物理查询会破坏批处理节奏"
+      })
+    ).toBeInTheDocument();
+
+    await user.click(
+      within(readingPath).getByRole("button", {
+        name: /ECS 架构：从数据布局到系统调度/
+      })
+    );
+    childrenPanel = screen.getByRole("complementary", { name: "下一级子文章" });
+    await user.click(
+      within(childrenPanel).getByRole("button", {
+        name: /Component 为什么应该保持纯数据/
+      })
+    );
+
+    retainedStep = container.querySelector(".path-step.is-retained");
+    expect(retainedStep).toBeNull();
+    expect(within(readingPath).queryByText("System 的更新顺序与依赖调度"))
+      .not.toBeInTheDocument();
+    expect(within(readingPath).queryByText("为什么物理查询会破坏批处理节奏"))
+      .not.toBeInTheDocument();
+  });
+
+  it("zooms only the article content with Ctrl and the mouse wheel", async () => {
+    const user = userEvent.setup();
+    const { container } = renderApp();
+    await openFirstNotebook(user);
+
+    const readerSurface = screen.getByRole("region", { name: "文章阅读区域" });
+    const article = container.querySelector(".article-column");
+    const toolbar = container.querySelector(".inline-formatting-toolbar");
+
+    expect(article).toHaveAttribute("data-content-zoom", "1");
+    fireEvent.wheel(readerSurface, { deltaY: -100 });
+    expect(article).toHaveAttribute("data-content-zoom", "1");
+
+    const browserZoomPrevented = fireEvent.wheel(readerSurface, {
+      ctrlKey: true,
+      deltaY: -100
+    });
+    expect(browserZoomPrevented).toBe(false);
+    expect(article).toHaveAttribute("data-content-zoom", "1.1");
+    expect(article).toHaveStyle({ "--reader-reading-font-size": "17.6px" });
+    expect(article).toHaveStyle({ "--reader-body-line-height": "25.52px" });
+    expect(toolbar).not.toHaveAttribute("data-content-zoom");
+    expect(window.localStorage.getItem("annota:reader-content-zoom.v1")).toBe("1.1");
+    expect(screen.getByRole("status")).toHaveTextContent("显示比例 110%");
+
+    fireEvent.wheel(readerSurface, { ctrlKey: true, deltaY: 100 });
+    expect(article).toHaveAttribute("data-content-zoom", "1");
+
+    fireEvent.wheel(readerSurface, { ctrlKey: true, deltaY: -100 });
+    expect(article).toHaveAttribute("data-content-zoom", "1.1");
+
+    await user.click(screen.getByRole("button", { name: "返回主页" }));
+    await openFirstNotebook(user);
+    expect(container.querySelector(".article-column"))
+      .toHaveAttribute("data-content-zoom", "1.1");
   });
 
   it("keeps the topology trigger separate from the animated panel", async () => {
@@ -752,10 +894,29 @@ describe("Annota core flow", () => {
     expect(panel.querySelector(".topology-viewport")).toBe(viewport);
   });
 
-  it("keeps the canvas open after unpinning and toggles pinning with D", async () => {
+  it("does not open the topology when Tab focus reaches its trigger", async () => {
     const user = userEvent.setup();
     renderApp();
     await openFirstNotebook(user);
+
+    const panel = screen.getByRole("complementary", { name: "当前知识树拓扑" });
+    const shell = panel.parentElement!;
+    const trigger = screen.getByRole("button", { name: "展开文章拓扑" });
+
+    trigger.focus();
+    expect(trigger).toHaveFocus();
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(shell).not.toHaveClass("is-open");
+
+    await user.keyboard("{Enter}");
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(shell).toHaveClass("is-open");
+  });
+
+  it("keeps the canvas open after unpinning and toggles pinning with D", async () => {
+    const user = userEvent.setup();
+    renderApp();
+    const article = await openFirstNotebook(user);
 
     const panel = screen.getByRole("complementary", { name: "当前知识树拓扑" });
     const shell = panel.parentElement!;
@@ -977,11 +1138,10 @@ describe("Annota core flow", () => {
 
   it("does not create generated content when no generation service is configured", async () => {
     const user = userEvent.setup();
-    const { container } = renderApp();
+    renderApp();
     const article = await openFirstNotebook(user);
-    const paragraph = article.blocks.find((block) => block.kind === "paragraph")!;
-    const block = container.querySelector(`[data-block-id="${paragraph.id}"]`)!;
-    setDocumentSelection(block, 0, 12);
+    const paragraph = firstParagraph(article);
+    setDocumentSelection(article, paragraph.id, 0, 12);
 
     const explain = screen.getByTitle("解释选中文字");
     expect(explain).toBeEnabled();
@@ -1014,11 +1174,7 @@ describe("Annota core flow", () => {
         ]
       })
     } as Response);
-    window.localStorage.clear();
-    window.localStorage.setItem(
-      APP_DATA_STORAGE_KEY,
-      JSON.stringify(seedData)
-    );
+    seedStoredAppData();
     window.localStorage.setItem(
       MODEL_PROVIDERS_STORAGE_KEY,
       JSON.stringify(
@@ -1036,11 +1192,10 @@ describe("Annota core flow", () => {
       )
     );
     const user = userEvent.setup();
-    const { container } = renderApp(false);
+    renderApp(false);
     const article = await openFirstNotebook(user);
-    const paragraph = article.blocks.find((block) => block.kind === "paragraph")!;
-    const block = container.querySelector(`[data-block-id="${paragraph.id}"]`)!;
-    setDocumentSelection(block, 0, 12);
+    const paragraph = firstParagraph(article);
+    setDocumentSelection(article, paragraph.id, 0, 12);
 
     await user.click(screen.getByTitle("解释选中文字"));
     expect(
@@ -1062,17 +1217,62 @@ describe("Annota core flow", () => {
     const { container } = renderApp();
     const article = await openFirstNotebook(user);
     const editor = screen.getByRole("textbox", { name: "编辑文章正文" });
-    const block = container.querySelector(
-      `[data-block-id="${article.blocks[0].id}"]`
-    )!;
-
     expect(editor).toHaveAttribute("contenteditable", "true");
     expect(container.querySelector("textarea")).not.toBeInTheDocument();
+    expect(container.querySelector(".cm-editor")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "实时预览" })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
 
-    await user.click(block);
+    await user.click(editor);
 
     expect(container.querySelector(".block-edit-shell")).not.toBeInTheDocument();
     expect(container.querySelector(".is-focus-visible")).not.toBeInTheDocument();
+  });
+
+  it("does not move the caret when the blank editor root is clicked", async () => {
+    const user = userEvent.setup();
+    const { container } = renderApp();
+    await openFirstNotebook(user);
+    const editor = screen.getByTestId("markdown-editor-content");
+    const view = markdownEditorView();
+    const anchor = Math.min(8, view.state.doc.length);
+
+    act(() => {
+      view.dispatch({ selection: { anchor } });
+      view.focus();
+    });
+    fireEvent.pointerDown(editor);
+    fireEvent.mouseDown(editor);
+
+    expect(view.state.selection.main.anchor).toBe(anchor);
+    expect(view.state.selection.main.empty).toBe(true);
+    expect(container.querySelector(".cm-selectionLayer")).toBeNull();
+  });
+
+  it("keeps heading geometry when switching between preview and source", async () => {
+    const user = userEvent.setup();
+    const { container } = renderApp();
+    await openFirstNotebook(user);
+
+    expect(container.querySelector(".cm-live-heading-2")).toHaveTextContent(
+      "为什么要把数据与行为拆开"
+    );
+
+    await user.click(screen.getByRole("button", { name: "源码" }));
+
+    const sourceHeading = container.querySelector(".cm-source-heading-2");
+    expect(sourceHeading).toHaveTextContent("## 为什么要把数据与行为拆开");
+    expect(sourceHeading).not.toHaveClass("cm-live-heading");
+    expect(container.querySelector(".cm-live-heading")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "实时预览" }));
+
+    expect(container.querySelector(".cm-live-heading-2")).toHaveTextContent(
+      "为什么要把数据与行为拆开"
+    );
+    expect(container.querySelector(".cm-source-heading")).toBeNull();
   });
 
   it("places the formatting toolbar across the full reading surface", async () => {
@@ -1084,13 +1284,18 @@ describe("Annota core flow", () => {
     const toolbar = within(readerSurface).getByRole("toolbar", { name: "文字格式" });
     const articleColumn = container.querySelector(".article-column");
     const expandWidth = within(toolbar).getByRole("button", { name: "撑满正文显示区域" });
-    const selectionStatus = within(readerSurface).getByText("选择文字后可设置格式");
+    const editorControls = container.querySelector(".markdown-editor-controls");
+    const articleHeader = container.querySelector(".article-header");
 
     expect(toolbar.parentElement).toBe(readerSurface);
     expect(readerSurface.firstElementChild).toBe(toolbar);
     expect(within(toolbar).queryByText("选区格式")).not.toBeInTheDocument();
-    expect(toolbar).not.toContainElement(selectionStatus);
-    expect(selectionStatus.parentElement).toBe(readerSurface);
+    expect(readerSurface.querySelector(":scope > span")).toBeNull();
+    expect(editorControls).toBeInTheDocument();
+    expect(editorControls?.querySelector("details")).toBeNull();
+    expect(articleHeader?.querySelector(":scope > div")).toBeNull();
+    expect(articleHeader?.querySelector(":scope > p")).toBeNull();
+    expect(articleHeader?.querySelector(":scope > button")).toBeNull();
     expect(toolbar.lastElementChild).toBe(expandWidth);
     expect(expandWidth).toHaveAttribute("aria-pressed", "false");
     expect(articleColumn).not.toHaveClass("is-full-width");
@@ -1104,157 +1309,61 @@ describe("Annota core flow", () => {
     expect(articleColumn).not.toHaveClass("is-full-width");
   });
 
+  it("switches the reading path to current-only mode from settings", async () => {
+    const user = userEvent.setup();
+    renderApp();
+
+    await user.click(screen.getByRole("button", { name: "打开设置" }));
+    const modeSwitch = screen.getByRole("switch", {
+      name: "保留后续阅读路径"
+    });
+    expect(modeSwitch).toHaveAttribute("aria-checked", "true");
+
+    await user.click(modeSwitch);
+
+    expect(modeSwitch).toHaveAttribute("aria-checked", "false");
+    expect(window.localStorage.getItem("annota:reading-path-mode.v1")).toBe(
+      "current-only"
+    );
+
+    await user.click(screen.getByRole("button", { name: "主页" }));
+    await openFirstNotebook(user);
+    let childrenPanel = screen.getByRole("complementary", { name: "下一级子文章" });
+    await user.click(
+      within(childrenPanel).getByRole("button", {
+        name: /System 的更新顺序与依赖调度/
+      })
+    );
+    childrenPanel = screen.getByRole("complementary", { name: "下一级子文章" });
+    await user.click(
+      within(childrenPanel).getByRole("button", {
+        name: /为什么物理查询会破坏批处理节奏/
+      })
+    );
+    const readingPath = screen.getByRole("complementary", { name: "阅读路径" });
+    await user.click(
+      within(readingPath).getByRole("button", {
+        name: /System 的更新顺序与依赖调度/
+      })
+    );
+
+    expect(within(readingPath).queryByText("为什么物理查询会破坏批处理节奏"))
+      .not.toBeInTheDocument();
+    expect(document.querySelector(".path-step.is-retained")).toBeNull();
+  });
+
   it("autosaves text edited in the seamless document", async () => {
     const user = userEvent.setup();
-    const { container } = renderApp();
+    renderApp();
     const article = await openFirstNotebook(user);
-    const paragraph = article.blocks.find((block) => block.kind === "paragraph")!;
-    const block = container.querySelector(
-      `[data-block-id="${paragraph.id}"]`
-    ) as HTMLElement;
-
-    block.textContent = `${paragraph.text}新增内容`;
-    fireEvent.input(block);
+    const paragraph = firstParagraph(article);
+    const insertion = markdownBlockStart(article, paragraph.id) + paragraph.text.length;
+    replaceMarkdown(insertion, insertion, "新增内容");
 
     await waitFor(() => {
-      const stored = JSON.parse(
-        window.localStorage.getItem(APP_DATA_STORAGE_KEY) ?? "{}"
-      );
       expect(
-        stored.articles[article.id].blocks.find(
-          (candidate: { id: string }) => candidate.id === paragraph.id
-        ).text
-      ).toBe(`${paragraph.text}新增内容`);
-    });
-  });
-
-  it("creates a paragraph block when Enter is pressed", async () => {
-    const user = userEvent.setup();
-    const { container } = renderApp();
-    const article = await openFirstNotebook(user);
-    const paragraph = article.blocks.find((block) => block.kind === "paragraph")!;
-    const splitAt = 6;
-    const editor = screen.getByRole("textbox", { name: "编辑文章正文" });
-    const block = container.querySelector(`[data-block-id="${paragraph.id}"]`)!;
-
-    setDocumentSelection(block, splitAt, splitAt);
-    fireEvent.keyDown(editor, { key: "Enter" });
-
-    await waitFor(() => {
-      const documentBlocks = Array.from(
-        container.querySelectorAll<HTMLElement>(".document-block")
-      );
-      const blockIndex = documentBlocks.findIndex(
-        (candidate) => candidate.dataset.blockId === paragraph.id
-      );
-      expect(documentBlocks).toHaveLength(article.blocks.length + 1);
-      expect(documentBlocks[blockIndex].textContent).toBe(
-        paragraph.text.slice(0, splitAt)
-      );
-      expect(documentBlocks[blockIndex + 1].textContent).toBe(
-        paragraph.text.slice(splitAt)
-      );
-      expect(documentBlocks[blockIndex + 1]).toHaveAttribute(
-        "data-block-kind",
-        "paragraph"
-      );
-    });
-  });
-
-  it("removes a newly created empty paragraph when the caret moves away", async () => {
-    const user = userEvent.setup();
-    const { container } = renderApp();
-    const article = await openFirstNotebook(user);
-    const lastBlock = article.blocks[article.blocks.length - 1];
-    const editor = screen.getByRole("textbox", { name: "编辑文章正文" });
-    const block = container.querySelector(`[data-block-id="${lastBlock.id}"]`)!;
-
-    setDocumentSelection(block, lastBlock.text.length, lastBlock.text.length);
-    fireEvent.keyDown(editor, { key: "Enter" });
-
-    await waitFor(() => {
-      expect(container.querySelectorAll(".document-block")).toHaveLength(
-        article.blocks.length + 1
-      );
-    });
-
-    fireEvent.pointerDown(block);
-
-    await waitFor(() => {
-      expect(container.querySelectorAll(".document-block")).toHaveLength(
-        article.blocks.length
-      );
-      const stored = JSON.parse(
-        window.localStorage.getItem(APP_DATA_STORAGE_KEY) ?? "{}"
-      );
-      expect(stored.articles[article.id].blocks).toHaveLength(article.blocks.length);
-    });
-  });
-
-  it("merges with the previous block on Backspace at block start", async () => {
-    const user = userEvent.setup();
-    const { container } = renderApp();
-    const article = await openFirstNotebook(user);
-    const previous = article.blocks[0];
-    const current = article.blocks[1];
-    const editor = screen.getByRole("textbox", { name: "编辑文章正文" });
-    const currentBlock = container.querySelector(
-      `[data-block-id="${current.id}"]`
-    )!;
-
-    setDocumentSelection(currentBlock, 0, 0);
-    fireEvent.keyDown(editor, { key: "Backspace" });
-
-    await waitFor(() => {
-      expect(container.querySelectorAll(".document-block")).toHaveLength(
-        article.blocks.length - 1
-      );
-      expect(
-        container.querySelector(`[data-block-id="${previous.id}"]`)?.textContent
-      ).toBe(`${previous.text}${current.text}`);
-      expect(
-        container.querySelector(`[data-block-id="${current.id}"]`)
-      ).not.toBeInTheDocument();
-    });
-  });
-
-  it("creates paragraph blocks from multiline plain-text paste", async () => {
-    const user = userEvent.setup();
-    const { container } = renderApp();
-    const article = await openFirstNotebook(user);
-    const paragraph = article.blocks.find((block) => block.kind === "paragraph")!;
-    const pasteAt = 4;
-    const editor = screen.getByRole("textbox", { name: "编辑文章正文" });
-    const block = container.querySelector(`[data-block-id="${paragraph.id}"]`)!;
-
-    setDocumentSelection(block, pasteAt, pasteAt);
-    fireEvent.paste(editor, {
-      clipboardData: { getData: () => "第一行\n第二行\n第三行" }
-    });
-
-    await waitFor(() => {
-      const documentBlocks = Array.from(
-        container.querySelectorAll<HTMLElement>(".document-block")
-      );
-      const blockIndex = documentBlocks.findIndex(
-        (candidate) => candidate.dataset.blockId === paragraph.id
-      );
-      expect(documentBlocks).toHaveLength(article.blocks.length + 2);
-      expect(
-        documentBlocks.slice(blockIndex, blockIndex + 3).map((item) => item.textContent)
-      ).toEqual([
-        `${paragraph.text.slice(0, pasteAt)}第一行`,
-        "第二行",
-        `第三行${paragraph.text.slice(pasteAt)}`
-      ]);
-      expect(documentBlocks[blockIndex + 1]).toHaveAttribute(
-        "data-block-kind",
-        "paragraph"
-      );
-      expect(documentBlocks[blockIndex + 2]).toHaveAttribute(
-        "data-block-kind",
-        "paragraph"
-      );
+        window.localStorage.getItem(`annota:markdown-document.v1:${article.id}`)
+      ).toContain(`${paragraph.text}新增内容`);
     });
   });
 
@@ -1262,9 +1371,8 @@ describe("Annota core flow", () => {
     const user = userEvent.setup();
     const { container } = renderApp();
     const article = await openFirstNotebook(user);
-    const paragraph = article.blocks.find((block) => block.kind === "paragraph")!;
-    const block = container.querySelector(`[data-block-id="${paragraph.id}"]`)!;
-    setDocumentSelection(block, 0, 4);
+    const paragraph = firstParagraph(article);
+    setDocumentSelection(article, paragraph.id, 0, 4);
 
     await user.click(screen.getByRole("button", { name: "选择文字颜色" }));
     expect(screen.getByRole("dialog", { name: "文字颜色选项" })).toBeInTheDocument();
@@ -1286,14 +1394,13 @@ describe("Annota core flow", () => {
     });
   });
 
-  it("applies bold formatting to a selection and restores it after reopening the reader", async () => {
+  it("writes bold Markdown and restores it after reopening the reader", async () => {
     const user = userEvent.setup();
-    const { container } = renderApp();
+    renderApp();
     const article = await openFirstNotebook(user);
-    const paragraph = article.blocks.find((block) => block.kind === "paragraph")!;
+    const paragraph = firstParagraph(article);
     const selectedText = paragraph.text.slice(0, 6);
-    const block = container.querySelector(`[data-block-id="${paragraph.id}"]`)!;
-    setDocumentSelection(block, 0, selectedText.length);
+    setDocumentSelection(article, paragraph.id, 0, selectedText.length);
 
     expect(screen.getByRole("button", { name: "加粗" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "斜体" })).toBeEnabled();
@@ -1302,117 +1409,79 @@ describe("Annota core flow", () => {
     await user.click(screen.getByRole("button", { name: "加粗" }));
 
     await waitFor(() => {
-      const stored = JSON.parse(
-        window.localStorage.getItem(APP_DATA_STORAGE_KEY) ?? "{}"
-      );
-      expect(stored.articles[article.id].blocks.find(
-        (block: { id: string }) => block.id === paragraph.id
-      ).marks).toEqual([
-        expect.objectContaining({ type: "bold", start: 0, end: selectedText.length })
-      ]);
+      expect(
+        window.localStorage.getItem(`annota:markdown-document.v1:${article.id}`)
+      ).toContain(`**${selectedText}**`);
     });
 
     await user.click(screen.getByRole("button", { name: "返回主页" }));
     await openFirstNotebook(user);
 
-    expect(screen.getByText(selectedText, { selector: ".inline-mark-bold" }))
-      .toBeInTheDocument();
+    expect(markdownEditorView().state.doc.toString()).toContain(`**${selectedText}**`);
   });
 
-  it("applies the selected text color without storing HTML", async () => {
+  it("stores selected text color as controlled Markdown HTML", async () => {
     const user = userEvent.setup();
-    const { container } = renderApp();
+    renderApp();
     const article = await openFirstNotebook(user);
-    const paragraph = article.blocks.find((block) => block.kind === "paragraph")!;
+    const paragraph = firstParagraph(article);
     const selectedText = paragraph.text.slice(0, 4);
-    const block = container.querySelector(`[data-block-id="${paragraph.id}"]`)!;
-    setDocumentSelection(block, 0, selectedText.length);
+    setDocumentSelection(article, paragraph.id, 0, selectedText.length);
 
     await user.click(screen.getByRole("button", { name: "选择文字颜色" }));
     await user.click(screen.getByRole("button", { name: "文字颜色：蓝色" }));
     await waitFor(() => {
-      const stored = JSON.parse(
-        window.localStorage.getItem(APP_DATA_STORAGE_KEY) ?? "{}"
-      );
-      expect(stored.articles[article.id].blocks.find(
-        (block: { id: string }) => block.id === paragraph.id
-      ).marks).toEqual([
-        expect.objectContaining({
-          type: "textColor",
-          color: "#2563eb",
-          start: 0,
-          end: selectedText.length
-        })
-      ]);
+      expect(
+        window.localStorage.getItem(`annota:markdown-document.v1:${article.id}`)
+      ).toContain(`<span style="color:#2563eb">${selectedText}</span>`);
     });
 
     await user.click(screen.getByRole("button", { name: "返回主页" }));
     await openFirstNotebook(user);
 
-    const coloredText = document.querySelector(".inline-mark-text-color");
-    expect(coloredText).not.toBeNull();
-    expect(coloredText).toHaveTextContent(selectedText.trim());
-    expect(coloredText).toHaveStyle({ color: "#2563eb" });
-    expect(paragraph.text).not.toContain("<span");
+    expect(markdownEditorView().state.doc.toString()).toContain(
+      `<span style="color:#2563eb">${selectedText}</span>`
+    );
   });
 
   it("applies the last used text and background colors with one click", async () => {
     const user = userEvent.setup();
-    const { container } = renderApp();
+    renderApp();
     const article = await openFirstNotebook(user);
-    const paragraph = article.blocks.find((block) => block.kind === "paragraph")!;
-    const block = container.querySelector(`[data-block-id="${paragraph.id}"]`)!;
+    const paragraph = firstParagraph(article);
 
-    setDocumentSelection(block, 0, 2);
+    setDocumentSelection(article, paragraph.id, 0, 2);
     await user.click(screen.getByRole("button", { name: "选择文字颜色" }));
     await user.click(screen.getByRole("button", { name: "文字颜色：蓝色" }));
 
-    setDocumentSelection(block, 3, 5);
+    setDocumentSelection(article, paragraph.id, 3, 5);
     await user.click(screen.getByRole("button", { name: "文字颜色" }));
 
-    setDocumentSelection(block, 6, 8);
+    setDocumentSelection(article, paragraph.id, 6, 8);
     await user.click(screen.getByRole("button", { name: "选择背景标注颜色" }));
     await user.click(
       screen.getByRole("button", { name: "背景标注颜色：紫色" })
     );
 
-    setDocumentSelection(block, 9, 11);
+    setDocumentSelection(article, paragraph.id, 9, 11);
     await user.click(screen.getByRole("button", { name: "背景标注颜色" }));
 
     await waitFor(() => {
-      const stored = JSON.parse(
-        window.localStorage.getItem(APP_DATA_STORAGE_KEY) ?? "{}"
+      const source = window.localStorage.getItem(
+        `annota:markdown-document.v1:${article.id}`
       );
-      const marks = stored.articles[article.id].blocks.find(
-        (candidate: { id: string }) => candidate.id === paragraph.id
-      ).marks;
-      expect(marks).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            type: "textColor",
-            color: "#2563eb",
-            start: 3,
-            end: 5
-          }),
-          expect.objectContaining({
-            type: "backgroundColor",
-            color: "#e9d5ff",
-            start: 9,
-            end: 11
-          })
-        ])
-      );
+      expect(source).toContain("color:#2563eb");
+      expect(source).toContain("background-color:#e9d5ff");
     });
   });
 
   it("offers preset and custom colors in mutually exclusive menus", async () => {
     const user = userEvent.setup();
-    const { container } = renderApp();
+    renderApp();
     const article = await openFirstNotebook(user);
-    const paragraph = article.blocks.find((block) => block.kind === "paragraph")!;
+    const paragraph = firstParagraph(article);
     const selectedText = paragraph.text.slice(0, 5);
-    const block = container.querySelector(`[data-block-id="${paragraph.id}"]`)!;
-    setDocumentSelection(block, 0, selectedText.length);
+    setDocumentSelection(article, paragraph.id, 0, selectedText.length);
 
     await user.click(screen.getByRole("button", { name: "选择文字颜色" }));
     expect(screen.getByRole("button", { name: "文字颜色：黄色" })).toBeInTheDocument();
@@ -1451,26 +1520,17 @@ describe("Annota core flow", () => {
       screen.getByRole("button", { name: "背景标注颜色：蓝色" })
     );
     await waitFor(() => {
-      const stored = JSON.parse(
-        window.localStorage.getItem(APP_DATA_STORAGE_KEY) ?? "{}"
-      );
-      expect(stored.articles[article.id].blocks.find(
-        (block: { id: string }) => block.id === paragraph.id
-      ).marks).toEqual([
-        expect.objectContaining({
-          type: "backgroundColor",
-          color: "#bfdbfe",
-          start: 0,
-          end: selectedText.length
-        })
-      ]);
+      expect(
+        window.localStorage.getItem(`annota:markdown-document.v1:${article.id}`)
+      ).toContain(`<mark style="background-color:#bfdbfe">${selectedText}</mark>`);
     });
 
     await user.click(screen.getByRole("button", { name: "返回主页" }));
     await openFirstNotebook(user);
 
-    expect(document.querySelector(".inline-mark-background-color"))
-      .toHaveStyle({ backgroundColor: "#bfdbfe" });
+    expect(markdownEditorView().state.doc.toString()).toContain(
+      `<mark style="background-color:#bfdbfe">${selectedText}</mark>`
+    );
   });
 
   it("opens the categorized settings workspace from the bottom of the home sidebar", async () => {
@@ -1537,6 +1597,17 @@ describe("Annota core flow", () => {
     expect(
       within(settingsCanvas).getByRole("searchbox", { name: "筛选系统字体" })
     ).toBeDisabled();
+    expect(
+      within(settingsCanvas).getByRole("radio", { name: /Cobalt 浅色/ })
+    ).toBeChecked();
+    await user.click(
+      within(settingsCanvas).getByRole("radio", { name: /Gruvbox 暖夜/ })
+    );
+    expect(
+      within(settingsCanvas).getByRole("radio", { name: /Gruvbox 暖夜/ })
+    ).toBeChecked();
+    expect(window.localStorage.getItem(APP_THEME_STORAGE_KEY)).toBe("gruvbox");
+    expect(document.documentElement).toHaveAttribute("data-theme", "gruvbox");
     await user.selectOptions(
       within(settingsCanvas).getByRole("combobox", { name: "界面字体" }),
       "system-sans"

@@ -78,6 +78,9 @@ import type {
   ShortcutBinding,
   ShortcutPreferences
 } from "../utils/shortcuts";
+import { appThemes } from "../utils/themePreferences";
+import type { AppThemeId } from "../utils/themePreferences";
+import type { ReadingPathMode } from "../utils/readingPathPreferences";
 import { discoverModels } from "../utils/modelDiscovery";
 import {
   BUILT_IN_MODEL_CATALOG_UPDATED_AT,
@@ -85,9 +88,13 @@ import {
 } from "../data/builtInModelCatalog";
 
 interface SettingsPageProps {
+  appTheme: AppThemeId;
   contentStyle: ContentStyleId;
   customContentStyle: CustomContentStyle;
+  readingPathMode: ReadingPathMode;
   shortcuts: ShortcutPreferences;
+  onAppThemeChange: (theme: AppThemeId) => void;
+  onReadingPathModeChange: (mode: ReadingPathMode) => void;
   onContentStyleChange: (style: ContentStyleId) => void;
   onCustomContentStyleChange: (style: CustomContentStyle) => void;
   onShortcutChange: (
@@ -526,6 +533,7 @@ const settingCategories: SettingCategory[] = [
       {
         title: "阅读与标注",
         items: [
+          { label: "保留后续阅读路径", scope: "全局", slot: "compact" },
           { label: "正文行高", scope: "全局" },
           { label: "默认标注颜色", scope: "全局", slot: "compact" },
           { label: "减少动态效果", scope: "全局", slot: "compact" }
@@ -725,9 +733,13 @@ const settingCategories: SettingCategory[] = [
 ];
 
 export function SettingsPage({
+  appTheme,
   contentStyle,
   customContentStyle,
+  readingPathMode,
   shortcuts,
+  onAppThemeChange,
+  onReadingPathModeChange,
   onContentStyleChange,
   onCustomContentStyleChange,
   onShortcutChange,
@@ -836,9 +848,16 @@ export function SettingsPage({
                 {activeCategory.groups.length > 0 && (
                   <div className="settings-preview-note" role="note">
                     {activeCategory.id === "appearance"
-                      ? "字体与内容显示风格现已可用；阅读与标注项目仍为结构预览。"
+                      ? "应用主题、字体、内容显示与阅读路径偏好现已可用；其余阅读与标注项目仍为结构预览。"
                       : "当前项目暂为结构预览，不会更改应用数据。"}
                   </div>
+                )}
+
+                {activeCategory.id === "appearance" && (
+                  <ThemeSettings
+                    value={appTheme}
+                    onChange={onAppThemeChange}
+                  />
                 )}
 
                 <div className="settings-groups">
@@ -881,6 +900,29 @@ export function SettingsPage({
                                 query={fontQuery}
                                 onChange={updateFontPreference}
                               />
+                            ) : activeCategory.id === "appearance" &&
+                              item.label === "保留后续阅读路径" ? (
+                              <button
+                                className="settings-switch-control"
+                                type="button"
+                                role="switch"
+                                aria-checked={readingPathMode === "retain-branch"}
+                                aria-label="保留后续阅读路径"
+                                onClick={() =>
+                                  onReadingPathModeChange(
+                                    readingPathMode === "retain-branch"
+                                      ? "current-only"
+                                      : "retain-branch"
+                                  )
+                                }
+                              >
+                                <span>
+                                  {readingPathMode === "retain-branch"
+                                    ? "保留分支"
+                                    : "仅当前路径"}
+                                </span>
+                                <i aria-hidden="true" />
+                              </button>
                             ) : (
                               <div
                                 className={`settings-value-slot is-${item.slot ?? "medium"}`}
@@ -1072,6 +1114,77 @@ const contentStyleIcons: Record<ContentStyleId, LucideIcon> = {
   "academic-curation": Landmark,
   custom: Plus
 };
+
+function ThemeSettings({
+  value,
+  onChange
+}: {
+  value: AppThemeId;
+  onChange: (theme: AppThemeId) => void;
+}) {
+  const activeTheme =
+    appThemes.find((theme) => theme.id === value) ?? appThemes[0];
+
+  return (
+    <section
+      className="settings-content-style settings-theme-picker"
+      aria-labelledby="app-theme-title"
+    >
+      <header>
+        <div>
+          <span>应用外观</span>
+          <h3 id="app-theme-title">主题切换</h3>
+        </div>
+        <small>当前：{activeTheme.name}</small>
+      </header>
+      <div
+        className="theme-options"
+        role="radiogroup"
+        aria-label="应用主题"
+      >
+        {appThemes.map((theme) => {
+          const isSelected = theme.id === value;
+          return (
+            <label
+              className={`theme-option${isSelected ? " is-selected" : ""}`}
+              key={theme.id}
+            >
+              <input
+                type="radio"
+                name="app-theme"
+                value={theme.id}
+                checked={isSelected}
+                onChange={() => onChange(theme.id)}
+              />
+              <span
+                className={`theme-option-preview is-${theme.id}`}
+                aria-hidden="true"
+              >
+                <span />
+                <span />
+                <span />
+              </span>
+              <span className="theme-option-copy">
+                <strong>{theme.name}</strong>
+                <small>{theme.englishName}</small>
+                <span>{theme.description}</span>
+              </span>
+              <Check
+                className="theme-option-check"
+                aria-hidden="true"
+                size={17}
+              />
+            </label>
+          );
+        })}
+      </div>
+      <p className="theme-attribution">
+        Gruvbox 暖夜基于 Obsidian gruvbox 0.2.1 的配色语言适配，保留 Annota
+        的排版、布局与交互层级。
+      </p>
+    </section>
+  );
+}
 
 function ContentStyleSettings({
   customStyle,

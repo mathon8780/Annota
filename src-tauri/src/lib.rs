@@ -1,5 +1,7 @@
+mod markdown_store;
 mod window_size;
 
+use markdown_store::{MarkdownDocument, MarkdownStore};
 use tauri::{LogicalSize, Manager, WindowEvent};
 use window_size::{WindowDimensions, WindowSizePersistence};
 
@@ -84,6 +86,24 @@ fn system_font_families() -> Result<Vec<String>, String> {
 #[tauri::command]
 fn list_system_fonts() -> Result<Vec<String>, String> {
     system_font_families()
+}
+
+#[tauri::command]
+fn load_markdown_document(
+    store: tauri::State<'_, MarkdownStore>,
+    document_id: String,
+    initial_content: String,
+) -> Result<MarkdownDocument, String> {
+    store.load_or_create(&document_id, &initial_content)
+}
+
+#[tauri::command]
+fn save_markdown_document(
+    store: tauri::State<'_, MarkdownStore>,
+    document_id: String,
+    content: String,
+) -> Result<MarkdownDocument, String> {
+    store.save(&document_id, &content)
 }
 
 #[derive(serde::Deserialize)]
@@ -370,8 +390,9 @@ mod tests {
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            let persistence = match app.path().app_data_dir() {
-                Ok(directory) => Some(WindowSizePersistence::new(directory)),
+            let app_data_directory = app.path().app_data_dir();
+            let persistence = match &app_data_directory {
+                Ok(directory) => Some(WindowSizePersistence::new(directory.clone())),
                 Err(error) => {
                     eprintln!("failed to resolve window state directory: {error}");
                     None
@@ -384,6 +405,13 @@ pub fn run() {
 
             if let Some(persistence) = persistence {
                 app.manage(persistence);
+            }
+            if let Ok(directory) = app_data_directory {
+                let markdown_store = MarkdownStore::new(directory);
+                markdown_store
+                    .apply_content_reset()
+                    .map_err(std::io::Error::other)?;
+                app.manage(markdown_store);
             }
 
             if let Some(window) = app.get_webview_window("main") {
@@ -425,6 +453,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             list_system_fonts,
+            load_markdown_document,
+            save_markdown_document,
             discover_models,
             generate_text
         ])

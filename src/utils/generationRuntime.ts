@@ -1,8 +1,5 @@
-import type {
-  ArticleNode,
-  ContentBlock,
-  SelectionState
-} from "../types";
+import type { ArticleNode, SelectionState } from "../types";
+import { markdownRanges, markdownToPlainText, type MarkdownRange } from "../editor/markdownDocument";
 import type { ContextScope } from "./generationConfig";
 
 export interface GenerationContext {
@@ -10,77 +7,54 @@ export interface GenerationContext {
   suppliedContext: string;
 }
 
-function blockText(blocks: ContentBlock[]) {
-  return blocks
-    .map((block) => {
-      const prefix =
-        block.kind === "h1"
-          ? "# "
-          : block.kind === "h2"
-            ? "## "
-            : block.kind === "h3"
-              ? "### "
-              : block.kind === "quote"
-                ? "> "
-                : "";
-      return `${prefix}${block.text}`;
-    })
-    .join("\n\n");
+function rangeSource(ranges: MarkdownRange[]) {
+  return ranges.map((range) => range.source).join("\n\n");
 }
 
-function sectionBlocks(blocks: ContentBlock[], selectedIndex: number) {
+function containingSection(ranges: MarkdownRange[], selectedIndex: number) {
   let start = selectedIndex;
-  while (start >= 0 && !/^h[1-3]$/.test(blocks[start]?.kind ?? "")) start -= 1;
-  if (start < 0) return blocks;
-  const level = Number(blocks[start].kind.slice(1));
+  while (start >= 0 && ranges[start]?.kind !== "heading") start -= 1;
+  if (start < 0) return ranges;
+  const level = ranges[start].level ?? 6;
   let end = start + 1;
-  while (end < blocks.length) {
-    const kind = blocks[end].kind;
-    if (/^h[1-3]$/.test(kind) && Number(kind.slice(1)) <= level) break;
+  while (end < ranges.length) {
+    const range = ranges[end];
+    if (range.kind === "heading" && (range.level ?? 6) <= level) break;
     end += 1;
   }
-  return blocks.slice(start, end);
+  return ranges.slice(start, end);
 }
 
-function nearbyBlocks(blocks: ContentBlock[], selectedIndex: number) {
-  const paragraphIndexes = blocks
-    .map((block, index) =>
-      block.kind === "paragraph" || block.kind === "quote" ? index : -1
-    )
+function nearbyParagraphs(ranges: MarkdownRange[], selectedIndex: number) {
+  const paragraphIndexes = ranges
+    .map((range, index) => (range.kind === "paragraph" || range.kind === "quote" ? index : -1))
     .filter((index) => index >= 0);
-  const selectedParagraphPosition = paragraphIndexes.indexOf(selectedIndex);
-  if (selectedParagraphPosition < 0) {
-    return blocks.slice(
-      Math.max(0, selectedIndex - 3),
-      Math.min(blocks.length, selectedIndex + 4)
-    );
+  const position = paragraphIndexes.indexOf(selectedIndex);
+  if (position < 0) {
+    return ranges.slice(Math.max(0, selectedIndex - 3), Math.min(ranges.length, selectedIndex + 4));
   }
-  const first =
-    paragraphIndexes[Math.max(0, selectedParagraphPosition - 3)] ??
-    selectedIndex;
-  const last =
-    paragraphIndexes[
-      Math.min(paragraphIndexes.length - 1, selectedParagraphPosition + 3)
-    ] ?? selectedIndex;
-  return blocks.slice(first, last + 1);
+  const first = paragraphIndexes[Math.max(0, position - 3)] ?? selectedIndex;
+  const last = paragraphIndexes[Math.min(paragraphIndexes.length - 1, position + 3)] ?? selectedIndex;
+  return ranges.slice(first, last + 1);
 }
 
-function articleText(article: ArticleNode) {
-  return `# ${article.title}\n\n${article.summary}\n\n${blockText(article.blocks)}`;
+function articleText(article: ArticleNode, documents: Record<string, string>) {
+  return `# ${article.title}\n\n${article.summary}\n\n${documents[article.id] ?? ""}`.trim();
 }
 
 export function assembleGenerationContext(
   articles: Record<string, ArticleNode>,
+  documents: Record<string, string>,
   article: ArticleNode,
   selection: SelectionState,
   scope: ContextScope
 ): GenerationContext {
-  const selectedIndex = Math.max(
-    0,
-    article.blocks.findIndex((block) => block.id === selection.blockId)
-  );
-  const selectedBlock = article.blocks[selectedIndex] ?? article.blocks[0];
-  const selectedBlockText = selectedBlock?.text ?? selection.text;
+  const markdown = documents[article.id] ?? "";
+  const ranges = markdownRanges(markdown, article.id);
+  const selectedIndex = Math.max(0, ranges.findIndex((range) => range.id === selection.blockId));
+  const selectedRange = ranges[selectedIndex] ?? ranges[0];
+  const selectedText = selectedRange?.text ?? selection.text;
+  const section = containingSection(ranges, selectedIndex);
   const path: ArticleNode[] = [];
   let cursor: ArticleNode | undefined = article;
   while (cursor) {
@@ -88,36 +62,37 @@ export function assembleGenerationContext(
     cursor = cursor.parentId ? articles[cursor.parentId] : undefined;
   }
   const parent = article.parentId ? articles[article.parentId] : undefined;
-  const section = sectionBlocks(article.blocks, selectedIndex);
+
   let suppliedContext: string;
   if (scope === "containingParagraph") {
-    suppliedContext = selectedBlockText;
+    suppliedContext = selectedRange?.source ?? selection.text;
   } else if (scope === "nearbyParagraphs") {
-    suppliedContext = blockText(nearbyBlocks(article.blocks, selectedIndex));
+    suppliedContext = rangeSource(nearbyParagraphs(ranges, selectedIndex));
   } else if (scope === "section") {
-    suppliedContext = blockText(section);
+    suppliedContext = rangeSource(section);
   } else if (scope === "article") {
-    suppliedContext = articleText(article);
+    suppliedContext = articleText(article, documents);
   } else if (scope === "parentArticle") {
     suppliedContext = [parent, article]
       .filter((value): value is ArticleNode => Boolean(value))
-      .map(articleText)
+      .map((value) => articleText(value, documents))
       .join("\n\n---\n\n");
   } else {
-    suppliedContext = path.map(articleText).join("\n\n---\n\n");
+    suppliedContext = path.map((value) => articleText(value, documents)).join("\n\n---\n\n");
   }
 
-  const selectionStart = Math.max(0, selection.start);
-  const selectionEnd = Math.max(selectionStart, selection.end);
+  const localStart = Math.max(0, (selection.documentStart ?? selectedRange.from) - selectedRange.from);
+  const localEnd = Math.max(localStart, (selection.documentEnd ?? selection.documentStart ?? selectedRange.from) - selectedRange.from);
+  const selectedSource = selectedRange?.source ?? selectedText;
   return {
     suppliedContext,
     values: {
       "selection.text": selection.text,
-      "selection.prefix": selectedBlockText.slice(0, selectionStart),
-      "selection.suffix": selectedBlockText.slice(selectionEnd),
-      "block.text": selectedBlockText,
+      "selection.prefix": selectedSource.slice(0, localStart),
+      "selection.suffix": selectedSource.slice(localEnd),
+      "block.text": selectedText,
       "section.path": path.map((item) => item.title).join(" / "),
-      "section.text": blockText(section),
+      "section.text": rangeSource(section),
       "document.title": article.title,
       "document.summary": article.summary,
       "parent.title": parent?.title ?? "",
@@ -131,90 +106,54 @@ export function assembleGenerationContext(
 export interface GeneratedArticleContent {
   title: string;
   summary: string;
-  blocks: ContentBlock[];
+  markdown: string;
   tags: string[];
 }
 
 function cleanModelText(text: string) {
-  return text
-    .trim()
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/\s*```$/, "")
-    .trim();
+  return text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
 }
 
-export function parseGeneratedArticle(
-  text: string,
-  fallbackTitle: string,
-  idPrefix: string
-): GeneratedArticleContent {
+export function parseGeneratedArticle(text: string, fallbackTitle: string): GeneratedArticleContent {
   const cleaned = cleanModelText(text);
   const objectStart = cleaned.indexOf("{");
   const objectEnd = cleaned.lastIndexOf("}");
   if (objectStart >= 0 && objectEnd > objectStart) {
     try {
-      const parsed = JSON.parse(
-        cleaned.slice(objectStart, objectEnd + 1)
-      ) as Record<string, unknown>;
-      const rawBlocks = Array.isArray(parsed.blocks) ? parsed.blocks : [];
-      const blocks = rawBlocks
-        .map((item, index): ContentBlock | null => {
-          if (!item || typeof item !== "object") return null;
-          const record = item as Record<string, unknown>;
-          if (typeof record.text !== "string" || !record.text.trim()) return null;
-          const type = record.type;
-          const kind =
-            type === "heading"
-              ? "h2"
-              : type === "quote"
-                ? "quote"
-                : "paragraph";
-          return {
-            id: `${idPrefix}-b${index + 1}`,
-            kind,
-            text: record.text.trim()
-          };
-        })
-        .filter((block): block is ContentBlock => Boolean(block));
-      if (blocks.length) {
-        const title =
-          typeof parsed.title === "string" && parsed.title.trim()
-            ? parsed.title.trim().slice(0, 100)
-            : fallbackTitle;
-        const summary =
-          typeof parsed.summary === "string" && parsed.summary.trim()
-            ? parsed.summary.trim()
-            : blocks
-                .map((block) => block.text)
-                .join(" ")
-                .slice(0, 160);
+      const parsed = JSON.parse(cleaned.slice(objectStart, objectEnd + 1)) as Record<string, unknown>;
+      const markdown = typeof parsed.markdown === "string"
+        ? parsed.markdown.trim()
+        : Array.isArray(parsed.blocks)
+          ? parsed.blocks
+              .flatMap((item) => {
+                if (!item || typeof item !== "object") return [];
+                const record = item as Record<string, unknown>;
+                if (typeof record.text !== "string" || !record.text.trim()) return [];
+                const prefix = record.type === "heading" ? "## " : record.type === "quote" ? "> " : "";
+                return [`${prefix}${record.text.trim()}`];
+              })
+              .join("\n\n")
+          : "";
+      if (markdown) {
+        const title = typeof parsed.title === "string" && parsed.title.trim()
+          ? parsed.title.trim().slice(0, 100)
+          : fallbackTitle;
+        const summary = typeof parsed.summary === "string" && parsed.summary.trim()
+          ? parsed.summary.trim()
+          : markdownToPlainText(markdown).slice(0, 160);
         const tags = Array.isArray(parsed.tags)
-          ? parsed.tags
-              .filter((tag): tag is string => typeof tag === "string")
-              .map((tag) => tag.trim())
-              .filter(Boolean)
-              .slice(0, 8)
+          ? parsed.tags.filter((tag): tag is string => typeof tag === "string").map((tag) => tag.trim()).filter(Boolean).slice(0, 8)
           : [];
-        return { title, summary, blocks, tags };
+        return { title, summary, markdown, tags };
       }
     } catch {
-      // Use the readable plain-text response below.
+      // Fall through to readable Markdown.
     }
   }
-
-  const parts = cleaned
-    .split(/\n{2,}/)
-    .map((part) => part.trim())
-    .filter(Boolean);
-  const blocks = (parts.length ? parts : [cleaned]).map((part, index) => ({
-    id: `${idPrefix}-b${index + 1}`,
-    kind: "paragraph" as const,
-    text: part.replace(/^#{1,3}\s+/, "")
-  }));
   return {
     title: fallbackTitle,
-    summary: blocks.map((block) => block.text).join(" ").slice(0, 160),
-    blocks,
+    summary: markdownToPlainText(cleaned).slice(0, 160),
+    markdown: cleaned,
     tags: []
   };
 }

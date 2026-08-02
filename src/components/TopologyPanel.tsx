@@ -732,7 +732,7 @@ export function TopologyPanel({
           aria-controls="article-topology-panel"
           aria-expanded={expanded}
           onPointerEnter={() => setOpen(true)}
-          onFocus={() => setOpen(true)}
+          onClick={() => setOpen(true)}
         >
           <Network aria-hidden="true" size={20} />
         </button>
