@@ -29,20 +29,28 @@
 # Logs and temporary files
 *.log
 *.tmp
+*.bak
+*.orig
+*~
 *.swp
 *.swo
 *.pid
 *.pid.lock
 *.dmp
+*.stackdump
 /.tmp-*
 /tmp/
 /temp/
 /.eslintcache
 /.stylelintcache
 
-# Local design, planning, and browser test artifacts
+# Local agent, design, planning, and browser test artifacts
+/.plan-attestation
 /.hallmark/
 /.planning/
+/task_plan.md
+/findings.md
+/progress.md
 /docs/superpowers/
 /test-results/
 /playwright-report/
@@ -52,6 +60,9 @@
 # Editors and operating systems
 /.idea/
 /.vscode/
+/.vs/
+*.suo
+*.user
 .DS_Store
 Thumbs.db
 Desktop.ini
