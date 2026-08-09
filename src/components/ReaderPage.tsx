@@ -6,19 +6,26 @@ import type {
 } from "react";
 import { flushSync } from "react-dom";
 import {
+  AlignLeft,
   ArrowLeft,
   BookOpenText,
   Check,
   CircleHelp,
   CircleStop,
+  Code2,
   Download,
   FileInput,
+  GalleryHorizontalEnd,
+  GitCompareArrows,
+  Highlighter,
   Home,
   Languages,
-  Lightbulb,
+  ListChecks,
   LoaderCircle,
   MessageSquareText,
   Network,
+  NotebookPen,
+  Quote,
   Save,
   Sparkles,
   Tag
@@ -39,6 +46,7 @@ import {
 } from "../utils/contentZoom";
 import {
   loadGenerationTypes,
+  type GenerationTypeConfig,
   type GenerationTypeIconId
 } from "../utils/generationConfig";
 import {
@@ -61,12 +69,19 @@ const READING_PATH_MAX_WIDTH = 420;
 const READING_PATH_STORAGE_KEY = "annota:reading-path-width";
 type ArticleMotion = "settle" | "forward" | "back";
 const generationActionIcons: Record<GenerationTypeIconId, typeof Sparkles> = {
+  root: BookOpenText,
   explain: MessageSquareText,
   translate: Languages,
+  summary: AlignLeft,
+  highlight: Highlighter,
   question: CircleHelp,
   terms: Tag,
-  reading: BookOpenText,
-  insight: Lightbulb
+  compare: GitCompareArrows,
+  code: Code2,
+  checklist: ListChecks,
+  note: NotebookPen,
+  source: Quote,
+  flashcard: GalleryHorizontalEnd
 };
 
 type ViewTransitionDocument = Document & {
@@ -140,6 +155,35 @@ function descendants(id: string, articles: Record<string, ArticleNode>) {
   return seen.size;
 }
 
+function resolveNodeType(
+  article: ArticleNode,
+  nodeTypes: readonly GenerationTypeConfig[]
+): GenerationTypeConfig {
+  const typeById = new Map(nodeTypes.map((type) => [type.id, type]));
+  const rootType = typeById.get("root") ?? nodeTypes[0];
+  const sourceType = article.source?.generationType
+    ? typeById.get(article.source.generationType)
+    : undefined;
+  const relationType = nodeTypes.find(
+    (type) => type.relationLabel === article.type || type.name === article.type
+  );
+  const configuredType = article.parentId === null ? rootType : sourceType ?? relationType;
+  if (configuredType) return configuredType;
+
+  const appearance = article.appearance;
+  const fallback = typeById.get("explain") ?? rootType ?? nodeTypes[0];
+  if (!appearance || !fallback) return nodeTypes[0];
+  return {
+    ...fallback,
+    id: appearance.typeId,
+    name: article.type,
+    relationLabel: article.type,
+    icon: appearance.icon,
+    cardVariant: appearance.cardVariant,
+    color: appearance.color
+  };
+}
+
 export function ReaderPage({
   readingPathMode,
   shortcuts,
@@ -156,10 +200,19 @@ export function ReaderPage({
     navigateTo,
     goHome,
     touchArticle,
+    createRootArticle,
     importPackage,
     exportCurrentTree,
     startGeneration,
-    cancelGeneration
+    cancelGeneration,
+    topologyGraph,
+    topologyError,
+    createManualTopologyNode,
+    updateManualTopologyNode,
+    removeManualTopologyNode,
+    createTopologyRelation,
+    removeTopologyRelation,
+    updateTopologyInteraction
   } = useAppStore();
   const [selection, setSelection] = useState<SelectionState | null>(null);
   const [formatCommand, setFormatCommand] = useState<InlineFormatCommand | null>(null);
@@ -171,9 +224,13 @@ export function ReaderPage({
   const [notice, setNotice] = useState("");
   const [readingPathWidth, setReadingPathWidth] = useState(readStoredPathWidth);
   const [contentZoom, setContentZoom] = useState(loadContentZoom);
+  const allNodeTypes = useMemo(() => loadGenerationTypes(), []);
   const generationTypes = useMemo(
-    () => loadGenerationTypes().filter((type) => type.enabled),
-    []
+    () =>
+      allNodeTypes.filter(
+        (type) => type.executionMode === "ai" && type.enabled
+      ),
+    [allNodeTypes]
   );
   const [resizingPath, setResizingPath] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -355,13 +412,14 @@ export function ReaderPage({
         currentNotebook
       ) {
         event.preventDefault();
-        navigateTo(currentNotebook.rootId);
+        navigateTo(currentArticle?.rootId ?? currentNotebook.rootId);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [
     currentArticle?.parentId,
+    currentArticle?.rootId,
     currentNotebook,
     fullTopology,
     navigateTo,
@@ -563,10 +621,16 @@ export function ReaderPage({
             {displayedPath.map((article, index) => {
               const isCurrent = article.id === currentArticle.id;
               const isRetained = index >= currentPathIds.length;
+              const nodeType = resolveNodeType(article, allNodeTypes);
+              const NodeIcon = generationActionIcons[nodeType.icon];
               return (
               <div
-                className={`path-step${isRetained ? " is-retained" : ""}`}
+                className={`path-step is-${nodeType.cardVariant}${
+                  isRetained ? " is-retained" : ""
+                }`}
                 key={article.id}
+                data-node-variant={nodeType.cardVariant}
+                style={{ "--path-node-color": nodeType.color } as CSSProperties}
               >
                 <button
                   className={isCurrent ? "is-current" : ""}
@@ -575,29 +639,43 @@ export function ReaderPage({
                   aria-current={isCurrent ? "page" : undefined}
                   aria-label={isRetained ? `继续阅读：${article.title}` : undefined}
                 >
-                  <span className="path-step-index">{String(index + 1).padStart(2, "0")}</span>
-                  <span>
+                  <span className="path-step-marker" aria-hidden="true">
+                    <NodeIcon size={17} />
+                    <small>{String(index + 1).padStart(2, "0")}</small>
+                  </span>
+                  <span className="path-step-copy">
                     <strong>{article.title}</strong>
                     <small>
-                      {article.type} · {article.childIds.length} 个下级
+                      <span>{nodeType.name}</span>
+                      <span>{article.childIds.length} 个下级</span>
                     </small>
                   </span>
+                  {isCurrent && <em className="path-step-status">当前</em>}
                 </button>
                 {index < displayedPath.length - 1 && <span className="path-line" aria-hidden="true"></span>}
               </div>
               );
             })}
           </div>
-          <div className="path-context">
-            <BookOpenText aria-hidden="true" size={17} />
-            <strong>{currentArticle.type}</strong>
-            <p>当前节点来自这条阅读路径。编辑正文不会覆盖来源与父子关系。</p>
-          </div>
-          <div className="path-tags">
-            {currentArticle.tags.map((tag) => (
-              <span key={tag}>#{tag}</span>
-            ))}
-          </div>
+          {(() => {
+            const nodeType = resolveNodeType(currentArticle, allNodeTypes);
+            const NodeIcon = generationActionIcons[nodeType.icon];
+            return (
+              <div
+                className={`path-context is-${nodeType.cardVariant}`}
+                style={{ "--path-node-color": nodeType.color } as CSSProperties}
+              >
+                <span className="path-context-icon" aria-hidden="true">
+                  <NodeIcon size={18} />
+                </span>
+                <span className="path-context-copy">
+                  <small>当前节点</small>
+                  <strong>{nodeType.name}</strong>
+                </span>
+                <p>沿阅读路径保留来源与父子关系；节点正文可以独立编辑。</p>
+              </div>
+            );
+          })()}
         </aside>
 
         <div
@@ -666,11 +744,11 @@ export function ReaderPage({
                 </button>
                 <button
                   type="button"
-                  disabled={currentArticle.id === currentNotebook.rootId}
-                  onClick={() => navigateTo(currentNotebook.rootId)}
+                  disabled={currentArticle.id === currentArticle.rootId}
+                  onClick={() => navigateTo(currentArticle.rootId)}
                 >
                   <Home aria-hidden="true" size={16} />
-                  回到主文章
+                  回到当前根节点
                 </button>
               </footer>
             </article>
@@ -751,7 +829,7 @@ export function ReaderPage({
                 <div className="children-empty">
                   <MessageSquareText aria-hidden="true" size={20} />
                   <strong>还没有下一级{terms.subNotes}</strong>
-                  <p>在左侧正文中选择一段文字，然后点击顶部任一生成类型。</p>
+                  <p>在左侧正文中选择一段文字，然后点击顶部任一可生成节点。</p>
                 </div>
               )}
             </div>
@@ -763,6 +841,7 @@ export function ReaderPage({
       <TopologyPanel
         articles={data.articles}
         rootId={currentNotebook.rootId}
+        rootIds={currentNotebook.rootIds ?? [currentNotebook.rootId]}
         currentId={currentArticle.id}
         onNavigate={navigateTo}
         fullScreen={fullTopology}
@@ -770,6 +849,15 @@ export function ReaderPage({
         onFullScreen={setTopologyFullscreen}
         focusShortcut={shortcuts["focus-topology"]}
         pinShortcut={shortcuts["pin-topology"]}
+        topologyGraph={topologyGraph}
+        topologyError={topologyError}
+        onCreateRoot={createRootArticle}
+        onCreateManualNode={createManualTopologyNode}
+        onUpdateManualNode={updateManualTopologyNode}
+        onRemoveManualNode={removeManualTopologyNode}
+        onCreateRelation={createTopologyRelation}
+        onRemoveRelation={removeTopologyRelation}
+        onUpdateInteraction={updateTopologyInteraction}
       />
 
       {notice && (

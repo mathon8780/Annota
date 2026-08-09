@@ -1,20 +1,27 @@
 import {
+  AlignLeft,
   BookOpenText,
   Bot,
   Braces,
   Check,
   CircleHelp,
+  Code2,
   Eye,
+  GalleryHorizontalEnd,
+  GitCompareArrows,
+  Highlighter,
   Info,
   Languages,
-  Lightbulb,
+  ListChecks,
   LockKeyhole,
   MessageSquareText,
+  Network,
+  NotebookPen,
   Plus,
+  Quote,
   RotateCcw,
   Tag,
   Trash2,
-  WandSparkles,
   X,
   type LucideIcon
 } from "lucide-react";
@@ -27,45 +34,25 @@ import {
   useState
 } from "react";
 import {
+  cloneGenerationType,
+  explainDefaults,
+  initialGenerationTypes,
+  loadGenerationTypes,
+  saveGenerationTypes,
+  type ContextScope,
+  type GenerationTypeConfig,
+  type GenerationTypeIconId,
+  type TopologyCardVariant
+} from "../utils/generationConfig";
+import {
   configuredModels,
   loadModelProviders,
   modelBindingLabel
 } from "../utils/modelProviders";
 
-type ContextScope =
-  | "containingParagraph"
-  | "nearbyParagraphs"
-  | "section"
-  | "article"
-  | "parentArticle"
-  | "allParentArticles";
-
 type PromptTarget = "systemPrompt" | "userPrompt";
 
-type GenerationTypeIconId =
-  | "explain"
-  | "translate"
-  | "question"
-  | "terms"
-  | "reading"
-  | "insight";
-
-type GenerationTypeDraft = {
-  id: string;
-  name: string;
-  icon: GenerationTypeIconId;
-  color: string;
-  isBuiltIn: boolean;
-  enabled: boolean;
-  modelBindingId: string;
-  relationLabel: string;
-  systemPrompt: string;
-  userPrompt: string;
-  contextScope: ContextScope;
-};
-
 type PreviewTab = "messages" | "schema" | "context";
-const GENERATION_TYPES_STORAGE_KEY = "annota.generation-types.v1";
 
 const allowedVariables = [
   "selection.text",
@@ -157,13 +144,25 @@ const typeIconOptions: Array<{
   label: string;
   Icon: LucideIcon;
 }> = [
+  { id: "root", label: "根节点", Icon: BookOpenText },
   { id: "explain", label: "对话解释", Icon: MessageSquareText },
   { id: "translate", label: "语言翻译", Icon: Languages },
+  { id: "summary", label: "内容总结", Icon: AlignLeft },
+  { id: "highlight", label: "重点引用", Icon: Highlighter },
   { id: "question", label: "启发提问", Icon: CircleHelp },
-  { id: "terms", label: "术语标签", Icon: Tag },
-  { id: "reading", label: "阅读笔记", Icon: BookOpenText },
-  { id: "insight", label: "灵感提炼", Icon: Lightbulb }
+  { id: "terms", label: "术语提取", Icon: Tag },
+  { id: "compare", label: "对比分析", Icon: GitCompareArrows },
+  { id: "code", label: "代码示例", Icon: Code2 },
+  { id: "checklist", label: "实践清单", Icon: ListChecks },
+  { id: "note", label: "个人笔记", Icon: NotebookPen },
+  { id: "source", label: "原文来源", Icon: Quote },
+  { id: "flashcard", label: "复习闪卡", Icon: GalleryHorizontalEnd }
 ];
+
+const cardVariantOptions = typeIconOptions.map(({ id, label }) => ({
+  id: id as TopologyCardVariant,
+  label
+}));
 
 const generationColorPresets = [
   { value: "#315fdb", label: "钴蓝" },
@@ -180,73 +179,6 @@ const typeIcons: Record<GenerationTypeIconId, LucideIcon> =
   Object.fromEntries(
     typeIconOptions.map(({ id, Icon }) => [id, Icon])
   ) as Record<GenerationTypeIconId, LucideIcon>;
-
-const explainDefaults: GenerationTypeDraft = {
-  id: "explain",
-  name: "解释",
-  icon: "explain",
-  color: "#315fdb",
-  isBuiltIn: true,
-  enabled: true,
-  modelBindingId: "global-default",
-  relationLabel: "解释",
-  systemPrompt:
-    "你的任务是把用户选中的学习材料解释为一篇可独立阅读、可继续派生的子文章。使用 {{output.language}}，覆盖核心定义、运作方式、适用边界与容易混淆之处。",
-  userPrompt:
-    "请解释 <selection>{{selection.text}}</selection>。\n\n<document_title>{{document.title}}</document_title>\n<section_path>{{section.path}}</section_path>\n<containing_block>{{block.text}}</containing_block>\n<additional_instruction>{{generation.instruction}}</additional_instruction>",
-  contextScope: "containingParagraph"
-};
-
-const translateDefaults: GenerationTypeDraft = {
-  id: "translate",
-  name: "翻译",
-  icon: "translate",
-  color: "#7454c5",
-  isBuiltIn: true,
-  enabled: true,
-  modelBindingId: "global-default",
-  relationLabel: "翻译",
-  systemPrompt:
-    "生成一篇忠实、可学习的双语翻译子文章。保留代码标识、公式和专有名词，目标语言为 {{output.language}}。",
-  userPrompt:
-    "请翻译 <selection>{{selection.text}}</selection>。\n\n<containing_block>{{block.text}}</containing_block>\n<section_path>{{section.path}}</section_path>\n<document_title>{{document.title}}</document_title>",
-  contextScope: "containingParagraph"
-};
-
-const initialTypes: GenerationTypeDraft[] = [
-  explainDefaults,
-  translateDefaults,
-  {
-    id: "socratic",
-    name: "苏格拉底式追问",
-    icon: "question",
-    color: "#2f8468",
-    isBuiltIn: false,
-    enabled: true,
-    modelBindingId: "global-default",
-    relationLabel: "追问",
-    systemPrompt:
-      "围绕选区提出由浅入深的问题，帮助读者主动检查理解。所有问题使用 {{output.language}}。",
-    userPrompt:
-      "为 <selection>{{selection.text}}</selection> 设计一组递进问题，并参考 {{section.path}}。",
-    contextScope: "containingParagraph"
-  },
-  {
-    id: "terms",
-    name: "提炼术语",
-    icon: "terms",
-    color: "#b56827",
-    isBuiltIn: false,
-    enabled: false,
-    modelBindingId: "global-default",
-    relationLabel: "术语",
-    systemPrompt:
-      "提炼选区中的关键术语，给出简洁定义与使用边界。使用 {{output.language}}。",
-    userPrompt:
-      "从 <selection>{{selection.text}}</selection> 中提炼术语，并结合 {{block.text}} 消除歧义。",
-    contextScope: "containingParagraph"
-  }
-];
 
 const previewValues: Record<(typeof allowedVariables)[number], string> = {
   "selection.text": "〈阅读器中的选中文字〉",
@@ -268,38 +200,8 @@ const outputSchema = `{
   "summary": "string",
   "blocks": [
     { "type": "heading | paragraph | quote", "text": "string" }
-  ],
-  "tags": ["string"]
+  ]
 }`;
-
-function cloneType(type: GenerationTypeDraft): GenerationTypeDraft {
-  return { ...type };
-}
-
-function loadGenerationTypes(): GenerationTypeDraft[] {
-  try {
-    const raw = window.localStorage.getItem(GENERATION_TYPES_STORAGE_KEY);
-    if (!raw) return initialTypes.map(cloneType);
-    const parsed = JSON.parse(raw) as GenerationTypeDraft[];
-    if (
-      !Array.isArray(parsed) ||
-      !parsed.length ||
-      parsed.some(
-        (type) =>
-          !type ||
-          typeof type.id !== "string" ||
-          typeof type.name !== "string" ||
-          typeof type.systemPrompt !== "string" ||
-          typeof type.userPrompt !== "string"
-      )
-    ) {
-      return initialTypes.map(cloneType);
-    }
-    return parsed.map(cloneType);
-  } catch {
-    return initialTypes.map(cloneType);
-  }
-}
 
 function extractVariables(value: string) {
   return Array.from(value.matchAll(/{{\s*([a-zA-Z0-9_.]+)\s*}}/g)).map(
@@ -319,21 +221,180 @@ function ReviewSection({
   title,
   meta,
   variant,
+  disabled = false,
   children
 }: {
   title: string;
   meta?: string;
-  variant: "context" | "schema";
+  variant: "context" | "schema" | "card";
+  disabled?: boolean;
   children: ReactNode;
 }) {
   return (
-    <section className={`generation-review-section is-${variant}`}>
+    <section
+      className={`generation-review-section is-${variant}${disabled ? " is-disabled" : ""}`}
+      aria-disabled={disabled || undefined}
+    >
       <header>
         <h3>{title}</h3>
         {meta && <span>{meta}</span>}
       </header>
       {children}
     </section>
+  );
+}
+
+const cardPreviewTitles: Record<TopologyCardVariant, string> = {
+  root: "Transformer Architecture",
+  explain: "Self-Attention 的直觉",
+  translate: "关键段落中文翻译",
+  summary: "当前章节总结",
+  highlight: "Attention 权重重点句",
+  question: "为什么要使用多头注意力？",
+  terms: "Query / Key / Value",
+  compare: "RNN 与 Transformer",
+  code: "PyTorch 注意力实现片段",
+  checklist: "实现一个最小注意力模块",
+  note: "我的理解：多个观察角度",
+  source: "Attention 原文来源",
+  flashcard: "多头注意力复习卡"
+};
+
+const cardPreviewMeta: Record<
+  TopologyCardVariant,
+  { origin: string; footerLeft: string; footerRight: string }
+> = {
+  root: { origin: "集合根节点", footerLeft: "12 个章节", footerRight: "68% 已阅读" },
+  explain: { origin: "AI 生成", footerLeft: "来源：第 2 节", footerRight: "2 个子节点" },
+  translate: { origin: "AI 翻译", footerLeft: "EN → 中文", footerRight: "可回溯原文" },
+  summary: { origin: "AI 总结", footerLeft: "覆盖当前章节", footerRight: "5 条结论" },
+  highlight: { origin: "手动标记", footerLeft: "来源：第 2 节", footerRight: "原文定位" },
+  question: { origin: "AI 追问", footerLeft: "基于所在段落", footerRight: "1 组问答" },
+  terms: { origin: "AI 提取", footerLeft: "3 个术语", footerRight: "可继续展开" },
+  compare: { origin: "AI 对比", footerLeft: "2 个对象", footerRight: "差异分析" },
+  code: { origin: "AI 示例", footerLeft: "Python", footerRight: "可复制" },
+  checklist: { origin: "AI 清单", footerLeft: "3 个步骤", footerRight: "2 / 3 完成" },
+  note: { origin: "个人记录", footerLeft: "刚刚编辑", footerRight: "未调用模型" },
+  source: { origin: "来源保存", footerLeft: "Vaswani et al.", footerRight: "可回溯" },
+  flashcard: { origin: "AI 闪卡", footerLeft: "待复习", footerRight: "点击翻面" }
+};
+
+function CardPreviewBody({ variant }: { variant: TopologyCardVariant }) {
+  switch (variant) {
+    case "translate":
+      return (
+        <div className="topology-card-preview-bilingual">
+          <span><small>原文</small>Attention maps a query and key-value pairs to an output.</span>
+          <span><small>译文</small>注意力机制将查询与键值对映射为输出。</span>
+        </div>
+      );
+    case "summary":
+      return (
+        <>
+          <div className="topology-card-preview-metric">
+            <strong>5</strong>
+            <span>条核心结论</span>
+          </div>
+          <p>把章节整理为结论、术语和容易混淆的概念。</p>
+        </>
+      );
+    case "highlight":
+      return (
+        <blockquote>
+          The attention weights can change depending on the surrounding context.
+        </blockquote>
+      );
+    case "question":
+      return (
+        <div className="topology-card-preview-qa">
+          <strong>为什么要使用多头注意力？</strong>
+          <span>不同注意力头可以从多个关系角度并行观察输入。</span>
+        </div>
+      );
+    case "compare":
+      return (
+        <div className="topology-card-preview-split">
+          <span><strong>RNN</strong>顺序计算</span>
+          <span><strong>Transformer</strong>并行建模关系</span>
+        </div>
+      );
+    case "code":
+      return <code>scores = query @ key.transpose(-2, -1)</code>;
+    case "checklist":
+      return (
+        <div className="topology-card-preview-checklist">
+          <span><Check aria-hidden="true" size={12} />准备 Query / Key / Value</span>
+          <span><Check aria-hidden="true" size={12} />计算注意力分数</span>
+          <span><i aria-hidden="true" />完成 Softmax 缩放</span>
+        </div>
+      );
+    case "source":
+      return (
+        <blockquote>
+          Attention is a function of a query and a set of key-value pairs.
+        </blockquote>
+      );
+    case "flashcard":
+      return (
+        <div className="topology-card-preview-flash">
+          多头注意力相比单头注意力解决了什么问题？
+        </div>
+      );
+    case "terms":
+      return (
+        <div className="topology-card-preview-terms">
+          <span>Query · 查询</span>
+          <span>Key · 键</span>
+          <span>Value · 值</span>
+        </div>
+      );
+    case "note":
+      return <p>记录自己对不同注意力头分工的理解和后续疑问。</p>;
+    case "root":
+      return (
+        <>
+          <p>从一个主题入口展开内容；同一内容集合可以并列存在多个根节点。</p>
+          <div className="topology-card-preview-facts">
+            <span>6 个核心概念</span>
+            <span>14 个派生节点</span>
+          </div>
+          <div className="topology-card-preview-progress" aria-label="阅读进度 68%">
+            <i aria-hidden="true" />
+          </div>
+        </>
+      );
+    case "explain":
+    default:
+      return <p>用直觉和边界解释每个词元如何根据上下文选择信息。</p>;
+  }
+}
+
+function TopologyCardPreview({ type }: { type: GenerationTypeConfig }) {
+  const TypeIcon = typeIcons[type.icon];
+  const meta = cardPreviewMeta[type.cardVariant];
+  return (
+    <article
+      className={`topology-card-preview is-${type.cardVariant}`}
+      style={{ "--topology-card-color": type.color } as CSSProperties}
+      aria-label={`节点样式预览：${type.name}`}
+    >
+      <header>
+        <span className="topology-card-preview-kind">
+          <i aria-hidden="true"><TypeIcon size={15} /></i>
+          <strong>{type.name}</strong>
+        </span>
+        <small>{meta.origin}</small>
+      </header>
+      <h4>{cardPreviewTitles[type.cardVariant]}</h4>
+      <div className="topology-card-preview-body">
+        <CardPreviewBody variant={type.cardVariant} />
+      </div>
+      <footer>
+        <span>{meta.footerLeft}</span>
+        <span>{meta.footerRight}</span>
+      </footer>
+      {type.cardVariant === "root" && <em>根节点</em>}
+    </article>
   );
 }
 
@@ -353,10 +414,7 @@ export function GenerationPage() {
   );
 
   useEffect(() => {
-    window.localStorage.setItem(
-      GENERATION_TYPES_STORAGE_KEY,
-      JSON.stringify(types)
-    );
+    saveGenerationTypes(types);
   }, [types]);
 
   const activeType =
@@ -385,20 +443,22 @@ export function GenerationPage() {
       ),
     [promptVariables]
   );
-  const missingSelectionVariable = !promptVariables.includes("selection.text");
+  const isAiNode = activeType.executionMode === "ai";
+  const missingSelectionVariable =
+    isAiNode && !promptVariables.includes("selection.text");
   const nameInvalid =
     activeType.name.trim().length === 0 || activeType.name.trim().length > 40;
   const validationErrors = [
-    ...(unknownVariables.length > 0
+    ...(isAiNode && unknownVariables.length > 0
       ? ["包含未知变量，请修正提示词模板。"]
       : []),
     ...(missingSelectionVariable
       ? ["模板缺少必需变量 {{selection.text}}。"]
       : []),
-    ...(nameInvalid ? ["生成类型名称需为 1–40 个字符。"] : [])
+    ...(nameInvalid ? ["节点类型名称需为 1–40 个字符。"] : [])
   ];
   const updateActiveType = (
-    updater: (type: GenerationTypeDraft) => GenerationTypeDraft,
+    updater: (type: GenerationTypeConfig) => GenerationTypeConfig,
     promptChanged = false
   ) => {
     setTypes((currentTypes) =>
@@ -415,11 +475,13 @@ export function GenerationPage() {
 
   const createType = () => {
     const id = `custom-${Date.now()}-${newTypeSequence.current++}`;
-    const nextType: GenerationTypeDraft = {
-      ...cloneType(explainDefaults),
+    const nextType: GenerationTypeConfig = {
+      ...cloneGenerationType(explainDefaults),
       id,
-      name: "未命名类型",
+      name: "未命名节点",
       icon: "question",
+      cardVariant: "question",
+      executionMode: "ai",
       color: "#2f8468",
       isBuiltIn: false,
       relationLabel: "派生",
@@ -433,7 +495,7 @@ export function GenerationPage() {
   const deleteType = (typeId: string) => {
     const typeToDelete = types.find((type) => type.id === typeId);
     if (!typeToDelete || typeToDelete.isBuiltIn) {
-      setLiveStatus("内置生成类型受保护，无法删除。");
+      setLiveStatus("内置节点类型受保护，无法删除。");
       return;
     }
 
@@ -445,7 +507,7 @@ export function GenerationPage() {
     if (activeTypeId === typeId) {
       setActiveTypeId("explain");
     }
-    setLiveStatus(`已删除自定义生成类型：${typeToDelete.name}。`);
+    setLiveStatus(`已删除自定义节点类型：${typeToDelete.name}。`);
   };
 
   const insertVariable = (variable: string) => {
@@ -459,7 +521,8 @@ export function GenerationPage() {
 
   const restoreDefaults = () => {
     const defaults =
-      activeType.id === "translate" ? translateDefaults : explainDefaults;
+      initialGenerationTypes.find((type) => type.id === activeType.id) ??
+      explainDefaults;
     setTypes((currentTypes) =>
       currentTypes.map((type) =>
         type.id === activeType.id
@@ -477,7 +540,7 @@ export function GenerationPage() {
   return (
     <section
       className="home-main settings-home-main generation-home-main"
-      aria-label="生成与提示词内容"
+      aria-label="拓扑节点内容"
     >
       <section
         className="settings-workspace"
@@ -486,30 +549,35 @@ export function GenerationPage() {
         <div className="settings-workspace-inner generation-workspace-inner">
           <header className="settings-section-hero">
             <div className="settings-section-icon">
-              <WandSparkles aria-hidden="true" size={21} />
+              <Network aria-hidden="true" size={21} />
             </div>
             <div>
-              <span>Generation studio</span>
-              <h2 id="generation-page-title">生成与提示词</h2>
+              <span>Topology node studio</span>
+              <h2 id="generation-page-title">拓扑节点</h2>
               <p>
-                管理生成类型、提示词模板和上下文策略。所有修改都会即时自动保存。
+                管理节点类型、Card 样式、提示词模板和上下文策略。所有修改都会即时自动保存。
               </p>
             </div>
             <div className="settings-display-badge generation-config-badge">
               <Info aria-hidden="true" size={14} />
-              本机提示词配置
+              本机节点与提示词配置
             </div>
           </header>
 
           <div className="generation-workbench">
             <nav
               className="generation-type-rail"
-              aria-label="生成类型"
+              aria-label="拓扑节点类型"
             >
               <div className="generation-rail-head">
                 <div>
-                  <span>类型库</span>
-                  <strong>{types.filter((type) => type.enabled).length} 个启用</strong>
+                  <span>节点库</span>
+                  <strong>
+                    {types.filter(
+                      (type) =>
+                        type.executionMode !== "system" && type.enabled
+                    ).length} 个已启用
+                  </strong>
                 </div>
               </div>
 
@@ -543,34 +611,47 @@ export function GenerationPage() {
                         </span>
                         <span>
                           <strong>{type.name}</strong>
-                          <small>{type.isBuiltIn ? "内置" : "自定义"}</small>
+                          <small>
+                            {type.isBuiltIn ? "内置" : "自定义"}
+                            {type.executionMode === "ai"
+                              ? " · AI"
+                              : type.executionMode === "manual"
+                                ? " · 手动"
+                                : " · 系统"}
+                          </small>
                         </span>
                       </button>
                       <span className="generation-type-actions">
-                        <label
-                          className="generation-type-enable"
-                          title={`${type.enabled ? "停用" : "启用"}${type.name}`}
-                        >
-                          <input
-                            type="checkbox"
-                            aria-label={`启用${type.name}`}
-                            checked={type.enabled}
-                            onChange={(event) => {
-                              const enabled = event.target.checked;
-                              setTypes((currentTypes) =>
-                                currentTypes.map((candidate) =>
-                                  candidate.id === type.id
-                                    ? { ...candidate, enabled }
-                                    : candidate
-                                )
-                              );
-                              setLiveStatus(
-                                `${type.name}已${enabled ? "启用" : "停用"}，设置已自动保存到本机。`
-                              );
-                            }}
-                          />
-                          <span aria-hidden="true" />
-                        </label>
+                        {type.executionMode !== "system" ? (
+                          <label
+                            className="generation-type-enable"
+                            title={`${type.enabled ? "停用" : "启用"}${type.name}`}
+                          >
+                            <input
+                              type="checkbox"
+                              aria-label={`启用${type.name}`}
+                              checked={type.enabled}
+                              onChange={(event) => {
+                                const enabled = event.target.checked;
+                                setTypes((currentTypes) =>
+                                  currentTypes.map((candidate) =>
+                                    candidate.id === type.id
+                                      ? { ...candidate, enabled }
+                                      : candidate
+                                  )
+                                );
+                                setLiveStatus(
+                                  `${type.name}已${enabled ? "启用" : "停用"}，设置已自动保存到本机。`
+                                );
+                              }}
+                            />
+                            <span aria-hidden="true" />
+                          </label>
+                        ) : (
+                          <span className="generation-type-mode" aria-label={`${type.name}由系统维护`}>
+                            系统
+                          </span>
+                        )}
                         {type.isBuiltIn ? (
                           <span
                             className="generation-type-protected"
@@ -583,7 +664,7 @@ export function GenerationPage() {
                           <button
                             className="generation-type-delete"
                             type="button"
-                            aria-label={`删除生成类型：${type.name}`}
+                            aria-label={`删除节点类型：${type.name}`}
                             title={`删除${type.name}`}
                             onClick={() => deleteType(type.id)}
                           >
@@ -602,11 +683,11 @@ export function GenerationPage() {
                 onClick={createType}
               >
                 <Plus aria-hidden="true" size={15} />
-                新建生成类型
+                新建节点类型
               </button>
             </nav>
 
-            <section className="generation-editor" aria-label="生成类型编辑">
+            <section className="generation-editor" aria-label="拓扑节点编辑">
               <header className="generation-editor-header">
                 <div className="generation-editor-title">
                   <span
@@ -634,9 +715,9 @@ export function GenerationPage() {
 
                 <div className="generation-identity-grid">
                   <label className="generation-field">
-                    <span>生成类型名称</span>
+                    <span>节点类型名称</span>
                     <input
-                      aria-label="生成类型名称"
+                      aria-label="节点类型名称"
                       value={activeType.name}
                       maxLength={48}
                       aria-invalid={nameInvalid}
@@ -648,10 +729,16 @@ export function GenerationPage() {
                       }
                     />
                   </label>
-                  <label className="generation-field generation-model-field">
+                  <label
+                    className={`generation-field generation-model-field${
+                      isAiNode ? "" : " is-disabled"
+                    }`}
+                    aria-disabled={!isAiNode}
+                  >
                     <span>调用模型</span>
                     <select
                       aria-label="调用模型"
+                      disabled={!isAiNode}
                       value={
                         activeType.modelBindingId === "global-default" ||
                         activeModelBindingAvailable
@@ -695,6 +782,50 @@ export function GenerationPage() {
                         请先在 AI 模型服务中填写 API Key 并通过联通检测。
                       </small>
                     )}
+                    {!isAiNode && (
+                      <small>该节点由{activeType.executionMode === "manual" ? "用户手动创建" : "系统维护"}，不会调用模型。</small>
+                    )}
+                  </label>
+                  <label className="generation-field">
+                    <span>节点样式</span>
+                    <select
+                      aria-label="节点样式"
+                      value={activeType.cardVariant}
+                      onChange={(event) =>
+                        updateActiveType((type) => ({
+                          ...type,
+                          cardVariant: event.target.value as TopologyCardVariant
+                        }))
+                      }
+                    >
+                      {cardVariantOptions.map((option) => (
+                        <option value={option.id} key={option.id}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="generation-field generation-interaction-field">
+                    <span>拓扑互动</span>
+                    <span className="generation-interaction-control">
+                      <input
+                        type="checkbox"
+                        aria-label={`允许${activeType.name}节点互动`}
+                        checked={activeType.interactive}
+                        onChange={(event) => {
+                          const interactive = event.target.checked;
+                          updateActiveType((type) => ({
+                            ...type,
+                            interactive
+                          }));
+                          setLiveStatus(
+                            `${activeType.name}节点互动已${interactive ? "开启" : "关闭"}。`
+                          );
+                        }}
+                      />
+                      <i aria-hidden="true" />
+                      <small>允许该类型的 Card 在拓扑网络中承载问答、勾选或翻转等互动。</small>
+                    </span>
                   </label>
                   <fieldset
                     className="generation-field generation-color-field"
@@ -731,7 +862,7 @@ export function GenerationPage() {
                   </fieldset>
                   <fieldset
                     className="generation-icon-field"
-                    aria-label="生成类型图标"
+                    aria-label="节点类型图标"
                   >
                     <legend>列表图标</legend>
                     <div className="generation-icon-options">
@@ -757,17 +888,38 @@ export function GenerationPage() {
                 </div>
               </section>
 
-              <section className="generation-prompt-card">
+              {!isAiNode && (
+                <div className="generation-node-mode-note" role="note">
+                  <Info aria-hidden="true" size={16} />
+                  <span>
+                    {activeType.executionMode === "manual"
+                      ? "这是手动节点：用户创建后直接填写标题、内容与互动信息；数据以结构化记录保存，不生成 Markdown，也不配置或调用 AI。"
+                      : "这是系统节点：内容集合可以包含多个根节点，它们由知识树关系建立；页面仅管理 Card 视觉。"}
+                  </span>
+                </div>
+              )}
+
+              <section
+                className={`generation-prompt-card${
+                  isAiNode ? "" : " is-disabled"
+                }`}
+                aria-disabled={!isAiNode}
+              >
                 <header>
                   <div>
                     <span>System layer</span>
                     <h4>System Prompt</h4>
                   </div>
-                  <small>系统安全约束由应用固定追加</small>
+                  <small>
+                    {isAiNode
+                      ? "系统安全约束由应用固定追加"
+                      : "手动与系统节点不使用 AI 提示词"}
+                  </small>
                 </header>
                 <textarea
                   className="generation-prompt-editor"
                   aria-label="System Prompt"
+                  disabled={!isAiNode}
                   aria-invalid={unknownVariables.length > 0}
                   value={activeType.systemPrompt}
                   spellCheck={false}
@@ -784,17 +936,27 @@ export function GenerationPage() {
                 />
               </section>
 
-              <section className="generation-prompt-card">
+              <section
+                className={`generation-prompt-card${
+                  isAiNode ? "" : " is-disabled"
+                }`}
+                aria-disabled={!isAiNode}
+              >
                 <header>
                   <div>
                     <span>User template</span>
                     <h4>User Prompt</h4>
                   </div>
-                  <small>来源正文始终作为不可信数据区块</small>
+                  <small>
+                    {isAiNode
+                      ? "来源正文始终作为不可信数据区块"
+                      : "手动内容由用户在创建节点时填写"}
+                  </small>
                 </header>
                 <textarea
                   className="generation-prompt-editor is-user"
                   aria-label="User Prompt"
+                  disabled={!isAiNode}
                   aria-invalid={
                     unknownVariables.length > 0 || missingSelectionVariable
                   }
@@ -814,8 +976,11 @@ export function GenerationPage() {
               </section>
 
               <section
-                className="generation-variable-dock"
+                className={`generation-variable-dock${
+                  isAiNode ? "" : " is-disabled"
+                }`}
                 aria-label="模板变量"
+                aria-disabled={!isAiNode}
               >
                 <div>
                   <Braces aria-hidden="true" size={16} />
@@ -828,6 +993,7 @@ export function GenerationPage() {
                       type="button"
                       key={variable}
                       aria-label={`插入变量 {{${variable}}}`}
+                      disabled={!isAiNode}
                       onClick={() => insertVariable(variable)}
                     >
                       <span>
@@ -853,13 +1019,27 @@ export function GenerationPage() {
               )}
             </section>
 
-            <aside className="generation-review-column" aria-label="模板检查">
+            <aside className="generation-review-column" aria-label="节点预览与模板检查">
+              <ReviewSection title="节点样式预览" meta="实时" variant="card">
+                <div className="topology-card-preview-stage">
+                  <TopologyCardPreview type={activeType} />
+                  <p>
+                    {activeType.executionMode === "manual"
+                      ? "手动 Card 展示用户填写的结构化信息，不对应 Markdown 文件。"
+                      : activeType.executionMode === "system"
+                        ? "根节点是内容集合中的独立入口；同一集合可以有多个根节点。"
+                        : "AI Card 是生成内容的入口；预览只展示摘要、来源与少量结果。"}
+                  </p>
+                </div>
+              </ReviewSection>
+
               <ReviewSection
                 title="上下文策略"
-                meta="单选"
+                meta={isAiNode ? "单选" : "不适用"}
                 variant="context"
+                disabled={!isAiNode}
               >
-                <fieldset className="generation-context-options">
+                <fieldset className="generation-context-options" disabled={!isAiNode}>
                   <legend>选择生成内容使用的最大上下文范围</legend>
                   {contextOptions.map((option) => (
                     <label
@@ -891,13 +1071,17 @@ export function GenerationPage() {
                 </fieldset>
               </ReviewSection>
 
-              <ReviewSection title="输出结构" meta="只读" variant="schema">
+              <ReviewSection
+                title="输出结构"
+                meta={isAiNode ? "只读" : "不适用"}
+                variant="schema"
+                disabled={!isAiNode}
+              >
                 <pre className="generation-schema-preview">
                   <code>{`{
   title: string
   summary: string
   blocks: heading | paragraph
-  tags: string[]
 }`}</code>
                 </pre>
               </ReviewSection>
@@ -924,13 +1108,14 @@ export function GenerationPage() {
               )}
               <button
                 type="button"
+                disabled={!isAiNode}
                 onClick={() => {
                   setPreviewTab("messages");
                   setPreviewOpen(true);
                 }}
               >
                 <Eye aria-hidden="true" size={15} />
-                输出预览
+                提示词预览
               </button>
             </div>
           </footer>

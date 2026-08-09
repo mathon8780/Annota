@@ -58,9 +58,9 @@ async function openGenerationPage(user: ReturnType<typeof userEvent.setup>) {
   renderApp();
   const sidebar = screen.getByRole("complementary", { name: "主页导航" });
   await user.click(
-    within(sidebar).getByRole("button", { name: "生成与提示词" })
+    within(sidebar).getByRole("button", { name: "拓扑节点" })
   );
-  return screen.getByRole("region", { name: "生成与提示词内容" });
+  return screen.getByRole("region", { name: "拓扑节点内容" });
 }
 
 function dispatchPointer(
@@ -195,93 +195,68 @@ describe("Annota core flow", () => {
     expect(window.localStorage.getItem("annota:content-reset.single-markdown-v1")).toBe("done");
   });
 
-  it("opens folders, tags, and favorites from the home sidebar", async () => {
-    const user = userEvent.setup();
-    const { container } = renderApp();
+  it("only exposes home and generation in the home navigation", () => {
+    renderApp();
     const sidebar = screen.getByRole("complementary", { name: "主页导航" });
     const navigation = within(sidebar).getByRole("navigation");
 
-    expect(within(navigation).getAllByRole("button")).toHaveLength(5);
+    expect(within(navigation).getAllByRole("button")).toHaveLength(2);
     expect(within(navigation).getByRole("button", { name: "主页" })).toBeInTheDocument();
     expect(
-      within(navigation).getByRole("button", { name: "生成与提示词" })
+      within(navigation).getByRole("button", { name: "拓扑节点" })
     ).toBeInTheDocument();
-    const foldersButton = within(navigation).getByRole("button", {
-      name: "文件夹"
+    expect(within(navigation).queryByRole("button", { name: "文件夹" })).toBeNull();
+    expect(within(navigation).queryByRole("button", { name: "标签" })).toBeNull();
+    expect(within(navigation).queryByRole("button", { name: "收藏" })).toBeNull();
+  });
+
+  it("drops retired organization fields when current data is loaded", async () => {
+    const retiredData = JSON.parse(JSON.stringify(seedData));
+    retiredData.folderProfiles = [{ key: "legacy" }];
+    retiredData.deletedFolderKeys = ["legacy"];
+    retiredData.notebooks[0].category = "legacy";
+    retiredData.notebooks[0].tags = ["legacy"];
+    retiredData.articles[retiredData.notebooks[0].rootId].tags = ["legacy"];
+    seedStoredAppData(retiredData);
+
+    renderApp(false);
+
+    await waitFor(() => {
+      const stored = JSON.parse(
+        window.localStorage.getItem(APP_DATA_STORAGE_KEY) ?? "{}"
+      );
+      expect(stored.folderProfiles).toBeUndefined();
+      expect(stored.deletedFolderKeys).toBeUndefined();
+      expect(stored.notebooks[0].category).toBeUndefined();
+      expect(stored.notebooks[0].tags).toBeUndefined();
+      expect(stored.articles[stored.notebooks[0].rootId].tags).toBeUndefined();
     });
-    const tagsButton = within(navigation).getByRole("button", { name: "标签" });
-    const favoritesButton = within(navigation).getByRole("button", {
-      name: "收藏"
-    });
-    expect(within(sidebar).queryByText("知识图谱")).not.toBeInTheDocument();
-    expect(within(sidebar).queryByText("最近浏览")).not.toBeInTheDocument();
-    expect(container.querySelector(".home-sidebar-footer")).toBeInTheDocument();
+  });
 
-    await user.click(foldersButton);
-    expect(screen.getByRole("heading", { name: "按主题归档" })).toBeInTheDocument();
-    expect(foldersButton).toHaveAttribute("aria-current", "page");
-    expect(screen.getByRole("button", { name: "新建文件夹" })).toBeInTheDocument();
-    expect(
-      screen.getByPlaceholderText("查找名称、归类或内部笔记")
-    ).toBeInTheDocument();
-    const batchButton = screen.getByRole("button", { name: "批量管理" });
-    await user.click(batchButton);
-    expect(
-      screen.getByRole("button", { name: "全选当前结果" })
-    ).toBeInTheDocument();
-    await user.click(
-      screen.getByRole("button", { name: "退出批量管理" })
+  it("removes retired organization terms from custom display settings", () => {
+    seedStoredAppData();
+    window.localStorage.setItem(
+      "annota:custom-content-style",
+      JSON.stringify({
+        name: "旧风格",
+        terms: {
+          home: "工作台",
+          folders: "旧文件夹",
+          tags: "旧标签",
+          favorites: "旧收藏"
+        }
+      })
     );
-    const firstFolder = container.querySelector(
-      ".library-folder-card-open"
-    ) as HTMLButtonElement;
-    expect(firstFolder).not.toBeNull();
-    await user.click(firstFolder);
-    expect(
-      screen.getByRole("complementary", { name: "文件夹导航" })
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "全部文件夹" })
-    ).toBeInTheDocument();
-    const folderRail = screen.getByRole("navigation", {
-      name: "切换文件夹"
-    });
-    const compactFolderCards = within(folderRail).getAllByRole("button");
-    expect(compactFolderCards.length).toBeGreaterThan(1);
-    expect(
-      container.querySelectorAll(".library-folder-rail-card").length
-    ).toBe(compactFolderCards.length);
-    const activeRailCard = compactFolderCards.find((button) =>
-      button.hasAttribute("aria-current")
-    );
-    expect(activeRailCard).toBeDefined();
-    expect(activeRailCard).toHaveAttribute("aria-current", "page");
-    expect(
-      container.querySelector(".library-folder-detail .notebook-card")
-    ).toBeInTheDocument();
 
-    const nextFolderCard = compactFolderCards.find(
-      (button) => !button.hasAttribute("aria-current")
-    );
-    expect(nextFolderCard).toBeDefined();
-    await waitFor(() =>
-      expect(nextFolderCard).not.toHaveStyle({ pointerEvents: "none" })
-    );
-    await user.click(nextFolderCard as HTMLButtonElement);
-    expect(nextFolderCard).toHaveAttribute("aria-current", "page");
-    expect(
-      container.querySelector(".library-folder-detail")
-    ).toBeInTheDocument();
+    renderApp(false);
 
-    await user.click(tagsButton);
-    expect(tagsButton).toHaveAttribute("aria-current", "page");
-    expect(screen.getByRole("region", { name: "标签" })).toBeEmptyDOMElement();
-    expect(screen.queryByRole("heading", { name: "从关键词进入" })).toBeNull();
-
-    await user.click(favoritesButton);
-    expect(favoritesButton).toHaveAttribute("aria-current", "page");
-    expect(screen.getByRole("region", { name: "收藏" })).toBeEmptyDOMElement();
-    expect(screen.queryByRole("heading", { name: "留住常看的内容" })).toBeNull();
+    const stored = JSON.parse(
+      window.localStorage.getItem("annota:custom-content-style") ?? "{}"
+    );
+    expect(stored.terms.home).toBe("工作台");
+    expect(stored.terms.folders).toBeUndefined();
+    expect(stored.terms.tags).toBeUndefined();
+    expect(stored.terms.favorites).toBeUndefined();
   });
 
   it("opens generation and prompts as a top-level page above the sidebar footer", async () => {
@@ -291,7 +266,7 @@ describe("Annota core flow", () => {
     const navigation = within(sidebar).getByRole("navigation");
     const footer = sidebar.querySelector(".home-sidebar-footer");
     const generationButton = within(navigation).getByRole("button", {
-      name: "生成与提示词"
+      name: "拓扑节点"
     });
 
     expect(navigation.nextElementSibling).toBe(footer);
@@ -301,10 +276,10 @@ describe("Annota core flow", () => {
 
     expect(generationButton).toHaveAttribute("aria-current", "page");
     expect(
-      screen.getByRole("region", { name: "生成与提示词内容" })
+      screen.getByRole("region", { name: "拓扑节点内容" })
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { level: 2, name: "生成与提示词" })
+      screen.getByRole("heading", { level: 2, name: "拓扑节点" })
     ).toBeInTheDocument();
   });
 
@@ -313,10 +288,10 @@ describe("Annota core flow", () => {
     const generationPage = await openGenerationPage(user);
 
     expect(
-      within(generationPage).getByRole("button", { name: /^解释\s*内置$/ })
+      within(generationPage).getByRole("button", { name: /^解释\s*内置 · AI$/ })
     ).toBeInTheDocument();
     expect(
-      within(generationPage).getByRole("textbox", { name: "生成类型名称" })
+      within(generationPage).getByRole("textbox", { name: "节点类型名称" })
     ).toHaveValue("解释");
 
     await user.click(
@@ -325,7 +300,7 @@ describe("Annota core flow", () => {
       })
     );
     expect(
-      within(generationPage).getByRole("textbox", { name: "生成类型名称" })
+      within(generationPage).getByRole("textbox", { name: "节点类型名称" })
     ).toHaveValue("翻译");
 
     const systemPrompt = within(generationPage).getByRole("textbox", {
@@ -397,28 +372,114 @@ describe("Annota core flow", () => {
     );
   });
 
+  it("lists the topology card nodes and previews the selected node style", async () => {
+    const user = userEvent.setup();
+    const generationPage = await openGenerationPage(user);
+    const nodeNames = [
+      "根节点",
+      "解释",
+      "翻译",
+      "总结",
+      "重点",
+      "追问",
+      "术语",
+      "对比",
+      "代码",
+      "实践清单",
+      "个人笔记",
+      "原文来源",
+      "复习闪卡"
+    ];
+
+    nodeNames.forEach((name) => {
+      expect(
+        within(generationPage).getByRole("button", {
+          name: new RegExp(`^${name}\\s*内置`)
+        })
+      ).toBeInTheDocument();
+    });
+    expect(
+      within(generationPage).getByRole("article", {
+        name: "节点样式预览：解释"
+      })
+    ).toHaveClass("is-explain");
+
+    await user.click(
+      within(generationPage).getByRole("button", {
+        name: /^翻译\s*内置 · AI$/
+      })
+    );
+    expect(
+      within(generationPage).getByRole("article", {
+        name: "节点样式预览：翻译"
+      })
+    ).toHaveClass("is-translate");
+
+    await user.selectOptions(
+      within(generationPage).getByRole("combobox", { name: "节点样式" }),
+      "compare"
+    );
+    expect(
+      within(generationPage).getByRole("article", {
+        name: "节点样式预览：翻译"
+      })
+    ).toHaveClass("is-compare");
+    await waitFor(() => {
+      const stored = JSON.parse(
+        window.localStorage.getItem("annota.generation-types.v1") ?? "[]"
+      );
+      expect(stored.find((item: { id: string }) => item.id === "translate"))
+        .toMatchObject({ cardVariant: "compare", executionMode: "ai" });
+    });
+
+    await user.click(
+      within(generationPage).getByRole("button", {
+        name: /^重点\s*内置 · 手动$/
+      })
+    );
+    expect(
+      within(generationPage).getByRole("article", {
+        name: "节点样式预览：重点"
+      })
+    ).toHaveClass("is-highlight");
+    expect(
+      within(generationPage).getByRole("combobox", { name: "调用模型" })
+    ).toBeDisabled();
+    expect(
+      within(generationPage).getByRole("textbox", { name: "System Prompt" })
+    ).toBeDisabled();
+    expect(
+      within(generationPage).getByRole("checkbox", { name: "启用重点" })
+    ).toBeInTheDocument();
+    expect(
+      within(generationPage).getByRole("checkbox", {
+        name: "允许重点节点互动"
+      })
+    ).toBeInTheDocument();
+  });
+
   it("creates a custom generation type and opens a request-free template preview", async () => {
     const user = userEvent.setup();
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const generationPage = await openGenerationPage(user);
 
     await user.click(
-      within(generationPage).getByRole("button", { name: "新建生成类型" })
+      within(generationPage).getByRole("button", { name: "新建节点类型" })
     );
     expect(
       within(generationPage).getByRole("button", {
-        name: /^未命名类型\s*自定义/
+        name: /^未命名节点\s*自定义 · AI/
       })
     ).toBeInTheDocument();
     expect(
-      within(generationPage).getByRole("textbox", { name: "生成类型名称" })
-    ).toHaveValue("未命名类型");
+      within(generationPage).getByRole("textbox", { name: "节点类型名称" })
+    ).toHaveValue("未命名节点");
     expect(
       within(generationPage).getAllByRole("radio")[0]
     ).toBeChecked();
 
     await user.click(
-      within(generationPage).getByRole("button", { name: "输出预览" })
+      within(generationPage).getByRole("button", { name: "提示词预览" })
     );
     const preview = await screen.findByRole("dialog", { name: "输出预览" });
     expect(within(preview).getByText(/不会发起模型请求/)).toBeInTheDocument();
@@ -430,20 +491,20 @@ describe("Annota core flow", () => {
     const generationPage = await openGenerationPage(user);
     const typeList = generationPage.querySelector(".generation-type-list");
     const createButton = within(generationPage).getByRole("button", {
-      name: "新建生成类型"
+      name: "新建节点类型"
     });
     const explainToggle = within(generationPage).getByRole("checkbox", {
       name: "启用解释"
     });
     const explainButton = within(generationPage).getByRole("button", {
-      name: /^解释\s*内置$/
+      name: /^解释\s*内置 · AI$/
     });
 
     expect(typeList?.nextElementSibling).toBe(createButton);
     expect(explainToggle.closest(".generation-type-item")).not.toBeNull();
     expect(explainButton).toHaveAttribute("aria-current", "page");
     expect(
-      within(generationPage).getByText("3 个启用")
+      within(generationPage).getByText("2 个已启用")
     ).toBeInTheDocument();
     expect(within(generationPage).getByRole("status")).toHaveTextContent(
       "所有修改都会自动保存到本机"
@@ -454,7 +515,14 @@ describe("Annota core flow", () => {
           ".generation-identity-grid > label > span:first-child, .generation-identity-grid > fieldset > legend"
         )
       ).map((label) => label.textContent)
-    ).toEqual(["生成类型名称", "调用模型", "标记颜色", "列表图标"]);
+    ).toEqual([
+      "节点类型名称",
+      "调用模型",
+      "节点样式",
+      "拓扑互动",
+      "标记颜色",
+      "列表图标"
+    ]);
     expect(
       within(generationPage).queryByRole("textbox", { name: "关系标签" })
     ).not.toBeInTheDocument();
@@ -477,7 +545,7 @@ describe("Annota core flow", () => {
     expect(explainToggle).not.toBeChecked();
     expect(explainButton).toHaveAttribute("aria-current", "page");
     expect(
-      within(generationPage).getByText("2 个启用")
+      within(generationPage).getByText("1 个已启用")
     ).toBeInTheDocument();
     expect(generationPage.querySelector(".generation-inspector")).toBeNull();
     expect(
@@ -499,14 +567,19 @@ describe("Annota core flow", () => {
       within(generationPage).queryByText("复制当前类型")
     ).not.toBeInTheDocument();
     expect(
-      within(generationPage).getByRole("complementary", { name: "模板检查" })
+      within(generationPage).getByRole("complementary", {
+        name: "节点预览与模板检查"
+      })
     ).toBeInTheDocument();
     expect(generationPage.querySelector(".generation-trace")).toBeNull();
 
     const reviewHeadings = within(
-      within(generationPage).getByRole("complementary", { name: "模板检查" })
+      within(generationPage).getByRole("complementary", {
+        name: "节点预览与模板检查"
+      })
     ).getAllByRole("heading", { level: 3 });
     expect(reviewHeadings.map((heading) => heading.textContent)).toEqual([
+      "节点样式预览",
       "上下文策略",
       "输出结构"
     ]);
@@ -548,13 +621,13 @@ describe("Annota core flow", () => {
     );
     const sidebar = screen.getByRole("complementary", { name: "主页导航" });
     await user.click(
-      within(sidebar).getByRole("button", { name: "生成与提示词" })
+      within(sidebar).getByRole("button", { name: "拓扑节点" })
     );
     const generationPage = screen.getByRole("region", {
-      name: "生成与提示词内容"
+      name: "拓扑节点内容"
     });
     const explainButton = within(generationPage).getByRole("button", {
-      name: /^解释\s*内置$/
+      name: /^解释\s*内置 · AI$/
     });
     const modelSelect = within(generationPage).getByRole("combobox", {
       name: "调用模型"
@@ -581,7 +654,7 @@ describe("Annota core flow", () => {
     ).toHaveAttribute("data-icon", "translate");
 
     await user.click(
-      within(generationPage).getByRole("button", { name: "输出预览" })
+      within(generationPage).getByRole("button", { name: "提示词预览" })
     );
     expect(
       within(
@@ -596,34 +669,35 @@ describe("Annota core flow", () => {
 
     expect(
       within(generationPage).queryByRole("button", {
-        name: "删除生成类型：解释"
+        name: "删除节点类型：解释"
       })
     ).toBeNull();
     expect(
       within(generationPage).getByLabelText("解释为内置类型，无法删除")
     ).toBeInTheDocument();
 
+    expect(
+      within(generationPage).getByLabelText("追问为内置类型，无法删除")
+    ).toBeInTheDocument();
     await user.click(
-      within(generationPage).getByRole("button", {
-        name: /^苏格拉底式追问\s*自定义/
-      })
+      within(generationPage).getByRole("button", { name: "新建节点类型" })
     );
     await user.click(
       within(generationPage).getByRole("button", {
-        name: "删除生成类型：苏格拉底式追问"
+        name: "删除节点类型：未命名节点"
       })
     );
 
     expect(
       within(generationPage).queryByRole("button", {
-        name: /苏格拉底式追问/
+        name: /未命名节点/
       })
     ).toBeNull();
     expect(
-      within(generationPage).getByRole("textbox", { name: "生成类型名称" })
+      within(generationPage).getByRole("textbox", { name: "节点类型名称" })
     ).toHaveValue("解释");
     expect(within(generationPage).getByRole("status")).toHaveTextContent(
-      "已删除自定义生成类型"
+      "已删除自定义节点类型"
     );
   });
 
@@ -682,11 +756,11 @@ describe("Annota core flow", () => {
     expect(screen.getByRole("button", { name: "关闭窗口" })).toBeInTheDocument();
     const homeContent = container.querySelector(".home-content");
     expect(homeContent?.firstElementChild).toHaveClass(
-      "home-mobile-library-nav"
+      "home-mobile-nav"
     );
     expect(
       homeContent?.querySelector(
-        ".home-mobile-library-nav + .home-page-viewport"
+        ".home-mobile-nav + .home-page-viewport"
       )
     ).toBeInTheDocument();
     expect(container.querySelector(".home-workspace > .home-topbar")).not.toBeInTheDocument();
@@ -1023,13 +1097,13 @@ describe("Annota core flow", () => {
     expect(panel).toHaveAttribute("data-focus-mode", "current");
     expect(panel).not.toHaveClass("is-pinned");
     const currentNode = container.querySelector<HTMLElement>(
-      ".topology-node[aria-current='page']"
+      ".topology-node-card[aria-current='page']"
     )!;
     const expectedCurrentX =
-      420 / 2 - (Number.parseFloat(currentNode.style.left) + 164 / 2) * 0.9;
+      420 / 2 - (Number.parseFloat(currentNode.style.left) + 214 / 2) * 0.9;
     const expectedCurrentY =
       322 / 2 -
-      (Number.parseFloat(currentNode.style.top) + 50 / 2) * 0.9;
+      (Number.parseFloat(currentNode.style.top) + 118 / 2) * 0.9;
     expect(scene.style.transform).toBe(
       `translate(${expectedCurrentX}px, ${expectedCurrentY}px) scale(0.9)`
     );
@@ -1102,10 +1176,10 @@ describe("Annota core flow", () => {
     const panel = screen.getByRole("complementary", { name: "当前知识树拓扑" });
     const shell = panel.parentElement!;
     const nodes = Array.from(
-      container.querySelectorAll<HTMLButtonElement>(".topology-node")
+      container.querySelectorAll<HTMLButtonElement>(".topology-node-card")
     );
     const firstTarget = nodes.find((node) => !node.matches("[aria-current='page']"))!;
-    const firstTitle = firstTarget.querySelector("strong")!.textContent!;
+    const firstTitle = firstTarget.querySelector(".topology-node-card-title")!.textContent!;
 
     await user.click(firstTarget);
     expect(shell).toHaveClass("is-fullscreen");
@@ -1116,7 +1190,7 @@ describe("Annota core flow", () => {
     expect(screen.getByRole("heading", { level: 1, name: firstTitle })).toBeInTheDocument();
 
     const secondTarget = nodes.find((node) => node !== firstTarget)!;
-    const secondTitle = secondTarget.querySelector("strong")!.textContent!;
+    const secondTitle = secondTarget.querySelector(".topology-node-card-title")!.textContent!;
     fireEvent.doubleClick(secondTarget);
     expect(shell).not.toHaveClass("is-fullscreen");
     expect(screen.getByRole("heading", { level: 1, name: secondTitle })).toBeInTheDocument();
@@ -1166,8 +1240,7 @@ describe("Annota core flow", () => {
                 blocks: [
                   { type: "heading", text: "核心含义" },
                   { type: "paragraph", text: "这是模型返回的正文内容。" }
-                ],
-                tags: ["解释", "模型生成"]
+                ]
               })
             }
           }
@@ -1385,7 +1458,7 @@ describe("Annota core flow", () => {
       expect(
         screen.queryByRole("dialog", { name: "文字颜色选项" })
       ).not.toBeInTheDocument();
-      expect(screen.getAllByTitle("先选择正文文字")).toHaveLength(3);
+      expect(screen.getAllByTitle("先选择正文文字")).toHaveLength(2);
       screen.getAllByTitle("先选择正文文字").forEach((button) => {
         expect(button).toBeDisabled();
       });
@@ -1581,7 +1654,7 @@ describe("Annota core flow", () => {
     });
     expect(
       within(settingsCanvas).queryByRole("button", {
-        name: "生成与提示词"
+        name: "拓扑节点"
       })
     ).not.toBeInTheDocument();
     expect(

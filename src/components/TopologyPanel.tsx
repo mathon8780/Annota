@@ -12,15 +12,41 @@ import {
   type WheelEvent
 } from "react";
 import {
+  AlignLeft,
+  BookOpenText,
+  CircleHelp,
+  Code2,
   Focus,
+  GalleryHorizontalEnd,
+  GitCompareArrows,
+  Highlighter,
+  Languages,
+  ListChecks,
   Maximize2,
+  MessageSquareText,
   Minimize2,
   Network,
+  NotebookPen,
   Pin,
+  Plus,
+  Quote,
+  Tag,
+  Trash2,
+  Unlink,
+  X,
   ZoomIn,
   ZoomOut
 } from "lucide-react";
 import type { ArticleNode } from "../types";
+import type {
+  TopologyGraphRecord,
+  TopologyNodeRecord
+} from "../utils/topologyRepository";
+import {
+  loadGenerationTypes,
+  type GenerationTypeConfig,
+  type GenerationTypeIconId
+} from "../utils/generationConfig";
 import {
   formatShortcut,
   matchesShortcut
@@ -30,6 +56,7 @@ import type { ShortcutBinding } from "../utils/shortcuts";
 interface TopologyPanelProps {
   articles: Record<string, ArticleNode>;
   rootId: string;
+  rootIds?: string[];
   currentId: string;
   onNavigate: (id: string) => void;
   fullScreen: boolean;
@@ -37,6 +64,34 @@ interface TopologyPanelProps {
   onFullScreen: (value: boolean) => void;
   focusShortcut: ShortcutBinding;
   pinShortcut: ShortcutBinding;
+  topologyGraph: TopologyGraphRecord | null;
+  topologyError: string;
+  onCreateRoot: (title: string, markdown?: string) => Promise<string | null>;
+  onCreateManualNode: (draft: {
+    nodeType: string;
+    title: string;
+    content: string;
+    parentId: string | null;
+    isRoot: boolean;
+    interactive: boolean;
+    icon: GenerationTypeIconId;
+    cardVariant: GenerationTypeConfig["cardVariant"];
+    color: string;
+  }) => Promise<TopologyNodeRecord | null>;
+  onUpdateManualNode: (node: TopologyNodeRecord) => Promise<void>;
+  onRemoveManualNode: (nodeId: string) => Promise<void>;
+  onCreateRelation: (
+    sourceNodeId: string,
+    targetNodeId: string,
+    label: string,
+    directed?: boolean
+  ) => Promise<void>;
+  onRemoveRelation: (relationId: string) => Promise<void>;
+  onUpdateInteraction: (
+    nodeId: string,
+    interactionType: string,
+    state: Record<string, unknown>
+  ) => Promise<void>;
 }
 
 interface Position {
@@ -49,6 +104,24 @@ interface Position {
 interface TopologySize {
   width: number;
   height: number;
+}
+
+interface TopologyDisplayNode {
+  id: string;
+  title: string;
+  summary: string;
+  nodeType: GenerationTypeConfig;
+  article?: ArticleNode;
+  manual?: TopologyNodeRecord;
+}
+
+interface TopologyDisplayEdge {
+  id: string;
+  sourceId: string;
+  targetId: string;
+  label: string;
+  directed: boolean;
+  persisted: boolean;
 }
 
 interface TopologySizePreference {
@@ -66,12 +139,87 @@ const TOPOLOGY_MAX_SIZE = { width: 720, height: 560 };
 const TOPOLOGY_MAX_VIEWPORT_RATIO = { width: 0.62, height: 0.68 };
 const TOPOLOGY_LEGACY_REFERENCE_VIEWPORT = { width: 1888, height: 952 };
 const TOPOLOGY_SIZE_STORAGE_KEY = "annota:topology-size";
-const TOPOLOGY_NODE_WIDTH = 164;
-const TOPOLOGY_NODE_HEIGHT = 50;
+const TOPOLOGY_NODE_WIDTH = 214;
+const TOPOLOGY_NODE_HEIGHT = 118;
+const TOPOLOGY_NODE_X_GAP = 276;
+const TOPOLOGY_NODE_Y_GAP = 154;
 const TOPOLOGY_CURRENT_FOCUS_SCALE = 0.9;
 const TOPOLOGY_MIN_SCALE = 0.18;
 const TOPOLOGY_MAX_SCALE = 1.7;
 const TOPOLOGY_FIT_PADDING = 36;
+
+const topologyNodeIcons: Record<GenerationTypeIconId, typeof Network> = {
+  root: BookOpenText,
+  explain: MessageSquareText,
+  translate: Languages,
+  summary: AlignLeft,
+  highlight: Highlighter,
+  question: CircleHelp,
+  terms: Tag,
+  compare: GitCompareArrows,
+  code: Code2,
+  checklist: ListChecks,
+  note: NotebookPen,
+  source: Quote,
+  flashcard: GalleryHorizontalEnd
+};
+
+function resolveNodeType(
+  article: ArticleNode,
+  nodeTypes: readonly GenerationTypeConfig[]
+): GenerationTypeConfig {
+  const typeById = new Map(nodeTypes.map((type) => [type.id, type]));
+  const rootType = typeById.get("root") ?? nodeTypes[0];
+  const sourceType = article.source?.generationType
+    ? typeById.get(article.source.generationType)
+    : undefined;
+  const relationType = nodeTypes.find(
+    (type) => type.relationLabel === article.type
+  );
+  const nameType = nodeTypes.find((type) => type.name === article.type);
+  const configuredType =
+    article.parentId === null
+      ? rootType
+      : sourceType ?? relationType ?? nameType;
+  if (configuredType) return configuredType;
+
+  const appearance = article.appearance;
+  const fallback = typeById.get("explain") ?? rootType ?? nodeTypes[0];
+  if (!appearance || !fallback) return nodeTypes[0];
+  return {
+    ...fallback,
+    id: appearance.typeId,
+    name: article.type,
+    relationLabel: article.type,
+    icon: appearance.icon,
+    cardVariant: appearance.cardVariant,
+    color: appearance.color
+  };
+}
+
+function resolveStoredNodeType(
+  node: TopologyNodeRecord,
+  nodeTypes: readonly GenerationTypeConfig[]
+): GenerationTypeConfig {
+  const configured = nodeTypes.find((type) => type.id === node.nodeType);
+  if (configured) return configured;
+  const fallback = nodeTypes.find((type) => type.id === "note") ?? nodeTypes[0];
+  if (!fallback) throw new Error("没有可用的拓扑节点类型");
+  try {
+    const appearance = JSON.parse(node.appearanceJson) as Partial<GenerationTypeConfig>;
+    return {
+      ...fallback,
+      id: node.nodeType,
+      name: node.nodeType,
+      icon: appearance.icon ?? fallback.icon,
+      cardVariant: appearance.cardVariant ?? fallback.cardVariant,
+      color: appearance.color ?? fallback.color,
+      interactive: node.interactive
+    };
+  } catch {
+    return { ...fallback, id: node.nodeType, name: node.nodeType };
+  }
+}
 
 function topologyAvailableSize() {
   if (typeof window === "undefined") {
@@ -162,44 +310,168 @@ function readStoredTopologyPreference(): TopologySizePreference {
   return topologyPreferenceFromSize(TOPOLOGY_DEFAULT_SIZE);
 }
 
-function buildLayout(articles: Record<string, ArticleNode>, rootId: string) {
-  const positions: Position[] = [];
-  const xGap = 210;
-  const yGap = 86;
-  let leaf = 0;
-
-  const place = (id: string, depth: number): number => {
-    const article = articles[id];
-    if (!article || !article.childIds.length) {
-      const y = 44 + leaf * yGap;
-      leaf += 1;
-      positions.push({ id, x: 36 + depth * xGap, y, depth });
-      return y;
+function buildLayout(
+  nodes: Record<string, TopologyDisplayNode>,
+  rootIds: readonly string[],
+  edges: readonly TopologyDisplayEdge[]
+) {
+  const children = new Map<string, string[]>();
+  edges.forEach((edge) => {
+    const values = children.get(edge.sourceId) ?? [];
+    if (!values.includes(edge.targetId)) values.push(edge.targetId);
+    children.set(edge.sourceId, values);
+  });
+  const depths = new Map<string, number>();
+  const queue = rootIds.filter((id) => nodes[id]).map((id) => ({ id, depth: 0 }));
+  Object.keys(nodes).forEach((id) => {
+    if (!queue.some((item) => item.id === id) && !edges.some((edge) => edge.targetId === id)) {
+      queue.push({ id, depth: 0 });
     }
-    const childYs = article.childIds.map((childId) => place(childId, depth + 1));
-    const y = childYs.reduce((sum, value) => sum + value, 0) / childYs.length;
-    positions.push({ id, x: 36 + depth * xGap, y, depth });
-    return y;
-  };
-
-  place(rootId, 0);
-  const width = Math.max(520, ...positions.map((position) => position.x + 174));
-  const height = Math.max(260, ...positions.map((position) => position.y + 82));
+  });
+  while (queue.length) {
+    const next = queue.shift()!;
+    const previous = depths.get(next.id);
+    if (previous !== undefined && previous <= next.depth) continue;
+    depths.set(next.id, next.depth);
+    (children.get(next.id) ?? []).forEach((id) => {
+      if (nodes[id] && next.depth < Object.keys(nodes).length) {
+        queue.push({ id, depth: next.depth + 1 });
+      }
+    });
+  }
+  Object.keys(nodes).forEach((id) => {
+    if (!depths.has(id)) depths.set(id, 0);
+  });
+  const perDepth = new Map<number, number>();
+  const positions: Position[] = Object.keys(nodes)
+    .sort((left, right) => {
+      const depthDifference = (depths.get(left) ?? 0) - (depths.get(right) ?? 0);
+      if (depthDifference) return depthDifference;
+      const rootDifference = rootIds.indexOf(left) - rootIds.indexOf(right);
+      return rootDifference || left.localeCompare(right);
+    })
+    .map((id) => {
+      const depth = depths.get(id) ?? 0;
+      const index = perDepth.get(depth) ?? 0;
+      perDepth.set(depth, index + 1);
+      return {
+        id,
+        x: 36 + depth * TOPOLOGY_NODE_X_GAP,
+        y: 44 + index * TOPOLOGY_NODE_Y_GAP,
+        depth
+      };
+    });
+  const width = Math.max(
+    520,
+    ...positions.map((position) => position.x + TOPOLOGY_NODE_WIDTH + 36)
+  );
+  const height = Math.max(
+    260,
+    ...positions.map((position) => position.y + TOPOLOGY_NODE_HEIGHT + 44)
+  );
   return { positions, width, height };
 }
 
 export function TopologyPanel({
   articles,
   rootId,
+  rootIds = [rootId],
   currentId,
   onNavigate,
   fullScreen,
   sharedTransition,
   onFullScreen,
   focusShortcut,
-  pinShortcut
+  pinShortcut,
+  topologyGraph,
+  topologyError,
+  onCreateRoot,
+  onCreateManualNode,
+  onUpdateManualNode,
+  onRemoveManualNode,
+  onCreateRelation,
+  onRemoveRelation,
+  onUpdateInteraction
 }: TopologyPanelProps) {
-  const layout = useMemo(() => buildLayout(articles, rootId), [articles, rootId]);
+  const allNodeTypes = useMemo(() => loadGenerationTypes(), []);
+  const manualNodeTypes = useMemo(
+    () =>
+      allNodeTypes.filter(
+        (type) => type.executionMode === "manual" && type.enabled
+      ),
+    [allNodeTypes]
+  );
+  const displayNodes = useMemo(() => {
+    const values: Record<string, TopologyDisplayNode> = {};
+    Object.values(articles).forEach((article) => {
+      if (!rootIds.includes(article.rootId) && !rootIds.includes(article.id)) return;
+      values[article.id] = {
+        id: article.id,
+        title: article.title,
+        summary: article.summary,
+        nodeType: resolveNodeType(article, allNodeTypes),
+        article
+      };
+    });
+    topologyGraph?.nodes.forEach((node) => {
+      if (node.contentMode !== "database" || !node.enabled) return;
+      values[node.id] = {
+        id: node.id,
+        title: node.title,
+        summary: node.summary || node.content?.replace(/\s+/g, " ").slice(0, 90) || "",
+        nodeType: resolveStoredNodeType(node, allNodeTypes),
+        manual: node
+      };
+    });
+    return values;
+  }, [allNodeTypes, articles, rootIds, topologyGraph?.nodes]);
+  const displayEdges = useMemo(() => {
+    const values = new Map<string, TopologyDisplayEdge>();
+    Object.values(articles).forEach((article) => {
+      article.childIds.forEach((childId) => {
+        if (!displayNodes[article.id] || !displayNodes[childId]) return;
+        const key = `${article.id}:${childId}`;
+        values.set(key, {
+          id: `tree:${key}`,
+          sourceId: article.id,
+          targetId: childId,
+          label: articles[childId]?.type ?? "下一级",
+          directed: true,
+          persisted: false
+        });
+      });
+    });
+    topologyGraph?.relations.forEach((relation) => {
+      if (!displayNodes[relation.sourceNodeId] || !displayNodes[relation.targetNodeId]) return;
+      const key = `${relation.sourceNodeId}:${relation.targetNodeId}`;
+      const existing = values.get(key);
+      values.set(key, {
+        id: relation.id,
+        sourceId: relation.sourceNodeId,
+        targetId: relation.targetNodeId,
+        label: relation.label,
+        directed: relation.directed,
+        persisted: existing ? existing.persisted : true
+      });
+    });
+    return Array.from(values.values());
+  }, [articles, displayNodes, topologyGraph?.relations]);
+  const resolvedRootIds = useMemo(
+    () =>
+      Array.from(
+        new Set([
+          ...rootIds,
+          ...(topologyGraph?.nodes
+            .filter((node) => node.contentMode === "database" && node.isRoot && node.enabled)
+            .map((node) => node.id) ?? [])
+        ])
+      ),
+    [rootIds, topologyGraph?.nodes]
+  );
+  const layout = useMemo(
+    () => buildLayout(displayNodes, resolvedRootIds, displayEdges),
+    [displayEdges, displayNodes, resolvedRootIds]
+  );
   const [scale, setScale] = useState(0.78);
   const [pan, setPan] = useState({ x: 8, y: 12 });
   const [open, setOpen] = useState(false);
@@ -213,6 +485,25 @@ export function TopologyPanel({
   );
   const [resizing, setResizing] = useState(false);
   const [focusMode, setFocusMode] = useState<TopologyFocusMode>(null);
+  const [composer, setComposer] = useState<"root" | "manual" | null>(null);
+  const [selectedManualId, setSelectedManualId] = useState<string | null>(null);
+  const [selectedInteractiveId, setSelectedInteractiveId] = useState<string | null>(null);
+  const [draftTitle, setDraftTitle] = useState("");
+  const [draftContent, setDraftContent] = useState("");
+  const [draftTypeId, setDraftTypeId] = useState(manualNodeTypes[0]?.id ?? "note");
+  const [draftAsRoot, setDraftAsRoot] = useState(false);
+  const [relationTargetId, setRelationTargetId] = useState("");
+  const [relationLabel, setRelationLabel] = useState("关联");
+  const [editorBusy, setEditorBusy] = useState(false);
+  const selectedManualNode = selectedManualId
+    ? topologyGraph?.nodes.find((node) => node.id === selectedManualId) ?? null
+    : null;
+  const selectedInteractiveNode = selectedInteractiveId
+    ? displayNodes[selectedInteractiveId] ?? null
+    : null;
+  const selectedInteraction = selectedInteractiveId
+    ? topologyGraph?.interactions.find((item) => item.nodeId === selectedInteractiveId) ?? null
+    : null;
   const drag = useRef<{ id: number; startX: number; startY: number; x: number; y: number } | null>(
     null
   );
@@ -468,6 +759,86 @@ export function TopologyPanel({
     }
   };
 
+  const openManualEditor = (node: TopologyNodeRecord) => {
+    setSelectedManualId(node.id);
+    setDraftTitle(node.title);
+    setDraftContent(node.content ?? "");
+    setRelationTargetId("");
+  };
+
+  const submitComposer = async () => {
+    if (!draftTitle.trim() || editorBusy) return;
+    setEditorBusy(true);
+    try {
+      if (composer === "root") {
+        await onCreateRoot(draftTitle, draftContent);
+      } else {
+        const nodeType =
+          manualNodeTypes.find((type) => type.id === draftTypeId) ?? manualNodeTypes[0];
+        if (!nodeType) return;
+        const node = await onCreateManualNode({
+          nodeType: nodeType.id,
+          title: draftTitle,
+          content: draftContent,
+          parentId: draftAsRoot ? null : currentId,
+          isRoot: draftAsRoot,
+          interactive: nodeType.interactive,
+          icon: nodeType.icon,
+          cardVariant: nodeType.cardVariant,
+          color: nodeType.color
+        });
+        if (node) openManualEditor(node);
+      }
+      setComposer(null);
+      setDraftTitle("");
+      setDraftContent("");
+      setDraftAsRoot(false);
+    } finally {
+      setEditorBusy(false);
+    }
+  };
+
+  const updateSelectedManual = async (
+    changes: Partial<TopologyNodeRecord> = {}
+  ) => {
+    if (!selectedManualNode || editorBusy) return;
+    setEditorBusy(true);
+    try {
+      await onUpdateManualNode({
+        ...selectedManualNode,
+        title: draftTitle.trim() || selectedManualNode.title,
+        content: draftContent,
+        summary: draftContent.trim().replace(/\s+/g, " ").slice(0, 90),
+        ...changes
+      });
+    } finally {
+      setEditorBusy(false);
+    }
+  };
+
+  const updateInteractionState = async (state: Record<string, unknown>) => {
+    if (!selectedManualNode) return;
+    await updateSelectedManual({ interactionStateJson: JSON.stringify(state) });
+  };
+
+  const selectedInteractionState = (() => {
+    try {
+      return JSON.parse(selectedManualNode?.interactionStateJson ?? "{}") as Record<
+        string,
+        unknown
+      >;
+    } catch {
+      return {};
+    }
+  })();
+  const selectedGraphInteractionState = (() => {
+    try {
+      return JSON.parse(selectedInteraction?.stateJson ?? "{}") as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  })();
+
   const sizeFromPointer = (event: ReactPointerEvent<HTMLDivElement>) => {
     const active = resize.current;
     if (!active || active.id !== event.pointerId) return null;
@@ -594,48 +965,88 @@ export function TopologyPanel({
             viewBox={`0 0 ${layout.width} ${layout.height}`}
             aria-hidden="true"
           >
-            {layout.positions.flatMap((parent) => {
-              const article = articles[parent.id];
-              return (article?.childIds ?? []).map((childId) => {
-                const child = byId[childId];
+            {displayEdges.map((edge) => {
+                const parent = byId[edge.sourceId];
+                const child = byId[edge.targetId];
+                const parentType = displayNodes[edge.sourceId]?.nodeType;
+                if (!parent || !child) return null;
                 if (!child) return null;
-                const startX = parent.x + 164;
-                const startY = parent.y + 25;
+                const startX = parent.x + TOPOLOGY_NODE_WIDTH;
+                const startY = parent.y + TOPOLOGY_NODE_HEIGHT / 2;
                 const endX = child.x;
-                const endY = child.y + 25;
+                const endY = child.y + TOPOLOGY_NODE_HEIGHT / 2;
                 const mid = startX + (endX - startX) * 0.52;
                 return (
                   <path
-                    key={`${parent.id}-${childId}`}
+                    key={edge.id}
+                    className={edge.directed ? "is-directed" : "is-undirected"}
                     d={`M ${startX} ${startY} C ${mid} ${startY}, ${mid} ${endY}, ${endX} ${endY}`}
+                    style={
+                      {
+                        "--topology-link-color": parentType?.color
+                      } as CSSProperties
+                    }
                   />
                 );
-              });
             })}
           </svg>
           {layout.positions.map((position) => {
-            const article = articles[position.id];
-            if (!article) return null;
-            const current = article.id === currentId;
+            const node = displayNodes[position.id];
+            if (!node) return null;
+            const current = node.id === currentId;
+            const nodeType = node.nodeType;
+            const NodeIcon = topologyNodeIcons[nodeType.icon] ?? BookOpenText;
             return (
               <button
-                key={article.id}
-                className={`topology-node${current ? " is-current" : ""}`}
+                key={node.id}
+                className={`topology-node-card is-${nodeType.cardVariant}${
+                  current ? " is-current" : ""
+                }${node.manual ? " is-manual" : ""}${nodeType.interactive ? " is-interactive" : ""}`}
                 type="button"
-                style={{ left: position.x, top: position.y }}
+                style={
+                  {
+                    left: position.x,
+                    top: position.y,
+                    "--topology-card-color": nodeType.color
+                  } as CSSProperties
+                }
                 onPointerDown={(event) => event.stopPropagation()}
                 onClick={() => {
-                  if (!fullScreen) onNavigate(article.id);
+                  if (node.manual) {
+                    openManualEditor(node.manual);
+                    setSelectedInteractiveId(null);
+                  } else if (fullScreen && nodeType.interactive) {
+                    setSelectedInteractiveId(node.id);
+                    setSelectedManualId(null);
+                  } else if (!fullScreen && node.article) {
+                    onNavigate(node.article.id);
+                  }
                 }}
-                onDoubleClick={(event) => handleNodeDoubleClick(event, article.id)}
+                onDoubleClick={(event) => {
+                  if (node.article) handleNodeDoubleClick(event, node.article.id);
+                }}
                 aria-current={current ? "page" : undefined}
               >
-                <span className="topology-node-dot" aria-hidden="true"></span>
-                <span>
-                  <strong>{article.title}</strong>
-                  <small>{fullScreen ? article.summary : `第 ${position.depth + 1} 层`}</small>
+                <span className="topology-node-card-head">
+                  <span className="topology-node-card-icon" aria-hidden="true">
+                    <NodeIcon size={16} />
+                  </span>
+                  <strong>{nodeType.name}</strong>
                 </span>
-                {current && <em>当前</em>}
+                <h3 className="topology-node-card-title">{node.title}</h3>
+                {fullScreen && (
+                  <p className="topology-node-card-summary">{node.summary}</p>
+                )}
+                <footer className="topology-node-card-footer">
+                  <span>第 {position.depth + 1} 层</span>
+                  <span>
+                    {displayEdges.filter((edge) => edge.sourceId === node.id).length} 条关系
+                  </span>
+                  {node.manual && <span>SQLite</span>}
+                  {current && (
+                    <em className="topology-node-card-current">当前</em>
+                  )}
+                </footer>
               </button>
             );
           })}
@@ -646,6 +1057,34 @@ export function TopologyPanel({
           onWheel={(event) => event.stopPropagation()}
         >
           <div className="topology-actions" aria-label="拓扑操作">
+            {fullScreen && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setComposer("root");
+                    setDraftTitle("");
+                    setDraftContent("");
+                  }}
+                  aria-label="新建根节点"
+                >
+                  <BookOpenText aria-hidden="true" size={16} />
+                </button>
+                <button
+                  type="button"
+                  disabled={!manualNodeTypes.length}
+                  onClick={() => {
+                    setComposer("manual");
+                    setDraftTitle("");
+                    setDraftContent("");
+                    setDraftAsRoot(false);
+                  }}
+                  aria-label="新建手动节点"
+                >
+                  <Plus aria-hidden="true" size={16} />
+                </button>
+              </>
+            )}
             <button type="button" onClick={() => zoom(scale - 0.12)} aria-label="缩小拓扑">
               <ZoomOut aria-hidden="true" size={16} />
             </button>
@@ -684,11 +1123,259 @@ export function TopologyPanel({
           </div>
           <div className="topology-overlay-copy" aria-live="polite">
             <span>{Math.round(scale * 100)}% · {layout.positions.length} 节点</span>
-            <span>{fullScreen ? "双击进入 · Ctrl 保留拓扑" : "拖动 · 滚轮缩放"}</span>
+            <span>{fullScreen ? "双击进入文章 · 单击编辑手动节点" : "拖动 · 滚轮缩放"}</span>
             <kbd>{formatShortcut(focusShortcut)}</kbd>
           </div>
         </div>
       </div>
+      {fullScreen && topologyError && (
+        <div className="topology-storage-error" role="status">
+          SQLite 暂不可用：{topologyError}
+        </div>
+      )}
+      {fullScreen && composer && (
+        <section className="topology-node-editor is-composer" aria-label="创建拓扑节点">
+          <header>
+            <div>
+              <span>{composer === "root" ? "MARKDOWN ROOT" : "SQLITE NODE"}</span>
+              <strong>{composer === "root" ? "新建根节点" : "新建手动节点"}</strong>
+            </div>
+            <button type="button" onClick={() => setComposer(null)} aria-label="关闭创建面板">
+              <X aria-hidden="true" size={16} />
+            </button>
+          </header>
+          {composer === "manual" && (
+            <label>
+              <span>节点类型</span>
+              <select value={draftTypeId} onChange={(event) => setDraftTypeId(event.target.value)}>
+                {manualNodeTypes.map((type) => (
+                  <option key={type.id} value={type.id}>{type.name}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          <label>
+            <span>标题</span>
+            <input value={draftTitle} onChange={(event) => setDraftTitle(event.target.value)} autoFocus />
+          </label>
+          <label>
+            <span>{composer === "root" ? "Markdown 正文" : "节点内容"}</span>
+            <textarea value={draftContent} onChange={(event) => setDraftContent(event.target.value)} rows={7} />
+          </label>
+          {composer === "manual" && (
+            <label className="topology-node-editor-check">
+              <input
+                type="checkbox"
+                checked={draftAsRoot}
+                onChange={(event) => setDraftAsRoot(event.target.checked)}
+              />
+              <span>作为独立根节点；否则连接到当前阅读节点</span>
+            </label>
+          )}
+          <footer>
+            <small>
+              {composer === "root"
+                ? "正文保存为 Markdown；同一内容集合可有多个根节点。"
+                : "手动内容只写入 SQLite，不创建或修改 Markdown 文件。"}
+            </small>
+            <button type="button" disabled={!draftTitle.trim() || editorBusy} onClick={() => void submitComposer()}>
+              <Plus aria-hidden="true" size={15} />
+              创建
+            </button>
+          </footer>
+        </section>
+      )}
+      {fullScreen && selectedManualNode && !composer && (
+        <section className="topology-node-editor" aria-label="编辑手动节点">
+          <header>
+            <div>
+              <span>SQLITE NODE</span>
+              <strong>{selectedManualNode.title}</strong>
+            </div>
+            <button type="button" onClick={() => setSelectedManualId(null)} aria-label="关闭节点编辑器">
+              <X aria-hidden="true" size={16} />
+            </button>
+          </header>
+          <label>
+            <span>标题</span>
+            <input value={draftTitle} onChange={(event) => setDraftTitle(event.target.value)} />
+          </label>
+          <label>
+            <span>内容</span>
+            <textarea value={draftContent} onChange={(event) => setDraftContent(event.target.value)} rows={7} />
+          </label>
+          {selectedManualNode.interactive && (
+            <div className="topology-node-interaction">
+              <strong>节点互动</strong>
+              {selectedManualNode.nodeType === "checklist" ? (
+                draftContent.split(/\r?\n/).filter(Boolean).map((item, index) => {
+                  const checked = Array.isArray(selectedInteractionState.checked)
+                    ? (selectedInteractionState.checked as number[]).includes(index)
+                    : false;
+                  return (
+                    <label key={`${index}-${item}`}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => {
+                          const values = new Set(
+                            Array.isArray(selectedInteractionState.checked)
+                              ? (selectedInteractionState.checked as number[])
+                              : []
+                          );
+                          if (checked) values.delete(index); else values.add(index);
+                          void updateInteractionState({ ...selectedInteractionState, checked: [...values] });
+                        }}
+                      />
+                      <span>{item.replace(/^[-*]\s*/, "")}</span>
+                    </label>
+                  );
+                })
+              ) : selectedManualNode.nodeType === "flashcard" ? (
+                <button
+                  type="button"
+                  onClick={() => void updateInteractionState({
+                    ...selectedInteractionState,
+                    revealed: !selectedInteractionState.revealed
+                  })}
+                >
+                  {selectedInteractionState.revealed ? draftContent || "暂无答案" : "点击显示答案"}
+                </button>
+              ) : (
+                <textarea
+                  rows={3}
+                  placeholder="填写你的回应"
+                  defaultValue={typeof selectedInteractionState.response === "string" ? selectedInteractionState.response : ""}
+                  onBlur={(event) => void updateInteractionState({
+                    ...selectedInteractionState,
+                    response: event.target.value
+                  })}
+                />
+              )}
+            </div>
+          )}
+          <div className="topology-relation-editor">
+            <strong>连接到其他节点</strong>
+            <select value={relationTargetId} onChange={(event) => setRelationTargetId(event.target.value)}>
+              <option value="">选择目标节点</option>
+              {Object.values(displayNodes).filter((node) => node.id !== selectedManualNode.id).map((node) => (
+                <option key={node.id} value={node.id}>{node.title}</option>
+              ))}
+            </select>
+            <input value={relationLabel} onChange={(event) => setRelationLabel(event.target.value)} placeholder="关系名称" />
+            <button
+              type="button"
+              disabled={!relationTargetId}
+              onClick={() => {
+                void onCreateRelation(selectedManualNode.id, relationTargetId, relationLabel);
+                setRelationTargetId("");
+              }}
+            >
+              <Plus aria-hidden="true" size={14} /> 建立关系
+            </button>
+            <div className="topology-relation-list">
+              {displayEdges.filter((edge) => edge.persisted && (edge.sourceId === selectedManualNode.id || edge.targetId === selectedManualNode.id)).map((edge) => (
+                <span key={edge.id}>
+                  {edge.label || "关联"}
+                  <button type="button" onClick={() => void onRemoveRelation(edge.id)} aria-label="删除关系">
+                    <Unlink aria-hidden="true" size={13} />
+                  </button>
+                </span>
+              ))}
+            </div>
+          </div>
+          <footer>
+            <button
+              className="is-danger"
+              type="button"
+              onClick={() => {
+                void onRemoveManualNode(selectedManualNode.id);
+                setSelectedManualId(null);
+              }}
+            >
+              <Trash2 aria-hidden="true" size={15} /> 删除节点
+            </button>
+            <button type="button" disabled={editorBusy} onClick={() => void updateSelectedManual()}>
+              保存修改
+            </button>
+          </footer>
+        </section>
+      )}
+      {fullScreen && selectedInteractiveNode && !composer && !selectedManualNode && (
+        <section className="topology-node-editor topology-interactive-editor" aria-label="节点互动">
+          <header>
+            <div>
+              <span>INTERACTIVE CARD</span>
+              <strong>{selectedInteractiveNode.title}</strong>
+            </div>
+            <button type="button" onClick={() => setSelectedInteractiveId(null)} aria-label="关闭互动面板">
+              <X aria-hidden="true" size={16} />
+            </button>
+          </header>
+          <p>{selectedInteractiveNode.summary || "该节点已开启拓扑互动。"}</p>
+          {selectedInteractiveNode.nodeType.cardVariant === "checklist" ? (
+            <div className="topology-node-interaction">
+              {selectedInteractiveNode.summary.split(/[；;。\n]/).filter(Boolean).map((item, index) => {
+                const checked = Array.isArray(selectedGraphInteractionState.checked)
+                  ? (selectedGraphInteractionState.checked as number[]).includes(index)
+                  : false;
+                return (
+                  <label key={`${index}-${item}`}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => {
+                        const values = new Set(
+                          Array.isArray(selectedGraphInteractionState.checked)
+                            ? (selectedGraphInteractionState.checked as number[])
+                            : []
+                        );
+                        if (checked) values.delete(index); else values.add(index);
+                        void onUpdateInteraction(
+                          selectedInteractiveNode.id,
+                          "checklist",
+                          { ...selectedGraphInteractionState, checked: [...values] }
+                        );
+                      }}
+                    />
+                    <span>{item.trim()}</span>
+                  </label>
+                );
+              })}
+            </div>
+          ) : selectedInteractiveNode.nodeType.cardVariant === "flashcard" ? (
+            <button
+              className="topology-flashcard-reveal"
+              type="button"
+              onClick={() => void onUpdateInteraction(
+                selectedInteractiveNode.id,
+                "flashcard",
+                { ...selectedGraphInteractionState, revealed: !selectedGraphInteractionState.revealed }
+              )}
+            >
+              {selectedGraphInteractionState.revealed
+                ? selectedInteractiveNode.summary || "暂无答案"
+                : "点击翻开卡片"}
+            </button>
+          ) : (
+            <label>
+              <span>你的回应</span>
+              <textarea
+                rows={5}
+                defaultValue={typeof selectedGraphInteractionState.response === "string" ? selectedGraphInteractionState.response : ""}
+                onBlur={(event) => void onUpdateInteraction(
+                  selectedInteractiveNode.id,
+                  "response",
+                  { ...selectedGraphInteractionState, response: event.target.value }
+                )}
+              />
+            </label>
+          )}
+          <footer>
+            <small>互动状态存入 SQLite，不改写节点对应的 Markdown 正文。</small>
+          </footer>
+        </section>
+      )}
       </div>
     </aside>
   );

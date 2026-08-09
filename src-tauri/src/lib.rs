@@ -1,8 +1,14 @@
 mod markdown_store;
+mod topology_store;
 mod window_size;
 
 use markdown_store::{MarkdownDocument, MarkdownStore};
 use tauri::{LogicalSize, Manager, WindowEvent};
+use topology_store::{
+    TopologyCollection, TopologyGraph, TopologyInteraction, TopologyNode, TopologyRelation,
+    TopologyStore, UpsertTopologyCollectionRequest, UpsertTopologyInteractionRequest,
+    UpsertTopologyNodeRequest, UpsertTopologyRelationRequest,
+};
 use window_size::{WindowDimensions, WindowSizePersistence};
 
 #[cfg(windows)]
@@ -104,6 +110,85 @@ fn save_markdown_document(
     content: String,
 ) -> Result<MarkdownDocument, String> {
     store.save(&document_id, &content)
+}
+
+#[tauri::command]
+fn list_topology_collections(
+    store: tauri::State<'_, TopologyStore>,
+) -> Result<Vec<TopologyCollection>, String> {
+    store.list_collections()
+}
+
+#[tauri::command]
+fn upsert_topology_collection(
+    store: tauri::State<'_, TopologyStore>,
+    request: UpsertTopologyCollectionRequest,
+) -> Result<TopologyCollection, String> {
+    store.upsert_collection(request)
+}
+
+#[tauri::command]
+fn load_topology_graph(
+    store: tauri::State<'_, TopologyStore>,
+    collection_id: String,
+) -> Result<TopologyGraph, String> {
+    store.load_graph(&collection_id)
+}
+
+#[tauri::command]
+fn delete_topology_collection(
+    store: tauri::State<'_, TopologyStore>,
+    collection_id: String,
+) -> Result<bool, String> {
+    store.delete_collection(&collection_id)
+}
+
+#[tauri::command]
+fn upsert_topology_node(
+    store: tauri::State<'_, TopologyStore>,
+    request: UpsertTopologyNodeRequest,
+) -> Result<TopologyNode, String> {
+    store.upsert_node(request)
+}
+
+#[tauri::command]
+fn delete_topology_node(
+    store: tauri::State<'_, TopologyStore>,
+    node_id: String,
+) -> Result<bool, String> {
+    store.delete_node(&node_id)
+}
+
+#[tauri::command]
+fn upsert_topology_relation(
+    store: tauri::State<'_, TopologyStore>,
+    request: UpsertTopologyRelationRequest,
+) -> Result<TopologyRelation, String> {
+    store.upsert_relation(request)
+}
+
+#[tauri::command]
+fn delete_topology_relation(
+    store: tauri::State<'_, TopologyStore>,
+    relation_id: String,
+) -> Result<bool, String> {
+    store.delete_relation(&relation_id)
+}
+
+#[tauri::command]
+fn upsert_topology_interaction(
+    store: tauri::State<'_, TopologyStore>,
+    request: UpsertTopologyInteractionRequest,
+) -> Result<TopologyInteraction, String> {
+    store.upsert_interaction(request)
+}
+
+#[tauri::command]
+fn delete_topology_interaction(
+    store: tauri::State<'_, TopologyStore>,
+    interaction_id: String,
+) -> Result<bool, String> {
+    store.delete_interaction(&interaction_id)
 }
 
 #[derive(serde::Deserialize)]
@@ -407,6 +492,9 @@ pub fn run() {
                 app.manage(persistence);
             }
             if let Ok(directory) = app_data_directory {
+                let topology_store =
+                    TopologyStore::open(directory.clone()).map_err(std::io::Error::other)?;
+                app.manage(topology_store);
                 let markdown_store = MarkdownStore::new(directory);
                 markdown_store
                     .apply_content_reset()
@@ -455,6 +543,16 @@ pub fn run() {
             list_system_fonts,
             load_markdown_document,
             save_markdown_document,
+            list_topology_collections,
+            upsert_topology_collection,
+            load_topology_graph,
+            delete_topology_collection,
+            upsert_topology_node,
+            delete_topology_node,
+            upsert_topology_relation,
+            delete_topology_relation,
+            upsert_topology_interaction,
+            delete_topology_interaction,
             discover_models,
             generate_text
         ])

@@ -1848,7 +1848,7 @@ function ModelProviderSettings() {
                 </button>
               </span>
               <small>
-                密钥保存在当前设备；测试成功后，可用模型会同步到“生成与提示词”。
+                密钥保存在当前设备；测试成功后，可用模型会同步到“拓扑节点”。
               </small>
             </label>
           </fieldset>

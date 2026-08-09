@@ -107,7 +107,6 @@ export interface GeneratedArticleContent {
   title: string;
   summary: string;
   markdown: string;
-  tags: string[];
 }
 
 function cleanModelText(text: string) {
@@ -141,10 +140,7 @@ export function parseGeneratedArticle(text: string, fallbackTitle: string): Gene
         const summary = typeof parsed.summary === "string" && parsed.summary.trim()
           ? parsed.summary.trim()
           : markdownToPlainText(markdown).slice(0, 160);
-        const tags = Array.isArray(parsed.tags)
-          ? parsed.tags.filter((tag): tag is string => typeof tag === "string").map((tag) => tag.trim()).filter(Boolean).slice(0, 8)
-          : [];
-        return { title, summary, markdown, tags };
+        return { title, summary, markdown };
       }
     } catch {
       // Fall through to readable Markdown.
@@ -153,7 +149,6 @@ export function parseGeneratedArticle(text: string, fallbackTitle: string): Gene
   return {
     title: fallbackTitle,
     summary: markdownToPlainText(cleaned).slice(0, 160),
-    markdown: cleaned,
-    tags: []
+    markdown: cleaned
   };
 }

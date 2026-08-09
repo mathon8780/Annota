@@ -12,13 +12,15 @@ v0.1.0-alpha 已形成可运行、可测试、可打包的桌面应用骨架，�
 当前已实现：
 
 - 创建笔记，以及导入 Markdown、TXT 和 `.annota` 关系包。
-- 文件夹、标签、收藏、最近浏览、全文检索和父子文章导航。
+- 最近浏览、标题与正文检索、父子文章导航和知识拓扑。
 - 基于 CodeMirror 6 的单一 Markdown 正文模型，支持实时预览与源码显示切换、自动保存、选区格式化和 `Ctrl + 鼠标滚轮` 缩放。
 - 标题、嵌套引用、链接、分隔线、有序/无序/任务列表、GFM 表格、围栏代码块与语言高亮、行内格式、Obsidian 高亮/Wiki 链接/注释/Callout。
 - KaTeX 行内与块级公式，以及 Mermaid 图表渲染。
 - 表格单元格编辑、矩形多选、增删方向入口和整行/整列拖动排序。
 - 阅读路径保留或仅显示当前位置两种模式，以及可缩放、聚焦和全屏的知识拓扑。
-- 模型服务配置、模型目录发现、生成类型、Prompt 模板、上下文范围和真实的子文章生成请求链路。
+- 一个内容集合可包含多个 Markdown 根节点；拓扑中可新建、编辑、删除不关联 Markdown 的手动节点，并建立任意关系。
+- 问答、实践清单与复习闪卡等节点可在拓扑中保存回应、勾选和翻面状态。
+- 模型服务配置、模型目录发现、拓扑节点类型、Card 样式预览、Prompt 模板、上下文范围和真实的子文章生成请求链路。
 - 浅色与 Gruvbox 主题、自定义字体、内容术语和快捷键配置。
 
 ## 架构概览
@@ -30,15 +32,15 @@ v0.1.0-alpha 已形成可运行、可测试、可打包的桌面应用骨架，�
 | `src/store/` | 应用资料、导航、导入导出和生成任务状态 |
 | `src/utils/` | 模型服务、生成上下文、主题、缩放、字体、快捷键和阅读路径偏好 |
 | `src/styles/` | 全局设计令牌与主题变量 |
-| `src-tauri/src/` | Windows/Tauri 启动、窗口处理、Markdown 文件存储和模型网络请求 |
+| `src-tauri/src/` | Windows/Tauri 启动、窗口处理、Markdown 文件存储、拓扑 SQLite 和模型网络请求 |
 | `src/test/` | 仅供自动化测试使用的环境与数据夹具 |
 
-应用采用 React 18 + TypeScript + Vite 6 构建前端，Tauri 2 + Rust 提供 Windows 桌面容器、文件持久化和网络请求能力。Markdown 是文章正文的唯一内容模型，预览层不会再维护第二份块级正文数据。
+应用采用 React 18 + TypeScript + Vite 6 构建前端，Tauri 2 + Rust 提供 Windows 桌面容器、文件与 SQLite 持久化和网络请求能力。文章正文继续以 Markdown 文件为唯一内容模型；用户填写的手动节点、关系和互动状态是独立的结构化拓扑数据，不会生成 Markdown 副本。
 
 ## 数据与安全边界
 
 - 正式启动使用空资料库；测试数据仅存在于 `src/test/fixtures/`，不会进入生产初始化流程。
-- Tauri 桌面环境将 Markdown 正文保存到应用管理的本地文档目录；文章关系、界面偏好等元数据保存在 WebView2 应用数据中。
+- Tauri 桌面环境将 Markdown 正文保存到应用管理的本地文档目录；手动节点正文、拓扑关系和互动状态保存到同目录的 `library.sqlite3`，界面偏好仍保存在 WebView2 应用数据中。
 - 浏览器开发模式使用浏览器本地存储作为 Markdown 持久化后备，仅用于开发调试。
 - `.annota` 可用于知识树导入导出；重要资料仍建议额外保留原始 Markdown 或其他独立备份。
 - 模型服务 API Key 当前保存在本机 WebView 的 `localStorage` 中，**尚未接入 Windows Credential Manager 等安全凭据存储**。不要在不受信任或多人共用的系统中保存敏感密钥。
@@ -48,7 +50,7 @@ v0.1.0-alpha 已形成可运行、可测试、可打包的桌面应用骨架，�
 
 - Alpha 阶段不保证数据结构、设置项或导入导出格式向后兼容。
 - 当前优先支持 Windows；macOS、Linux 和移动平台尚未完成验证。
-- 元数据尚未迁移到 SQLite/FTS，大规模资料库的检索性能和一致性仍需验证。
+- 文章目录与界面元数据尚未全部迁移到 SQLite/FTS；当前 SQLite 首先承载非 Markdown 拓扑节点、关系和互动状态，大规模资料库的检索性能仍需验证。
 - Markdown 实时预览器已覆盖主要语法，但复杂嵌套、异常源码和第三方扩展语法仍可能存在渲染或光标映射问题。
 - 表格、Mermaid、KaTeX、Callout 和代码块属于仍在快速迭代的交互区域。
 - 模型服务兼容层尚不能保证覆盖所有 OpenAI-compatible 或 Anthropic-compatible 变体。
@@ -93,7 +95,7 @@ cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
-当前 Alpha 基线包含 12 个测试文件、102 项自动化测试。
+当前 Alpha 基线包含前端单元测试与核心流程测试，并通过 TypeScript 类型检查和生产构建验证。
 
 ## 构建 Windows 安装包
 

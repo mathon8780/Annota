@@ -5,13 +5,13 @@ import {
   useEffect,
   useMemo,
   useReducer,
+  useState,
   type PropsWithChildren
 } from "react";
 import { createEmptyAppData } from "../data/empty";
 import type {
   AppData,
   ArticleNode,
-  FolderProfile,
   GenerationJob,
   GenerationType,
   Notebook,
@@ -23,7 +23,10 @@ import {
   saveMarkdownDocument
 } from "../editor/markdownRepository";
 import {
+  isGenerationTypeIconId,
+  isTopologyCardVariant,
   loadGenerationTypes,
+  rootDefaults,
   renderPromptTemplate
 } from "../utils/generationConfig";
 import {
@@ -35,21 +38,52 @@ import {
   parseGeneratedArticle
 } from "../utils/generationRuntime";
 import { resolveConfiguredModel } from "../utils/modelProviders";
+import {
+  deleteTopologyNode,
+  deleteTopologyRelation,
+  loadTopologyGraph,
+  upsertTopologyCollection,
+  upsertTopologyInteraction,
+  upsertTopologyNode,
+  upsertTopologyRelation,
+  type TopologyGraphRecord,
+  type TopologyNodeRecord
+} from "../utils/topologyRepository";
+import type {
+  GenerationTypeIconId,
+  TopologyCardVariant
+} from "../utils/generationConfig";
 
 export const APP_DATA_STORAGE_KEY = "annota.desktop.library.v2";
 const LEGACY_STORAGE_KEY = "annota.desktop.demo.v1";
 const RETIRED_LIBRARY_STORAGE_KEY = "annota.desktop.library.v1";
 const CONTENT_RESET_STORAGE_KEY = "annota:content-reset.single-markdown-v1";
-const UNFILED_FOLDER_KEY = "未归档";
 
+function normalizedNodeAppearance(value: unknown): ArticleNode["appearance"] {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.typeId !== "string" ||
+    !isGenerationTypeIconId(record.icon) ||
+    !isTopologyCardVariant(record.cardVariant) ||
+    typeof record.color !== "string"
+  ) {
+    return undefined;
+  }
+  return {
+    typeId: record.typeId,
+    icon: record.icon,
+    cardVariant: record.cardVariant,
+    color: record.color
+  };
+}
 type Action =
   | { type: "open-notebook"; notebookId: string; articleId?: string }
   | { type: "navigate"; articleId: string }
   | { type: "go-home" }
   | { type: "touch-article"; articleId: string }
   | { type: "create-notebook"; notebook: Notebook; article: ArticleNode }
-  | { type: "update-folder-profiles"; profiles: FolderProfile[] }
-  | { type: "delete-folder-profiles"; keys: string[] }
+  | { type: "create-root-article"; notebookId: string; article: ArticleNode }
   | { type: "replace-data"; data: AppData }
   | { type: "start-job"; job: GenerationJob }
   | {
@@ -81,12 +115,12 @@ function metadataOnlyArticles(value: unknown): Record<string, ArticleNode> {
         title: record.title,
         summary: typeof record.summary === "string" ? record.summary : "",
         type: typeof record.type === "string" ? record.type : "文章",
-        tags: Array.isArray(record.tags) ? record.tags.filter((tag): tag is string => typeof tag === "string") : [],
         childIds: Array.isArray(record.childIds)
           ? record.childIds.filter((childId): childId is string => typeof childId === "string")
           : [],
         createdAt: typeof record.createdAt === "string" ? record.createdAt : new Date().toISOString(),
         updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : new Date().toISOString(),
+        appearance: normalizedNodeAppearance(record.appearance),
         source: record.source
       };
       return [[id, article]];
@@ -94,17 +128,49 @@ function metadataOnlyArticles(value: unknown): Record<string, ArticleNode> {
   ) as Record<string, ArticleNode>;
 }
 
+function metadataOnlyNotebooks(value: unknown): Notebook[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((candidate) => {
+    if (!candidate || typeof candidate !== "object") return [];
+    const record = candidate as Partial<Notebook>;
+    if (
+      typeof record.id !== "string" ||
+      typeof record.rootId !== "string" ||
+      typeof record.title !== "string"
+    ) {
+      return [];
+    }
+    return [{
+      id: record.id,
+      rootId: record.rootId,
+      rootIds: Array.isArray(record.rootIds)
+        ? Array.from(
+            new Set([
+              record.rootId,
+              ...record.rootIds.filter((rootId): rootId is string => typeof rootId === "string")
+            ])
+          )
+        : [record.rootId],
+      title: record.title,
+      summary: typeof record.summary === "string" ? record.summary : "",
+      updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : new Date().toISOString(),
+      lastOpenedNodeId:
+        typeof record.lastOpenedNodeId === "string"
+          ? record.lastOpenedNodeId
+          : record.rootId,
+      accent:
+        record.accent === "amber" || record.accent === "green"
+          ? record.accent
+          : "cobalt"
+    }];
+  });
+}
+
 function parseStoredData(raw: string): AppData | null {
   const parsed = JSON.parse(raw) as Partial<AppData>;
   if (!Array.isArray(parsed.notebooks) || !parsed.articles) return null;
   return {
-    notebooks: parsed.notebooks,
-    folderProfiles: Array.isArray(parsed.folderProfiles)
-      ? parsed.folderProfiles
-      : [],
-    deletedFolderKeys: Array.isArray(parsed.deletedFolderKeys)
-      ? parsed.deletedFolderKeys
-      : [],
+    notebooks: metadataOnlyNotebooks(parsed.notebooks),
     articles: metadataOnlyArticles(parsed.articles),
     jobs: [],
     currentNotebookId: null,
@@ -189,50 +255,26 @@ function reducer(state: AppData, action: Action): AppData {
         currentNotebookId: action.notebook.id,
         currentArticleId: action.article.id
       };
-    case "update-folder-profiles": {
-      const updates = new Map(
-        action.profiles.map((profile) => [profile.key, profile])
-      );
-      const existingKeys = new Set(
-        state.folderProfiles.map((profile) => profile.key)
-      );
-      const additions = action.profiles.filter(
-        (profile) => !existingKeys.has(profile.key)
-      );
-      const updatedKeys = new Set(
-        action.profiles.map((profile) => profile.key)
-      );
+    case "create-root-article": {
+      const notebook = state.notebooks.find((item) => item.id === action.notebookId);
+      if (!notebook) return state;
       return {
         ...state,
-        folderProfiles: [
-          ...additions,
-          ...state.folderProfiles.map(
-            (profile) => updates.get(profile.key) ?? profile
-          )
-        ],
-        deletedFolderKeys: state.deletedFolderKeys.filter(
-          (key) => !updatedKeys.has(key)
-        )
-      };
-    }
-    case "delete-folder-profiles": {
-      const keys = new Set(
-        action.keys.filter((key) => key !== UNFILED_FOLDER_KEY)
-      );
-      if (!keys.size) return state;
-      return {
-        ...state,
-        folderProfiles: state.folderProfiles.filter(
-          (profile) => !keys.has(profile.key)
+        articles: { ...state.articles, [action.article.id]: action.article },
+        notebooks: state.notebooks.map((item) =>
+          item.id === action.notebookId
+            ? {
+                ...item,
+                rootIds: Array.from(
+                  new Set([...(item.rootIds ?? [item.rootId]), action.article.id])
+                ),
+                lastOpenedNodeId: action.article.id,
+                updatedAt: action.article.updatedAt
+              }
+            : item
         ),
-        deletedFolderKeys: [
-          ...new Set([...state.deletedFolderKeys, ...keys])
-        ],
-        notebooks: state.notebooks.map((notebook) =>
-          keys.has(notebook.category)
-            ? { ...notebook, category: UNFILED_FOLDER_KEY }
-            : notebook
-        )
+        currentNotebookId: action.notebookId,
+        currentArticleId: action.article.id
       };
     }
     case "replace-data":
@@ -288,9 +330,34 @@ interface AppStoreValue {
   goHome: () => void;
   touchArticle: (articleId: string) => void;
   createNotebook: (title: string, text?: string) => Promise<string>;
-  updateFolderProfile: (profile: FolderProfile) => void;
-  updateFolderProfiles: (profiles: FolderProfile[]) => void;
-  deleteFolderProfiles: (keys: string[]) => void;
+  createRootArticle: (title: string, text?: string) => Promise<string | null>;
+  topologyGraph: TopologyGraphRecord | null;
+  topologyError: string;
+  createManualTopologyNode: (draft: {
+    nodeType: string;
+    title: string;
+    content: string;
+    parentId: string | null;
+    isRoot: boolean;
+    interactive: boolean;
+    icon: GenerationTypeIconId;
+    cardVariant: TopologyCardVariant;
+    color: string;
+  }) => Promise<TopologyNodeRecord | null>;
+  updateManualTopologyNode: (node: TopologyNodeRecord) => Promise<void>;
+  removeManualTopologyNode: (nodeId: string) => Promise<void>;
+  createTopologyRelation: (
+    sourceNodeId: string,
+    targetNodeId: string,
+    label: string,
+    directed?: boolean
+  ) => Promise<void>;
+  removeTopologyRelation: (relationId: string) => Promise<void>;
+  updateTopologyInteraction: (
+    nodeId: string,
+    interactionType: string,
+    state: Record<string, unknown>
+  ) => Promise<void>;
   importPackage: (text: string, fileName: string) => Promise<{ ok: boolean; message: string }>;
   exportCurrentTree: () => Promise<void>;
   startGeneration: (
@@ -309,6 +376,8 @@ function safeTitle(fileName: string): string {
 
 export function AppStoreProvider({ children }: PropsWithChildren) {
   const [data, dispatch] = useReducer(reducer, undefined, loadInitialData);
+  const [topologyGraph, setTopologyGraph] = useState<TopologyGraphRecord | null>(null);
+  const [topologyError, setTopologyError] = useState("");
 
   useEffect(() => {
     const persistable = { ...data, jobs: [] };
@@ -345,19 +414,23 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
       summary: text.trim()
         ? text.replace(/\s+/g, " ").slice(0, 90)
         : "从这里开始记录内容，或导入 Markdown / TXT 材料。",
-      type: "主文章",
-      tags: ["新笔记"],
+      type: "根节点",
       childIds: [],
       createdAt: now,
       updatedAt: now,
+      appearance: {
+        typeId: rootDefaults.id,
+        icon: rootDefaults.icon,
+        cardVariant: rootDefaults.cardVariant,
+        color: rootDefaults.color
+      },
     };
     const notebook: Notebook = {
       id: notebookId,
       rootId,
+      rootIds: [rootId],
       title: article.title,
       summary: article.summary,
-      tags: article.tags,
-      category: "未分类",
       updatedAt: now,
       lastOpenedNodeId: rootId,
       accent: "cobalt"
@@ -367,17 +440,258 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
     return notebookId;
   }, []);
 
-  const updateFolderProfile = useCallback((profile: FolderProfile) => {
-    dispatch({ type: "update-folder-profiles", profiles: [profile] });
+  const createRootArticle = useCallback(
+    async (title: string, text = "") => {
+      if (!data.currentNotebookId) return null;
+      const stamp = Date.now();
+      const articleId = `root-${stamp}-${Math.random().toString(36).slice(2, 8)}`;
+      const now = new Date().toISOString();
+      const article: ArticleNode = {
+        id: articleId,
+        rootId: articleId,
+        parentId: null,
+        title: title.trim() || "未命名根节点",
+        summary: text.trim()
+          ? text.replace(/\s+/g, " ").slice(0, 90)
+          : "独立于其他根节点的 Markdown 内容入口。",
+        type: "根节点",
+        childIds: [],
+        createdAt: now,
+        updatedAt: now,
+        appearance: {
+          typeId: rootDefaults.id,
+          icon: rootDefaults.icon,
+          cardVariant: rootDefaults.cardVariant,
+          color: rootDefaults.color
+        }
+      };
+      await saveMarkdownDocument(articleId, text.replace(/\r\n?/g, "\n"));
+      dispatch({
+        type: "create-root-article",
+        notebookId: data.currentNotebookId,
+        article
+      });
+      return articleId;
+    },
+    [data.currentNotebookId]
+  );
+
+  const refreshTopologyGraph = useCallback(async (collectionId: string) => {
+    const graph = await loadTopologyGraph(collectionId);
+    setTopologyGraph(graph);
+    setTopologyError("");
+    return graph;
   }, []);
 
-  const updateFolderProfiles = useCallback((profiles: FolderProfile[]) => {
-    dispatch({ type: "update-folder-profiles", profiles });
-  }, []);
+  useEffect(() => {
+    const notebook = data.notebooks.find((item) => item.id === data.currentNotebookId);
+    if (!notebook) {
+      setTopologyGraph(null);
+      setTopologyError("");
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        await upsertTopologyCollection({
+          id: notebook.id,
+          title: notebook.title,
+          description: notebook.summary
+        });
+        const rootIds = new Set(notebook.rootIds ?? [notebook.rootId]);
+        const articles = Object.values(data.articles).filter(
+          (article) => rootIds.has(article.rootId) || rootIds.has(article.id)
+        );
+        await Promise.all(
+          articles.map((article) =>
+            upsertTopologyNode({
+              id: article.id,
+              collectionId: notebook.id,
+              nodeType: article.appearance?.typeId ?? (article.parentId ? "explain" : "root"),
+              title: article.title,
+              summary: article.summary,
+              contentMode: "markdown",
+              content: null,
+              documentId: article.id,
+              isRoot: article.parentId === null,
+              isManual: false,
+              enabled: true,
+              interactive: false,
+              interactionStateJson: "{}",
+              appearanceJson: JSON.stringify(article.appearance ?? {})
+            })
+          )
+        );
+        await Promise.all(
+          articles.flatMap((article) =>
+            article.childIds.map((childId) =>
+              upsertTopologyRelation({
+                id: `tree:${article.id}:${childId}`,
+                collectionId: notebook.id,
+                sourceNodeId: article.id,
+                targetNodeId: childId,
+                relationType: "contains",
+                label: data.articles[childId]?.type ?? "下一级",
+                directed: true,
+                metadataJson: JSON.stringify({ source: "markdown-tree" })
+              })
+            )
+          )
+        );
+        const graph = await loadTopologyGraph(notebook.id);
+        if (!cancelled) {
+          setTopologyGraph(graph);
+          setTopologyError("");
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setTopologyError(error instanceof Error ? error.message : String(error));
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [data.articles, data.currentNotebookId, data.notebooks]);
 
-  const deleteFolderProfiles = useCallback((keys: string[]) => {
-    dispatch({ type: "delete-folder-profiles", keys });
-  }, []);
+  const createManualTopologyNode = useCallback(
+    async (draft: {
+      nodeType: string;
+      title: string;
+      content: string;
+      parentId: string | null;
+      isRoot: boolean;
+      interactive: boolean;
+      icon: GenerationTypeIconId;
+      cardVariant: TopologyCardVariant;
+      color: string;
+    }) => {
+      if (!data.currentNotebookId) return null;
+      const stamp = Date.now();
+      const node = await upsertTopologyNode({
+        id: `node-${stamp}-${Math.random().toString(36).slice(2, 8)}`,
+        collectionId: data.currentNotebookId,
+        nodeType: draft.nodeType,
+        title: draft.title.trim() || "未命名节点",
+        summary: draft.content.trim().replace(/\s+/g, " ").slice(0, 90),
+        contentMode: "database",
+        content: draft.content,
+        documentId: null,
+        isRoot: draft.isRoot,
+        isManual: true,
+        enabled: true,
+        interactive: draft.interactive,
+        interactionStateJson: "{}",
+        appearanceJson: JSON.stringify({
+          typeId: draft.nodeType,
+          icon: draft.icon,
+          cardVariant: draft.cardVariant,
+          color: draft.color
+        })
+      });
+      if (!draft.isRoot && draft.parentId) {
+        await upsertTopologyRelation({
+          id: `manual:${draft.parentId}:${node.id}`,
+          collectionId: data.currentNotebookId,
+          sourceNodeId: draft.parentId,
+          targetNodeId: node.id,
+          relationType: "manual-child",
+          label: "关联节点",
+          directed: true,
+          metadataJson: "{}"
+        });
+      }
+      await refreshTopologyGraph(data.currentNotebookId);
+      return node;
+    },
+    [data.currentNotebookId, refreshTopologyGraph]
+  );
+
+  const updateManualTopologyNode = useCallback(
+    async (node: TopologyNodeRecord) => {
+      if (!data.currentNotebookId || node.contentMode !== "database") return;
+      await upsertTopologyNode({
+        id: node.id,
+        collectionId: node.collectionId,
+        nodeType: node.nodeType,
+        title: node.title,
+        summary: node.summary,
+        contentMode: "database",
+        content: node.content,
+        documentId: null,
+        isRoot: node.isRoot,
+        isManual: true,
+        enabled: node.enabled,
+        interactive: node.interactive,
+        interactionStateJson: node.interactionStateJson,
+        appearanceJson: node.appearanceJson
+      });
+      await refreshTopologyGraph(data.currentNotebookId);
+    },
+    [data.currentNotebookId, refreshTopologyGraph]
+  );
+
+  const removeManualTopologyNode = useCallback(
+    async (nodeId: string) => {
+      if (!data.currentNotebookId) return;
+      await deleteTopologyNode(nodeId);
+      await refreshTopologyGraph(data.currentNotebookId);
+    },
+    [data.currentNotebookId, refreshTopologyGraph]
+  );
+
+  const createTopologyRelation = useCallback(
+    async (
+      sourceNodeId: string,
+      targetNodeId: string,
+      label: string,
+      directed = true
+    ) => {
+      if (!data.currentNotebookId || sourceNodeId === targetNodeId) return;
+      await upsertTopologyRelation({
+        id: `relation:${Date.now()}:${Math.random().toString(36).slice(2, 7)}`,
+        collectionId: data.currentNotebookId,
+        sourceNodeId,
+        targetNodeId,
+        relationType: "related",
+        label: label.trim() || "关联",
+        directed,
+        metadataJson: "{}"
+      });
+      await refreshTopologyGraph(data.currentNotebookId);
+    },
+    [data.currentNotebookId, refreshTopologyGraph]
+  );
+
+  const removeTopologyRelation = useCallback(
+    async (relationId: string) => {
+      if (!data.currentNotebookId) return;
+      await deleteTopologyRelation(relationId);
+      await refreshTopologyGraph(data.currentNotebookId);
+    },
+    [data.currentNotebookId, refreshTopologyGraph]
+  );
+
+  const updateTopologyInteraction = useCallback(
+    async (
+      nodeId: string,
+      interactionType: string,
+      state: Record<string, unknown>
+    ) => {
+      if (!data.currentNotebookId) return;
+      await upsertTopologyInteraction({
+        id: `interaction:${nodeId}:${interactionType}`,
+        nodeId,
+        interactionType,
+        title: "拓扑节点互动",
+        configJson: "{}",
+        stateJson: JSON.stringify(state),
+        enabled: true
+      });
+      await refreshTopologyGraph(data.currentNotebookId);
+    },
+    [data.currentNotebookId, refreshTopologyGraph]
+  );
 
   const importPackage = useCallback(
     async (text: string, fileName: string) => {
@@ -405,26 +719,20 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
           dispatch({
             type: "replace-data",
             data: {
-              notebooks: parsed.notebooks,
-              folderProfiles: Array.isArray(parsed.folderProfiles)
-                ? parsed.folderProfiles
-                : [],
-              deletedFolderKeys: Array.isArray(parsed.deletedFolderKeys)
-                ? parsed.deletedFolderKeys
-                : [],
+              notebooks: metadataOnlyNotebooks(parsed.notebooks),
               articles: metadataOnlyArticles(parsed.articles),
               jobs: [],
               currentNotebookId: null,
               currentArticleId: null
             }
           });
-          return { ok: true, message: `已导入 ${parsed.notebooks.length} 篇主笔记。` };
+          return { ok: true, message: `已导入 ${parsed.notebooks.length} 个内容集合。` };
         } catch {
           return { ok: false, message: "无法解析关系包；请确认文件未损坏。" };
         }
       }
       await createNotebook(safeTitle(fileName), text);
-      return { ok: true, message: "主笔记已导入并打开。" };
+      return { ok: true, message: "内容已作为根节点导入并打开。" };
     },
     [createNotebook]
   );
@@ -438,7 +746,7 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
       ids.add(id);
       data.articles[id]?.childIds.forEach(collect);
     };
-    collect(notebook.rootId);
+    (notebook.rootIds ?? [notebook.rootId]).forEach(collect);
     const articles = Object.fromEntries(
       Array.from(ids)
         .map((id) => [id, data.articles[id]])
@@ -453,16 +761,15 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
       format: "annota-v2",
       exportedAt: new Date().toISOString(),
       notebooks: [notebook],
-      folderProfiles: data.folderProfiles.filter(
-        (profile) => profile.key === notebook.category
-      ),
-      deletedFolderKeys: [],
       articles,
       documents,
       jobs: [],
       currentNotebookId: null,
       currentArticleId: null
     };
+    if (topologyGraph?.collection.id === notebook.id) {
+      Object.assign(payload, { topology: topologyGraph });
+    }
     const blob = new Blob([JSON.stringify(payload, null, 2)], {
       type: "application/json;charset=utf-8"
     });
@@ -472,7 +779,7 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
     anchor.download = `${notebook.title.replace(/[\\/:*?"<>|]/g, "_")}.annota`;
     anchor.click();
     URL.revokeObjectURL(url);
-  }, [data]);
+  }, [data, topologyGraph]);
 
   const startGeneration = useCallback(
     (
@@ -482,12 +789,13 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
     ) => {
       const parent = data.articles[parentId];
       const generationType = loadGenerationTypes().find(
-        (item) => item.id === typeId && item.enabled
+        (item) =>
+          item.id === typeId && item.executionMode === "ai" && item.enabled
       );
       if (!parent || !generationType) {
         return {
           ok: false,
-          message: "该生成类型当前不可用，请检查“生成与提示词”设置。"
+          message: "该拓扑节点当前不可用，请检查“拓扑节点”设置。"
         };
       }
       const resolvedModel = resolveConfiguredModel(
@@ -497,7 +805,7 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
         return {
           ok: false,
           message:
-            "没有可用模型。请先在“AI 模型服务”填写 API Key、通过联通检测，再为该生成类型选择模型。"
+            "没有可用模型。请先在“AI 模型服务”填写 API Key、通过联通检测，再为该拓扑节点选择模型。"
         };
       }
 
@@ -574,10 +882,15 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
             title: generated.title,
             summary: generated.summary,
             type: generationType.relationLabel || generationType.name,
-            tags: generated.tags,
             childIds: [],
             createdAt: now,
             updatedAt: now,
+            appearance: {
+              typeId: generationType.id,
+              icon: generationType.icon,
+              cardVariant: generationType.cardVariant,
+              color: generationType.color
+            },
             source: {
               parentId: parent.id,
               blockId: selection.blockId,
@@ -623,9 +936,15 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
       goHome,
       touchArticle,
       createNotebook,
-      updateFolderProfile,
-      updateFolderProfiles,
-      deleteFolderProfiles,
+      createRootArticle,
+      topologyGraph,
+      topologyError,
+      createManualTopologyNode,
+      updateManualTopologyNode,
+      removeManualTopologyNode,
+      createTopologyRelation,
+      removeTopologyRelation,
+      updateTopologyInteraction,
       importPackage,
       exportCurrentTree,
       startGeneration,
@@ -640,9 +959,15 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
       goHome,
       touchArticle,
       createNotebook,
-      updateFolderProfile,
-      updateFolderProfiles,
-      deleteFolderProfiles,
+      createRootArticle,
+      topologyGraph,
+      topologyError,
+      createManualTopologyNode,
+      updateManualTopologyNode,
+      removeManualTopologyNode,
+      createTopologyRelation,
+      removeTopologyRelation,
+      updateTopologyInteraction,
       importPackage,
       exportCurrentTree,
       startGeneration,

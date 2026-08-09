@@ -44,7 +44,7 @@
     "copyright": "Copyright © 2026 Annota",
     "category": "Productivity",
     "shortDescription": "本地知识树阅读、编辑与归档工具",
-    "longDescription": "Annota 是一款 Windows 优先的本地 Markdown 知识树应用，支持笔记创建与导入、实时预览编辑、全文搜索、文件夹归档、知识拓扑以及 Annota 关系包导入导出。",
+    "longDescription": "Annota 是一款 Windows 优先的本地 Markdown 知识树应用，支持笔记创建与导入、实时预览编辑、全文搜索、父子文章导航、知识拓扑以及 Annota 关系包导入导出。",
     "windows": {
       "nsis": {
         "installerIcon": "icons/icon.ico",

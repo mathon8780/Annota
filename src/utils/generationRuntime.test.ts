@@ -9,8 +9,7 @@ function article(id: string, parentId: string | null): ArticleNode {
     parentId,
     title: id,
     summary: `${id} summary`,
-    type: parentId ? "解释" : "主文章",
-    tags: [],
+    type: parentId ? "解释" : "根节点",
     childIds: [],
     createdAt: "2026-07-30T00:00:00.000Z",
     updatedAt: "2026-07-30T00:00:00.000Z"

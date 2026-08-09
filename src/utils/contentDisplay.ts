@@ -12,11 +12,8 @@ export type ContentStyleId = PresetContentStyleId | "custom";
 
 export interface ContentTerms {
   home: string;
-  folders: string;
-  tags: string;
   graph: string;
   recent: string;
-  favorites: string;
   newNote: string;
   subNotes: string;
   highlightCreate: string;
@@ -43,11 +40,8 @@ export const contentStyles: readonly ContentStyleDefinition[] = [
     description: "采用直接、通用的界面术语，适合熟悉常规笔记应用的使用方式。",
     terms: {
       home: "主页",
-      folders: "文件夹",
-      tags: "标签",
       graph: "知识图谱",
       recent: "最近浏览",
-      favorites: "收藏",
       newNote: "新建文章",
       subNotes: "子文章",
       highlightCreate: "划词生成"
@@ -60,11 +54,8 @@ export const contentStyles: readonly ContentStyleDefinition[] = [
     description: "用根系、生长与生态的比喻，强调知识持续培育的过程。",
     terms: {
       home: "温室",
-      folders: "根系",
-      tags: "孢子",
       graph: "生态圈",
       recent: "生长年轮",
-      favorites: "常青树",
       newNote: "播种",
       subNotes: "枝叶",
       highlightCreate: "萌芽"
@@ -77,11 +68,8 @@ export const contentStyles: readonly ContentStyleDefinition[] = [
     description: "以记忆、神经元和突触描述知识之间的连接与联想。",
     terms: {
       home: "意识中枢",
-      folders: "记忆宫殿",
-      tags: "突触",
       graph: "思维拓扑",
       recent: "短期记忆",
-      favorites: "核心信念",
       newNote: "建立神经元",
       subNotes: "联想节点",
       highlightCreate: "触发突触"
@@ -94,11 +82,8 @@ export const contentStyles: readonly ContentStyleDefinition[] = [
     description: "以星系、轨迹和坐标表达知识空间中的探索与定位。",
     terms: {
       home: "观测台",
-      folders: "星系",
-      tags: "光谱 / 信标",
       graph: "宇宙全景",
       recent: "航行轨迹",
-      favorites: "绝对坐标",
       newNote: "跃迁点",
       subNotes: "卫星节点",
       highlightCreate: "建立引力场"
@@ -111,11 +96,8 @@ export const contentStyles: readonly ContentStyleDefinition[] = [
     description: "使用研究、策展与文献语言，突出材料组织和论证关系。",
     terms: {
       home: "策展大厅",
-      folders: "知识簇",
-      tags: "维度",
       graph: "关系矩阵",
       recent: "审计追踪",
-      favorites: "基石文献",
       newNote: "确立课题",
       subNotes: "派生解读",
       highlightCreate: "提取锚点"
@@ -128,11 +110,8 @@ export const contentTermLabels: ReadonlyArray<{
   label: string;
 }> = [
   { key: "home", label: "主页" },
-  { key: "folders", label: "文件夹" },
-  { key: "tags", label: "标签" },
   { key: "graph", label: "知识图谱" },
   { key: "recent", label: "最近浏览" },
-  { key: "favorites", label: "收藏" },
   { key: "newNote", label: "新建文章" },
   { key: "subNotes", label: "子文章" },
   { key: "highlightCreate", label: "划词生成" }
@@ -149,11 +128,8 @@ function resolvedCustomTerms(terms: ContentTerms): ContentTerms {
   const defaults = contentStyles[0].terms;
   return {
     home: terms.home.trim() || defaults.home,
-    folders: terms.folders.trim() || defaults.folders,
-    tags: terms.tags.trim() || defaults.tags,
     graph: terms.graph.trim() || defaults.graph,
     recent: terms.recent.trim() || defaults.recent,
-    favorites: terms.favorites.trim() || defaults.favorites,
     newNote: terms.newNote.trim() || defaults.newNote,
     subNotes: terms.subNotes.trim() || defaults.subNotes,
     highlightCreate:
@@ -221,18 +197,12 @@ export function loadCustomContentStyle(): CustomContentStyle {
       terms?: Partial<Record<keyof ContentTerms, unknown>>;
     };
     const defaults = defaultCustomContentStyle;
-    return {
+    const loaded: CustomContentStyle = {
       name: storedTerm(parsed.name, defaults.name),
       terms: {
         home: storedTerm(parsed.terms?.home, defaults.terms.home),
-        folders: storedTerm(parsed.terms?.folders, defaults.terms.folders),
-        tags: storedTerm(parsed.terms?.tags, defaults.terms.tags),
         graph: storedTerm(parsed.terms?.graph, defaults.terms.graph),
         recent: storedTerm(parsed.terms?.recent, defaults.terms.recent),
-        favorites: storedTerm(
-          parsed.terms?.favorites,
-          defaults.terms.favorites
-        ),
         newNote: storedTerm(parsed.terms?.newNote, defaults.terms.newNote),
         subNotes: storedTerm(parsed.terms?.subNotes, defaults.terms.subNotes),
         highlightCreate: storedTerm(
@@ -241,6 +211,11 @@ export function loadCustomContentStyle(): CustomContentStyle {
         )
       }
     };
+    window.localStorage.setItem(
+      CUSTOM_CONTENT_STYLE_STORAGE_KEY,
+      JSON.stringify(loaded)
+    );
+    return loaded;
   } catch {
     return {
       name: defaultCustomContentStyle.name,

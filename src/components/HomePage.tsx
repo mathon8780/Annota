@@ -9,18 +9,14 @@ import {
 } from "react";
 import {
   BookOpenText,
-  Boxes,
   ChevronDown,
   FileInput,
-  FolderTree,
   Import,
   LibraryBig,
+  Network,
   Plus,
   Search,
   Settings2,
-  Star,
-  Tags,
-  WandSparkles,
   X
 } from "lucide-react";
 import { useAppStore } from "../store/AppStore";
@@ -38,10 +34,6 @@ import type {
 } from "../utils/shortcuts";
 import type { AppThemeId } from "../utils/themePreferences";
 import type { ReadingPathMode } from "../utils/readingPathPreferences";
-import {
-  HomeLibraryView,
-  type HomeLibrarySection
-} from "./HomeLibraryView";
 import { GenerationPage } from "./GenerationPage";
 import { SettingsPage } from "./SettingsPage";
 
@@ -67,7 +59,7 @@ interface HomePageProps {
   onCloseSettings: () => void;
 }
 
-function countDescendants(rootId: string, articles: ReturnType<typeof useAppStore>["data"]["articles"]) {
+function countDescendants(rootIds: string | readonly string[], articles: ReturnType<typeof useAppStore>["data"]["articles"]) {
   const seen = new Set<string>();
   const walk = (id: string) => {
     const article = articles[id];
@@ -79,7 +71,7 @@ function countDescendants(rootId: string, articles: ReturnType<typeof useAppStor
       }
     });
   };
-  walk(rootId);
+  (Array.isArray(rootIds) ? rootIds : [rootIds]).forEach(walk);
   return seen.size;
 }
 
@@ -136,14 +128,9 @@ export function HomePage({
     data,
     openNotebook,
     createNotebook,
-    updateFolderProfile,
-    updateFolderProfiles,
-    deleteFolderProfiles,
     importPackage
   } = useAppStore();
-  const [activeHomeView, setActiveHomeView] = useState<
-    "home" | "generation" | HomeLibrarySection
-  >("home");
+  const [activeHomeView, setActiveHomeView] = useState<"home" | "generation">("home");
   const [activePage, setActivePage] = useState<"overview" | "recent">("overview");
   const [filter, setFilter] = useState("");
   const [newTitle, setNewTitle] = useState("");
@@ -157,7 +144,7 @@ export function HomePage({
   const notebooks = useMemo(() => {
     const query = filter.trim().toLocaleLowerCase("zh-CN");
     const filtered = data.notebooks.filter((notebook) =>
-      [notebook.title, notebook.summary, notebook.category, notebook.tags.join(" ")]
+      [notebook.title, notebook.summary]
         .join(" ")
         .toLocaleLowerCase("zh-CN")
         .includes(query)
@@ -205,7 +192,6 @@ export function HomePage({
   }, [notebooks]);
 
   const totalNodes = Object.keys(data.articles).length;
-  const totalTags = new Set(data.notebooks.flatMap((notebook) => notebook.tags)).size;
 
   useEffect(() => {
     const overview = overviewScrollRef.current as
@@ -330,36 +316,6 @@ export function HomePage({
                 <LibraryBig aria-hidden="true" size={17} />
                 <span>{terms.home}</span>
               </button>
-              {(
-                [
-                  ["folders", FolderTree, terms.folders],
-                  ["tags", Tags, terms.tags],
-                  ["favorites", Star, terms.favorites]
-                ] as const
-              ).map(([section, Icon, label]) => (
-                <button
-                  className={`home-nav-item${
-                    !settingsOpen && activeHomeView === section
-                      ? " is-active"
-                      : ""
-                  }`}
-                  type="button"
-                  aria-current={
-                    !settingsOpen && activeHomeView === section
-                      ? "page"
-                      : undefined
-                  }
-                  key={section}
-                  onClick={() => {
-                    onCloseSettings();
-                    setActionMenuOpen(false);
-                    setActiveHomeView(section);
-                  }}
-                >
-                  <Icon aria-hidden="true" size={17} />
-                  <span>{label}</span>
-                </button>
-              ))}
               <button
                 className={`home-nav-item${
                   !settingsOpen && activeHomeView === "generation"
@@ -378,8 +334,8 @@ export function HomePage({
                   setActiveHomeView("generation");
                 }}
               >
-                <WandSparkles aria-hidden="true" size={17} />
-                <span>生成与提示词</span>
+                <Network aria-hidden="true" size={17} />
+                <span>拓扑节点</span>
               </button>
             </nav>
 
@@ -404,7 +360,7 @@ export function HomePage({
 
         <div
           className={`home-content${
-            settingsOpen ? " is-settings-open" : " has-mobile-library-nav"
+            settingsOpen ? " is-settings-open" : " has-mobile-nav"
           }`}
         >
           {settingsOpen ? (
@@ -423,14 +379,11 @@ export function HomePage({
             />
           ) : (
             <>
-              <nav className="home-mobile-library-nav" aria-label="主导航">
+              <nav className="home-mobile-nav" aria-label="主导航">
                 {(
                   [
                     ["home", LibraryBig, terms.home],
-                    ["folders", FolderTree, terms.folders],
-                    ["tags", Tags, terms.tags],
-                    ["favorites", Star, terms.favorites],
-                    ["generation", WandSparkles, "生成与提示词"]
+                    ["generation", Network, "拓扑节点"]
                   ] as const
                 ).map(([section, Icon, label]) => (
                   <button
@@ -488,21 +441,14 @@ export function HomePage({
                           <BookOpenText aria-hidden="true" size={17} />
                           <span>
                             <strong>{data.notebooks.length}</strong>
-                            主笔记
+                            内容集合
                           </span>
                         </div>
                         <div>
-                          <FolderTree aria-hidden="true" size={17} />
+                          <BookOpenText aria-hidden="true" size={17} />
                           <span>
                             <strong>{totalNodes}</strong>
                             全部节点
-                          </span>
-                        </div>
-                        <div>
-                          <Boxes aria-hidden="true" size={17} />
-                          <span>
-                            <strong>{totalTags}</strong>
-                            {terms.tags}
                           </span>
                         </div>
                       </div>
@@ -513,7 +459,7 @@ export function HomePage({
                         onClick={onOpenSearch}
                       >
                         <Search aria-hidden="true" size={17} />
-                        <span>搜索标题、正文与{terms.tags}</span>
+                        <span>搜索标题与正文</span>
                         <kbd>{formatShortcut(shortcuts["open-search"])}</kbd>
                       </button>
                     </div>
@@ -536,7 +482,7 @@ export function HomePage({
                               key={notebook.id}
                               notebook={notebook}
                               descendants={countDescendants(
-                                notebook.rootId,
+                                notebook.rootIds ?? [notebook.rootId],
                                 data.articles
                               )}
                               subNotesLabel={terms.subNotes}
@@ -645,7 +591,7 @@ export function HomePage({
                                   key={notebook.id}
                                   notebook={notebook}
                                   descendants={countDescendants(
-                                    notebook.rootId,
+                                    notebook.rootIds ?? [notebook.rootId],
                                     data.articles
                                   )}
                                   subNotesLabel={terms.subNotes}
@@ -661,7 +607,7 @@ export function HomePage({
                         <Search aria-hidden="true" size={22} />
                         <strong>
                           {filter
-                            ? "没有符合筛选条件的主笔记"
+                            ? "没有符合筛选条件的内容集合"
                             : "还没有最近浏览记录"}
                         </strong>
                         <span>
@@ -683,31 +629,8 @@ export function HomePage({
                   </section>
                   </div>
                 </div>
-              ) : activeHomeView === "generation" ? (
-                <GenerationPage />
               ) : (
-                <div className="home-main library-view-shell">
-                  <HomeLibraryView
-                    section={activeHomeView}
-                    notebooks={data.notebooks}
-                    folderProfiles={data.folderProfiles}
-                    articles={data.articles}
-                    onUpdateFolderProfile={updateFolderProfile}
-                    onUpdateFolderProfiles={updateFolderProfiles}
-                    onDeleteFolderProfiles={deleteFolderProfiles}
-                    renderNotebook={(notebook) => (
-                      <NotebookCard
-                        notebook={notebook}
-                        descendants={countDescendants(
-                          notebook.rootId,
-                          data.articles
-                        )}
-                        subNotesLabel={terms.subNotes}
-                        onOpen={() => openNotebook(notebook.id)}
-                      />
-                    )}
-                  />
-                </div>
+                <GenerationPage />
               )}
 
               {activeHomeView === "home" && (
@@ -852,21 +775,15 @@ function NotebookCard({
         >
           {formatClock(notebook.updatedAt)}
         </time>
-        <span>{notebook.category}</span>
       </span>
       <strong>{notebook.title}</strong>
       <span className="notebook-summary">{notebook.summary}</span>
       <span className="notebook-footer">
         <span className="connection-count">
-          <FolderTree aria-hidden="true" size={14} />
+          <BookOpenText aria-hidden="true" size={14} />
           {descendants
             ? `${descendants} 个${subNotesLabel}`
             : `尚无${subNotesLabel}`}
-        </span>
-        <span className="notebook-tags">
-          {notebook.tags.slice(0, 2).map((tag) => (
-            <small key={tag}>#{tag}</small>
-          ))}
         </span>
       </span>
     </button>

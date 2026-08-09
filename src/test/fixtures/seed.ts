@@ -1,7 +1,6 @@
 import type {
   AppData,
   ArticleNode,
-  FolderProfile,
   Notebook
 } from "../../types";
 
@@ -25,7 +24,6 @@ const articleFixtures: Record<string, ArticleNode & { blocks: TestBlock[] }> = {
     title: "ECS 架构：从数据布局到系统调度",
     summary: "沿着 Entity、Component 与 System 的职责边界，理解数据导向设计如何影响运行时性能。",
     type: "主文章",
-    tags: ["ECS", "架构", "游戏开发"],
     childIds: ["ecs-system", "ecs-component", "ecs-entity"],
     createdAt: now,
     updatedAt: now,
@@ -46,7 +44,6 @@ const articleFixtures: Record<string, ArticleNode & { blocks: TestBlock[] }> = {
     title: "System 的更新顺序与依赖调度",
     summary: "解释读写依赖、系统分组和并行调度的基本边界。",
     type: "解释",
-    tags: ["System", "调度", "依赖"],
     childIds: ["ecs-physics"],
     createdAt: now,
     updatedAt: now,
@@ -70,7 +67,6 @@ const articleFixtures: Record<string, ArticleNode & { blocks: TestBlock[] }> = {
     title: "为什么物理查询会破坏批处理节奏",
     summary: "从缓存局部性与同步点理解物理范围检测的代价。",
     type: "解释",
-    tags: ["物理", "缓存", "同步点"],
     childIds: [],
     createdAt: now,
     updatedAt: now,
@@ -86,7 +82,6 @@ const articleFixtures: Record<string, ArticleNode & { blocks: TestBlock[] }> = {
     title: "Component 为什么应该保持纯数据",
     summary: "从可组合性、序列化与内存布局理解组件边界。",
     type: "解释",
-    tags: ["Component", "数据布局"],
     childIds: [],
     createdAt: now,
     updatedAt: now,
@@ -101,7 +96,6 @@ const articleFixtures: Record<string, ArticleNode & { blocks: TestBlock[] }> = {
     title: "Entity 只是稳定标识吗",
     summary: "区分实体身份、组件集合与对象实例。",
     type: "解释",
-    tags: ["Entity", "标识"],
     childIds: [],
     createdAt: now,
     updatedAt: now,
@@ -116,7 +110,6 @@ const articleFixtures: Record<string, ArticleNode & { blocks: TestBlock[] }> = {
     title: "虚函数与动态多态",
     summary: "虚函数让程序通过基类指针或引用，根据对象的实际动态类型选择最终重写版本。",
     type: "主文章",
-    tags: ["C++", "多态", "继承"],
     childIds: [],
     createdAt: "2026-07-28T09:05:00+08:00",
     updatedAt: "2026-07-28T15:42:00+08:00",
@@ -135,7 +128,6 @@ const articleFixtures: Record<string, ArticleNode & { blocks: TestBlock[] }> = {
     title: "虚函数表",
     summary: "理解主流编译器如何用 vtable 与 vptr 实现运行时多态，以及这种模型的标准边界。",
     type: "主文章",
-    tags: ["C++", "对象模型", "vtable"],
     childIds: [],
     createdAt: "2026-07-28T08:20:00+08:00",
     updatedAt: "2026-07-28T11:18:00+08:00",
@@ -153,7 +145,6 @@ const articleFixtures: Record<string, ArticleNode & { blocks: TestBlock[] }> = {
     title: "虚析构函数",
     summary: "只要对象可能通过基类指针被删除，基类析构函数就必须是虚函数。",
     type: "主文章",
-    tags: ["C++", "生命周期", "多态"],
     childIds: [],
     createdAt: "2026-07-27T10:10:00+08:00",
     updatedAt: "2026-07-27T20:36:00+08:00",
@@ -171,7 +162,6 @@ const articleFixtures: Record<string, ArticleNode & { blocks: TestBlock[] }> = {
     title: "模板基础与函数模板",
     summary: "把模板理解为编译器按模板实参生成声明或定义的编译期配方。",
     type: "主文章",
-    tags: ["C++", "模板", "泛型编程"],
     childIds: [],
     createdAt: "2026-07-27T08:35:00+08:00",
     updatedAt: "2026-07-27T14:08:00+08:00",
@@ -190,7 +180,6 @@ const articleFixtures: Record<string, ArticleNode & { blocks: TestBlock[] }> = {
     title: "从注意力机制到长期记忆",
     summary: "把线性阅读中的高亮、解释与回顾组织成可回溯的知识路径。",
     type: "主文章",
-    tags: ["认知", "阅读方法"],
     childIds: [],
     createdAt: now,
     updatedAt: "2026-07-25T21:10:00+08:00",
@@ -205,7 +194,6 @@ const articleFixtures: Record<string, ArticleNode & { blocks: TestBlock[] }> = {
     title: "大型语言模型的推理边界",
     summary: "分析长上下文、外部知识与幻觉之间的关系。",
     type: "主文章",
-    tags: ["AI", "LLM"],
     childIds: [],
     createdAt: now,
     updatedAt: "2026-07-24T17:45:00+08:00",
@@ -220,7 +208,6 @@ const articleFixtures: Record<string, ArticleNode & { blocks: TestBlock[] }> = {
     title: "图数据库 Neo4j 基础概念",
     summary: "记录节点、关系、属性与 Cypher 查询的入门知识。",
     type: "主文章",
-    tags: ["Neo4j", "数据库"],
     childIds: [],
     createdAt: now,
     updatedAt: "2026-07-22T11:30:00+08:00",
@@ -257,8 +244,6 @@ const notebooks: Notebook[] = [
     rootId: "ecs-root",
     title: articles["ecs-root"].title,
     summary: articles["ecs-root"].summary,
-    tags: articles["ecs-root"].tags,
-    category: "技术学习",
     updatedAt: now,
     lastOpenedNodeId: "ecs-root",
     accent: "cobalt"
@@ -268,8 +253,6 @@ const notebooks: Notebook[] = [
     rootId: "cpp-polymorphism-root",
     title: articles["cpp-polymorphism-root"].title,
     summary: articles["cpp-polymorphism-root"].summary,
-    tags: articles["cpp-polymorphism-root"].tags,
-    category: "C++ / 核心",
     updatedAt: articles["cpp-polymorphism-root"].updatedAt,
     lastOpenedNodeId: "cpp-polymorphism-root",
     accent: "cobalt"
@@ -279,8 +262,6 @@ const notebooks: Notebook[] = [
     rootId: "cpp-vtable-root",
     title: articles["cpp-vtable-root"].title,
     summary: articles["cpp-vtable-root"].summary,
-    tags: articles["cpp-vtable-root"].tags,
-    category: "C++ / 对象模型",
     updatedAt: articles["cpp-vtable-root"].updatedAt,
     lastOpenedNodeId: "cpp-vtable-root",
     accent: "amber"
@@ -290,8 +271,6 @@ const notebooks: Notebook[] = [
     rootId: "cpp-virtual-destructor-root",
     title: articles["cpp-virtual-destructor-root"].title,
     summary: articles["cpp-virtual-destructor-root"].summary,
-    tags: articles["cpp-virtual-destructor-root"].tags,
-    category: "C++ / 生命周期",
     updatedAt: articles["cpp-virtual-destructor-root"].updatedAt,
     lastOpenedNodeId: "cpp-virtual-destructor-root",
     accent: "green"
@@ -301,8 +280,6 @@ const notebooks: Notebook[] = [
     rootId: "cpp-template-root",
     title: articles["cpp-template-root"].title,
     summary: articles["cpp-template-root"].summary,
-    tags: articles["cpp-template-root"].tags,
-    category: "C++ / 模板",
     updatedAt: articles["cpp-template-root"].updatedAt,
     lastOpenedNodeId: "cpp-template-root",
     accent: "cobalt"
@@ -312,8 +289,6 @@ const notebooks: Notebook[] = [
     rootId: "attention-root",
     title: articles["attention-root"].title,
     summary: articles["attention-root"].summary,
-    tags: articles["attention-root"].tags,
-    category: "阅读方法",
     updatedAt: articles["attention-root"].updatedAt,
     lastOpenedNodeId: "attention-root",
     accent: "green"
@@ -323,8 +298,6 @@ const notebooks: Notebook[] = [
     rootId: "llm-root",
     title: articles["llm-root"].title,
     summary: articles["llm-root"].summary,
-    tags: articles["llm-root"].tags,
-    category: "概念解析",
     updatedAt: articles["llm-root"].updatedAt,
     lastOpenedNodeId: "llm-root",
     accent: "amber"
@@ -334,85 +307,14 @@ const notebooks: Notebook[] = [
     rootId: "graph-root",
     title: articles["graph-root"].title,
     summary: articles["graph-root"].summary,
-    tags: articles["graph-root"].tags,
-    category: "数据库",
     updatedAt: articles["graph-root"].updatedAt,
     lastOpenedNodeId: "graph-root",
     accent: "cobalt"
   }
 ];
 
-const folderProfiles: FolderProfile[] = [
-  {
-    key: "技术学习",
-    name: "技术学习",
-    color: "#3158D8",
-    icon: "cpu",
-    classifications: ["系统基础", "工程"],
-    description: "集中整理架构、系统与工程实践中的长期知识。"
-  },
-  {
-    key: "C++ / 核心",
-    name: "C++ 核心",
-    color: "#4E68C8",
-    icon: "code",
-    classifications: ["语言底层", "C++"],
-    description: "围绕语言机制、运行时行为与核心语义建立索引。"
-  },
-  {
-    key: "C++ / 对象模型",
-    name: "C++ 对象模型",
-    color: "#8A5AA8",
-    icon: "layers",
-    classifications: ["对象模型", "ABI"],
-    description: "记录类型布局、虚调用与编译器实现之间的联系。"
-  },
-  {
-    key: "C++ / 生命周期",
-    name: "C++ 生命周期",
-    color: "#2F806E",
-    icon: "archive",
-    classifications: ["内存管理", "C++"],
-    description: "聚合构造、析构、所有权与资源安全相关笔记。"
-  },
-  {
-    key: "C++ / 模板",
-    name: "C++ 模板",
-    color: "#B36A3E",
-    icon: "template",
-    classifications: ["泛型编程", "C++"],
-    description: "从函数模板到类型推导，整理可复用的泛型知识。"
-  },
-  {
-    key: "阅读方法",
-    name: "阅读方法",
-    color: "#4E7A8A",
-    icon: "book",
-    classifications: ["学习方法", "阅读"],
-    description: "保存注意力管理、理解与回顾材料的实践方法。"
-  },
-  {
-    key: "概念解析",
-    name: "概念解析",
-    color: "#A35C74",
-    icon: "sparkles",
-    classifications: ["AI 概念", "研究"],
-    description: "把复杂概念拆成定义、边界和可验证的关联。"
-  },
-  {
-    key: "数据库",
-    name: "数据库",
-    color: "#5B6E9D",
-    icon: "database",
-    classifications: ["数据系统", "图谱"],
-    description: "归档数据模型、查询结构和图数据库相关内容。"
-  }
-];
-
 export const seedData: AppData = {
   notebooks,
-  folderProfiles,
-  deletedFolderKeys: [],
   articles,
   jobs: [],
   currentNotebookId: null,

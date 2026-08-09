@@ -68,7 +68,6 @@ export default function App() {
         [
           article.title,
           article.summary,
-          article.tags.join(" "),
           markdownToPlainText(searchDocuments[article.id] ?? "")
         ]
           .join(" ")
@@ -225,7 +224,7 @@ export default function App() {
               id="global-search"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder={`搜索标题、正文、${contentTerms.tags}…`}
+              placeholder="搜索标题与正文…"
             />
             <kbd>Esc</kbd>
             <button className="icon-button compact" type="button" onClick={() => setCommandOpen(false)}>
@@ -251,7 +250,7 @@ export default function App() {
                   <span>
                     <strong>{article.title}</strong>
                     <small>
-                      {article.type} · {article.tags.slice(0, 2).join(" / ")}
+                      {article.type}
                     </small>
                   </span>
                   <CornerDownLeft aria-hidden="true" size={15} />
