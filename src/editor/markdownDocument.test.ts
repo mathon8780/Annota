@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { markdownRanges, markdownSelection, markdownToPlainText } from "./markdownDocument";
+import {
+  markdownRanges,
+  markdownSelection,
+  markdownSelectionFromRanges,
+  markdownToPlainText
+} from "./markdownDocument";
 
 describe("Markdown document derivation", () => {
   const source = "## 标题\n^heading\n\n正文内容\n^paragraph\n\n> 引用\n^quote";
@@ -20,6 +25,18 @@ describe("Markdown document derivation", () => {
       blockId: "paragraph",
       start: 0,
       end: 2,
+      documentStart: from,
+      documentEnd: from + 2
+    });
+  });
+
+  it("reuses precomputed ranges when mapping an editor selection", () => {
+    const ranges = markdownRanges(source, "article-1");
+    const from = source.indexOf("引用");
+
+    expect(markdownSelectionFromRanges(source, ranges, from, from + 2)).toMatchObject({
+      text: "引用",
+      blockId: "quote",
       documentStart: from,
       documentEnd: from + 2
     });

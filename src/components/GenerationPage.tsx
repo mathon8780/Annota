@@ -4,6 +4,7 @@ import {
   Bot,
   Braces,
   Check,
+  ChevronDown,
   CircleHelp,
   Code2,
   Eye,
@@ -20,6 +21,7 @@ import {
   Plus,
   Quote,
   RotateCcw,
+  SlidersHorizontal,
   Tag,
   Trash2,
   X,
@@ -27,7 +29,6 @@ import {
 } from "lucide-react";
 import {
   type CSSProperties,
-  type ReactNode,
   useEffect,
   useMemo,
   useRef,
@@ -49,10 +50,23 @@ import {
   loadModelProviders,
   modelBindingLabel
 } from "../utils/modelProviders";
+import {
+  loadReaderToolbarPreferences,
+  saveReaderToolbarPreferences
+} from "../utils/readerToolbarPreferences";
 
 type PromptTarget = "systemPrompt" | "userPrompt";
 
 type PreviewTab = "messages" | "schema" | "context";
+
+type WorkspacePanel =
+  | "request"
+  | "prompt"
+  | "advanced"
+  | "protocol"
+  | "check";
+
+type AppearancePicker = "color" | "icon" | null;
 
 const allowedVariables = [
   "selection.text",
@@ -217,33 +231,6 @@ function renderPrompt(value: string) {
   );
 }
 
-function ReviewSection({
-  title,
-  meta,
-  variant,
-  disabled = false,
-  children
-}: {
-  title: string;
-  meta?: string;
-  variant: "context" | "schema" | "card";
-  disabled?: boolean;
-  children: ReactNode;
-}) {
-  return (
-    <section
-      className={`generation-review-section is-${variant}${disabled ? " is-disabled" : ""}`}
-      aria-disabled={disabled || undefined}
-    >
-      <header>
-        <h3>{title}</h3>
-        {meta && <span>{meta}</span>}
-      </header>
-      {children}
-    </section>
-  );
-}
-
 const cardPreviewTitles: Record<TopologyCardVariant, string> = {
   root: "Transformer Architecture",
   explain: "Self-Attention 的直觉",
@@ -405,7 +392,14 @@ export function GenerationPage() {
     useState<PromptTarget>("userPrompt");
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewTab, setPreviewTab] = useState<PreviewTab>("messages");
+  const [workspacePanel, setWorkspacePanel] =
+    useState<WorkspacePanel>("prompt");
+  const [appearancePicker, setAppearancePicker] =
+    useState<AppearancePicker>(null);
   const [liveStatus, setLiveStatus] = useState("");
+  const [readerToolbarPreferences, setReaderToolbarPreferences] = useState(
+    loadReaderToolbarPreferences
+  );
   const newTypeSequence = useRef(1);
   const modelProviders = useMemo(loadModelProviders, []);
   const behaviorModelOptions = useMemo(
@@ -417,8 +411,23 @@ export function GenerationPage() {
     saveGenerationTypes(types);
   }, [types]);
 
+  useEffect(() => {
+    saveReaderToolbarPreferences(readerToolbarPreferences);
+  }, [readerToolbarPreferences]);
+
   const activeType =
     types.find((type) => type.id === activeTypeId) ?? types[0];
+  const activeContextOption =
+    contextOptions.find((option) => option.value === activeType.contextScope) ??
+    contextOptions[0];
+  const activeColorPreset =
+    generationColorPresets.find(
+      (preset) => preset.value === activeType.color.toLocaleLowerCase()
+    ) ?? generationColorPresets[0];
+  const activeIconOption =
+    typeIconOptions.find((option) => option.id === activeType.icon) ??
+    typeIconOptions[0];
+  const ActivePickerIcon = activeIconOption.Icon;
   const activeModelBindingAvailable = behaviorModelOptions.some(
     (option) => option.id === activeType.modelBindingId
   );
@@ -558,10 +567,6 @@ export function GenerationPage() {
                 管理节点类型、Card 样式、提示词模板和上下文策略。所有修改都会即时自动保存。
               </p>
             </div>
-            <div className="settings-display-badge generation-config-badge">
-              <Info aria-hidden="true" size={14} />
-              本机节点与提示词配置
-            </div>
           </header>
 
           <div className="generation-workbench">
@@ -579,6 +584,31 @@ export function GenerationPage() {
                     ).length} 个已启用
                   </strong>
                 </div>
+                <button
+                  className="generation-toolbar-mode-toggle"
+                  type="button"
+                  role="switch"
+                  aria-checked={readerToolbarPreferences.iconOnly}
+                  aria-label="顶部交互仅显示图标"
+                  title={
+                    readerToolbarPreferences.iconOnly
+                      ? "当前仅显示图标，点击切换为图标与文字"
+                      : "当前显示图标与文字，点击切换为仅图标"
+                  }
+                  onClick={() => {
+                    setReaderToolbarPreferences((current) => ({
+                      ...current,
+                      iconOnly: !current.iconOnly
+                    }));
+                    setLiveStatus("顶部交互显示方式已自动保存。");
+                  }}
+                >
+                  <GalleryHorizontalEnd aria-hidden="true" size={14} />
+                  <span
+                    className="generation-toolbar-mode-track"
+                    aria-hidden="true"
+                  />
+                </button>
               </div>
 
               <div className="generation-type-list">
@@ -600,6 +630,7 @@ export function GenerationPage() {
                         }
                         onClick={() => {
                           setActiveTypeId(type.id);
+                          setAppearancePicker(null);
                           setLiveStatus("");
                         }}
                       >
@@ -687,8 +718,11 @@ export function GenerationPage() {
               </button>
             </nav>
 
-            <section className="generation-editor" aria-label="拓扑节点编辑">
-              <header className="generation-editor-header">
+            <section
+              className="generation-node-workspace"
+              aria-label="拓扑节点编辑"
+            >
+              <header className="generation-node-workspace-header">
                 <div className="generation-editor-title">
                   <span
                     className="generation-editor-icon"
@@ -700,20 +734,25 @@ export function GenerationPage() {
                     })()}
                   </span>
                   <div>
+                    <span>当前节点类型</span>
                     <h3>{activeType.name}</h3>
                   </div>
                 </div>
+                <span className="generation-node-save-state">
+                  <Check aria-hidden="true" size={13} />
+                  自动保存
+                </span>
               </header>
 
-              <section className="generation-editor-section">
-                <div className="generation-section-heading">
-                  <div>
-                    <span>Identity</span>
-                    <h4>基本信息</h4>
-                  </div>
-                </div>
-
-                <div className="generation-identity-grid">
+              <div className="generation-basics-grid">
+                <section
+                  className="generation-basic-column is-identity"
+                  aria-label="基础信息"
+                >
+                  <header>
+                    <span>Configuration</span>
+                    <h4>基础信息</h4>
+                  </header>
                   <label className="generation-field">
                     <span>节点类型名称</span>
                     <input
@@ -759,9 +798,7 @@ export function GenerationPage() {
                         );
                       }}
                     >
-                      <option value="global-default">
-                        自动选择已联通模型
-                      </option>
+                      <option value="global-default">自动选择已联通模型</option>
                       {modelProviders.map((provider) => {
                         const providerModels = behaviorModelOptions.filter(
                           (option) => option.providerId === provider.id
@@ -777,315 +814,532 @@ export function GenerationPage() {
                         ) : null;
                       })}
                     </select>
-                    {behaviorModelOptions.length === 0 && (
-                      <small>
-                        请先在 AI 模型服务中填写 API Key 并通过联通检测。
-                      </small>
+                    {behaviorModelOptions.length === 0 && isAiNode && (
+                      <small>请先在 AI 模型服务中配置并检测可用模型。</small>
                     )}
                     {!isAiNode && (
-                      <small>该节点由{activeType.executionMode === "manual" ? "用户手动创建" : "系统维护"}，不会调用模型。</small>
+                      <small>
+                        该节点由
+                        {activeType.executionMode === "manual"
+                          ? "用户手动创建"
+                          : "系统维护"}
+                        ，不会调用模型。
+                      </small>
                     )}
                   </label>
-                  <label className="generation-field">
-                    <span>节点样式</span>
+                  <label
+                    className={`generation-field generation-context-select${
+                      isAiNode ? "" : " is-disabled"
+                    }`}
+                    aria-disabled={!isAiNode}
+                  >
+                    <span>上下文策略</span>
                     <select
-                      aria-label="节点样式"
-                      value={activeType.cardVariant}
+                      aria-label="上下文策略"
+                      disabled={!isAiNode}
+                      value={activeType.contextScope}
                       onChange={(event) =>
                         updateActiveType((type) => ({
                           ...type,
-                          cardVariant: event.target.value as TopologyCardVariant
+                          contextScope: event.target.value as ContextScope
                         }))
                       }
                     >
-                      {cardVariantOptions.map((option) => (
-                        <option value={option.id} key={option.id}>
+                      {contextOptions.map((option) => (
+                        <option value={option.value} key={option.value}>
                           {option.label}
                         </option>
                       ))}
                     </select>
+                    <small>{activeContextOption.detail}</small>
                   </label>
-                  <label className="generation-field generation-interaction-field">
-                    <span>拓扑互动</span>
-                    <span className="generation-interaction-control">
-                      <input
-                        type="checkbox"
-                        aria-label={`允许${activeType.name}节点互动`}
-                        checked={activeType.interactive}
-                        onChange={(event) => {
-                          const interactive = event.target.checked;
-                          updateActiveType((type) => ({
-                            ...type,
-                            interactive
-                          }));
-                          setLiveStatus(
-                            `${activeType.name}节点互动已${interactive ? "开启" : "关闭"}。`
-                          );
-                        }}
-                      />
-                      <i aria-hidden="true" />
-                      <small>允许该类型的 Card 在拓扑网络中承载问答、勾选或翻转等互动。</small>
-                    </span>
-                  </label>
-                  <fieldset
-                    className="generation-field generation-color-field"
-                    aria-label="标记颜色"
-                  >
-                    <legend>标记颜色</legend>
-                    <div className="generation-color-presets">
-                      {generationColorPresets.map((preset) => (
-                        <button
-                          type="button"
-                          key={preset.value}
-                          aria-label={`使用标记颜色：${preset.label}`}
-                          aria-pressed={
-                            activeType.color.toLocaleLowerCase() === preset.value
-                          }
-                          title={preset.label}
-                          style={
-                            {
-                              "--generation-preset-color": preset.value
-                            } as CSSProperties
-                          }
-                          onClick={() =>
-                            updateActiveType((type) => ({
-                              ...type,
-                              color: preset.value
-                            }))
-                          }
-                        >
-                          <span aria-hidden="true" />
-                          <Check aria-hidden="true" size={12} />
-                        </button>
-                      ))}
-                    </div>
-                  </fieldset>
-                  <fieldset
-                    className="generation-icon-field"
-                    aria-label="节点类型图标"
-                  >
-                    <legend>列表图标</legend>
-                    <div className="generation-icon-options">
-                      {typeIconOptions.map(({ id, label, Icon }) => (
-                        <button
-                          type="button"
-                          key={id}
-                          aria-label={`使用图标：${label}`}
-                          aria-pressed={activeType.icon === id}
-                          title={label}
-                          onClick={() =>
-                            updateActiveType((type) => ({
-                              ...type,
-                              icon: id
-                            }))
-                          }
-                        >
-                          <Icon aria-hidden="true" size={17} />
-                        </button>
-                      ))}
-                    </div>
-                  </fieldset>
-                </div>
-              </section>
+                </section>
 
-              {!isAiNode && (
-                <div className="generation-node-mode-note" role="note">
-                  <Info aria-hidden="true" size={16} />
-                  <span>
-                    {activeType.executionMode === "manual"
-                      ? "这是手动节点：用户创建后直接填写标题、内容与互动信息；数据以结构化记录保存，不生成 Markdown，也不配置或调用 AI。"
-                      : "这是系统节点：内容集合可以包含多个根节点，它们由知识树关系建立；页面仅管理 Card 视觉。"}
-                  </span>
-                </div>
-              )}
-
-              <section
-                className={`generation-prompt-card${
-                  isAiNode ? "" : " is-disabled"
-                }`}
-                aria-disabled={!isAiNode}
-              >
-                <header>
-                  <div>
-                    <span>System layer</span>
-                    <h4>System Prompt</h4>
-                  </div>
-                  <small>
-                    {isAiNode
-                      ? "系统安全约束由应用固定追加"
-                      : "手动与系统节点不使用 AI 提示词"}
-                  </small>
-                </header>
-                <textarea
-                  className="generation-prompt-editor"
-                  aria-label="System Prompt"
-                  disabled={!isAiNode}
-                  aria-invalid={unknownVariables.length > 0}
-                  value={activeType.systemPrompt}
-                  spellCheck={false}
-                  onFocus={() => setActivePromptTarget("systemPrompt")}
-                  onChange={(event) =>
-                    updateActiveType(
-                      (type) => ({
-                        ...type,
-                        systemPrompt: event.target.value
-                      }),
-                      true
-                    )
-                  }
-                />
-              </section>
-
-              <section
-                className={`generation-prompt-card${
-                  isAiNode ? "" : " is-disabled"
-                }`}
-                aria-disabled={!isAiNode}
-              >
-                <header>
-                  <div>
-                    <span>User template</span>
-                    <h4>User Prompt</h4>
-                  </div>
-                  <small>
-                    {isAiNode
-                      ? "来源正文始终作为不可信数据区块"
-                      : "手动内容由用户在创建节点时填写"}
-                  </small>
-                </header>
-                <textarea
-                  className="generation-prompt-editor is-user"
-                  aria-label="User Prompt"
-                  disabled={!isAiNode}
-                  aria-invalid={
-                    unknownVariables.length > 0 || missingSelectionVariable
-                  }
-                  value={activeType.userPrompt}
-                  spellCheck={false}
-                  onFocus={() => setActivePromptTarget("userPrompt")}
-                  onChange={(event) =>
-                    updateActiveType(
-                      (type) => ({
-                        ...type,
-                        userPrompt: event.target.value
-                      }),
-                      true
-                    )
-                  }
-                />
-              </section>
-
-              <section
-                className={`generation-variable-dock${
-                  isAiNode ? "" : " is-disabled"
-                }`}
-                aria-label="模板变量"
-                aria-disabled={!isAiNode}
-              >
-                <div>
-                  <Braces aria-hidden="true" size={16} />
-                  <span>插入到当前编辑器</span>
-                </div>
-                <div>
-                  {quickVariables.map(({ variable, label, detail }) => (
+                <section
+                  className="generation-basic-column is-appearance"
+                  aria-label="标记与图标"
+                >
+                  <header>
+                    <span>Appearance</span>
+                    <h4>标记与图标</h4>
+                  </header>
+                  <div className="generation-appearance-picker is-color">
+                    <span>标记颜色</span>
                     <button
-                      className="generation-variable-chip"
+                      className="generation-appearance-trigger"
                       type="button"
-                      key={variable}
-                      aria-label={`插入变量 {{${variable}}}`}
-                      disabled={!isAiNode}
-                      onClick={() => insertVariable(variable)}
+                      aria-expanded={appearancePicker === "color"}
+                      aria-controls="generation-color-picker"
+                      onClick={() =>
+                        setAppearancePicker((current) =>
+                          current === "color" ? null : "color"
+                        )
+                      }
                     >
-                      <span>
-                        <strong>{label}</strong>
-                        <code>{`{{${variable}}}`}</code>
-                      </span>
-                      <small>{detail}</small>
+                      <i
+                        className="generation-selected-color"
+                        style={
+                          {
+                            "--generation-preset-color": activeType.color
+                          } as CSSProperties
+                        }
+                        aria-hidden="true"
+                      />
+                      <strong>{activeColorPreset.label}</strong>
+                      <ChevronDown aria-hidden="true" size={15} />
+                    </button>
+                    {appearancePicker === "color" && (
+                      <div
+                        className="generation-appearance-popover generation-color-presets"
+                        id="generation-color-picker"
+                        aria-label="标记颜色选项"
+                      >
+                        {generationColorPresets.map((preset) => (
+                          <button
+                            type="button"
+                            key={preset.value}
+                            aria-label={`使用标记颜色：${preset.label}`}
+                            aria-pressed={
+                              activeType.color.toLocaleLowerCase() === preset.value
+                            }
+                            title={preset.label}
+                            style={
+                              {
+                                "--generation-preset-color": preset.value
+                              } as CSSProperties
+                            }
+                            onClick={() => {
+                              updateActiveType((type) => ({
+                                ...type,
+                                color: preset.value
+                              }));
+                              setAppearancePicker(null);
+                            }}
+                          >
+                            <span aria-hidden="true" />
+                            <Check aria-hidden="true" size={12} />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="generation-appearance-picker is-icon">
+                    <span>展示图标</span>
+                    <button
+                      className="generation-appearance-trigger"
+                      type="button"
+                      aria-expanded={appearancePicker === "icon"}
+                      aria-controls="generation-icon-picker"
+                      onClick={() =>
+                        setAppearancePicker((current) =>
+                          current === "icon" ? null : "icon"
+                        )
+                      }
+                    >
+                      <i aria-hidden="true">
+                        <ActivePickerIcon size={17} />
+                      </i>
+                      <strong>{activeIconOption.label}</strong>
+                      <ChevronDown aria-hidden="true" size={15} />
+                    </button>
+                    {appearancePicker === "icon" && (
+                      <div
+                        className="generation-appearance-popover generation-icon-options"
+                        id="generation-icon-picker"
+                        aria-label="展示图标选项"
+                      >
+                        {typeIconOptions.map(({ id, label, Icon }) => (
+                          <button
+                            type="button"
+                            key={id}
+                            aria-label={`使用图标：${label}`}
+                            aria-pressed={activeType.icon === id}
+                            title={label}
+                            onClick={() => {
+                              updateActiveType((type) => ({
+                                ...type,
+                                icon: id
+                              }));
+                              setAppearancePicker(null);
+                            }}
+                          >
+                            <Icon aria-hidden="true" size={17} />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </section>
+
+                <section
+                  className="generation-basic-column is-preview"
+                  aria-label="节点样式预览"
+                >
+                  <header>
+                    <span>Live card</span>
+                    <h4>节点样式预览</h4>
+                  </header>
+                  <div className="topology-card-preview-stage">
+                    <TopologyCardPreview type={activeType} />
+                  </div>
+                </section>
+              </div>
+
+              <section
+                className="generation-content-workspace"
+                aria-label="内容编辑区"
+              >
+                <div
+                  className="generation-content-tabs"
+                  role="tablist"
+                  aria-label="节点内容编辑区"
+                >
+                  {(
+                    [
+                      ["check", "检查", Check],
+                      ["prompt", "提示词", MessageSquareText],
+                      ["advanced", "高级", SlidersHorizontal],
+                      ["protocol", "输出协议", Braces],
+                      ["request", "模型请求参数", Bot]
+                    ] as const
+                  ).map(([id, label, Icon]) => (
+                    <button
+                      type="button"
+                      role="tab"
+                      id={`generation-content-tab-${id}`}
+                      aria-controls={`generation-content-panel-${id}`}
+                      aria-selected={workspacePanel === id}
+                      key={id}
+                      onClick={() => setWorkspacePanel(id)}
+                    >
+                      <Icon aria-hidden="true" size={15} />
+                      <span>{label}</span>
                     </button>
                   ))}
                 </div>
+
+                <div
+                  className={`generation-content-panel is-${workspacePanel}${
+                    !isAiNode && workspacePanel !== "advanced"
+                      ? " is-disabled"
+                      : ""
+                  }`}
+                  id={`generation-content-panel-${workspacePanel}`}
+                  role="tabpanel"
+                  aria-labelledby={`generation-content-tab-${workspacePanel}`}
+                >
+                  {workspacePanel === "request" && (
+                    <div className="generation-request-layout">
+                      <dl className="generation-request-summary">
+                        <div>
+                          <dt>调用模型</dt>
+                          <dd>
+                            {isAiNode
+                              ? modelBindingLabel(
+                                  activeType.modelBindingId,
+                                  modelProviders
+                                )
+                              : "不调用模型"}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>上下文上限</dt>
+                          <dd>{activeContextOption.label}</dd>
+                        </div>
+                        <div>
+                          <dt>消息组成</dt>
+                          <dd>System + User</dd>
+                        </div>
+                        <div>
+                          <dt>请求方式</dt>
+                          <dd>按阅读操作触发</dd>
+                        </div>
+                      </dl>
+                      <div className="generation-request-envelope">
+                        <span>Request envelope</span>
+                        <pre>{`{
+  "model": "${isAiNode ? modelBindingLabel(activeType.modelBindingId, modelProviders) : "disabled"}",
+  "contextScope": "${activeType.contextScope}",
+  "messages": ["system", "user"],
+  "responseFormat": "annota-node"
+}`}</pre>
+                      </div>
+                    </div>
+                  )}
+
+                  {workspacePanel === "prompt" && (
+                    <div className="generation-prompt-layout">
+                      <section
+                        className={`generation-prompt-card${
+                          isAiNode ? "" : " is-disabled"
+                        }`}
+                        aria-disabled={!isAiNode}
+                      >
+                        <header>
+                          <div>
+                            <span>System layer</span>
+                            <h4>System Prompt</h4>
+                          </div>
+                          <small>
+                            {isAiNode
+                              ? "系统安全约束由应用固定追加"
+                              : "手动与系统节点不使用 AI 提示词"}
+                          </small>
+                        </header>
+                        <textarea
+                          className="generation-prompt-editor"
+                          aria-label="System Prompt"
+                          disabled={!isAiNode}
+                          aria-invalid={unknownVariables.length > 0}
+                          value={activeType.systemPrompt}
+                          spellCheck={false}
+                          onFocus={() => setActivePromptTarget("systemPrompt")}
+                          onChange={(event) =>
+                            updateActiveType(
+                              (type) => ({
+                                ...type,
+                                systemPrompt: event.target.value
+                              }),
+                              true
+                            )
+                          }
+                        />
+                      </section>
+                      <section
+                        className={`generation-prompt-card${
+                          isAiNode ? "" : " is-disabled"
+                        }`}
+                        aria-disabled={!isAiNode}
+                      >
+                        <header>
+                          <div>
+                            <span>User template</span>
+                            <h4>User Prompt</h4>
+                          </div>
+                          <small>
+                            {isAiNode
+                              ? "来源正文始终作为不可信数据区块"
+                              : "手动内容由用户在创建节点时填写"}
+                          </small>
+                        </header>
+                        <textarea
+                          className="generation-prompt-editor is-user"
+                          aria-label="User Prompt"
+                          disabled={!isAiNode}
+                          aria-invalid={
+                            unknownVariables.length > 0 ||
+                            missingSelectionVariable
+                          }
+                          value={activeType.userPrompt}
+                          spellCheck={false}
+                          onFocus={() => setActivePromptTarget("userPrompt")}
+                          onChange={(event) =>
+                            updateActiveType(
+                              (type) => ({
+                                ...type,
+                                userPrompt: event.target.value
+                              }),
+                              true
+                            )
+                          }
+                        />
+                      </section>
+                      <section
+                        className={`generation-variable-dock${
+                          isAiNode ? "" : " is-disabled"
+                        }`}
+                        aria-label="模板变量"
+                        aria-disabled={!isAiNode}
+                      >
+                        <div>
+                          <Braces aria-hidden="true" size={16} />
+                          <span>插入到当前编辑器</span>
+                        </div>
+                        <div>
+                          {quickVariables.map(({ variable, label, detail }) => (
+                            <button
+                              className="generation-variable-chip"
+                              type="button"
+                              key={variable}
+                              aria-label={`插入变量 {{${variable}}}`}
+                              disabled={!isAiNode}
+                              onClick={() => insertVariable(variable)}
+                            >
+                              <span>
+                                <strong>{label}</strong>
+                                <code>{`{{${variable}}}`}</code>
+                              </span>
+                              <small>{detail}</small>
+                            </button>
+                          ))}
+                        </div>
+                      </section>
+                    </div>
+                  )}
+
+                  {workspacePanel === "advanced" && (
+                    <div className="generation-advanced-layout">
+                      <label className="generation-field generation-advanced-style">
+                        <span>节点样式</span>
+                        <select
+                          aria-label="节点样式"
+                          value={activeType.cardVariant}
+                          onChange={(event) =>
+                            updateActiveType((type) => ({
+                              ...type,
+                              cardVariant: event.target
+                                .value as TopologyCardVariant
+                            }))
+                          }
+                        >
+                          {cardVariantOptions.map((option) => (
+                            <option value={option.id} key={option.id}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="generation-advanced-toggle">
+                        <span>
+                          <strong>拓扑互动</strong>
+                          <small>
+                            允许 Card 在拓扑网络中承载问答、勾选、编辑或翻转。
+                          </small>
+                        </span>
+                        <span className="generation-interaction-control">
+                          <input
+                            type="checkbox"
+                            aria-label={`允许${activeType.name}节点互动`}
+                            checked={activeType.interactive}
+                            onChange={(event) => {
+                              const interactive = event.target.checked;
+                              updateActiveType((type) => ({
+                                ...type,
+                                interactive
+                              }));
+                              setLiveStatus(
+                                `${activeType.name}节点互动已${
+                                  interactive ? "开启" : "关闭"
+                                }。`
+                              );
+                            }}
+                          />
+                          <i aria-hidden="true" />
+                        </span>
+                      </label>
+                      <dl className="generation-advanced-matrix">
+                        <div>
+                          <dt>执行方式</dt>
+                          <dd>
+                            {activeType.executionMode === "ai"
+                              ? "AI 生成"
+                              : activeType.executionMode === "manual"
+                                ? "用户手动填写"
+                                : "系统维护"}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>内容存储</dt>
+                          <dd>
+                            {activeType.executionMode === "manual"
+                              ? "SQLite 结构化记录"
+                              : activeType.executionMode === "system"
+                                ? "集合关系数据"
+                                : "Markdown 文件"}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>节点保护</dt>
+                          <dd>{activeType.isBuiltIn ? "内置，不可删除" : "自定义，可删除"}</dd>
+                        </div>
+                      </dl>
+                      {!isAiNode && (
+                        <div className="generation-node-mode-note" role="note">
+                          <Info aria-hidden="true" size={16} />
+                          <span>
+                            {activeType.executionMode === "manual"
+                              ? "手动节点由用户填写标题、内容与互动信息；不会生成 Markdown，也不会配置或调用 AI。"
+                              : "系统节点用于组织内容集合；同一集合可以包含多个根节点。"}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {workspacePanel === "protocol" && (
+                    <div className="generation-protocol-layout">
+                      <div className="generation-protocol-code">
+                        <span>annota-node.schema.json</span>
+                        <pre>{outputSchema}</pre>
+                      </div>
+                      <dl className="generation-protocol-fields">
+                        <div>
+                          <dt>title</dt>
+                          <dd>节点标题，用于 Card 与拓扑索引。</dd>
+                        </div>
+                        <div>
+                          <dt>summary</dt>
+                          <dd>节点摘要，用于折叠状态和关系检索。</dd>
+                        </div>
+                        <div>
+                          <dt>blocks</dt>
+                          <dd>标题、段落或引用组成的结构化内容块。</dd>
+                        </div>
+                      </dl>
+                    </div>
+                  )}
+
+                  {workspacePanel === "check" && (
+                    <div className="generation-check-layout">
+                      <section
+                        className={`generation-check-status${
+                          validationErrors.length > 0 ? " is-warning" : " is-ready"
+                        }`}
+                        aria-live="polite"
+                      >
+                        {validationErrors.length > 0 ? (
+                          <CircleHelp aria-hidden="true" size={19} />
+                        ) : (
+                          <Check aria-hidden="true" size={19} />
+                        )}
+                        <div>
+                          <strong>
+                            {validationErrors.length > 0
+                              ? "发现需要处理的配置"
+                              : "当前配置可以使用"}
+                          </strong>
+                          {validationErrors.length > 0 ? (
+                            <ul>
+                              {validationErrors.map((error) => (
+                                <li key={error}>{error}</li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <span>
+                              {isAiNode
+                                ? "模型、上下文、提示词变量与输出协议检查通过。"
+                                : "该节点不调用 AI，仅检查名称、样式与互动配置。"}
+                            </span>
+                          )}
+                        </div>
+                      </section>
+                      {isAiNode && (
+                        <div className="generation-check-messages">
+                          <div>
+                            <span>system</span>
+                            <pre>{renderPrompt(activeType.systemPrompt)}</pre>
+                          </div>
+                          <div>
+                            <span>user</span>
+                            <pre>{renderPrompt(activeType.userPrompt)}</pre>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               </section>
-
-              {validationErrors.length > 0 && (
-                <div className="generation-validation" role="alert">
-                  <CircleHelp aria-hidden="true" size={17} />
-                  <div>
-                    <strong>草稿需要检查</strong>
-                    {validationErrors.map((error) => (
-                      <span key={error}>{error}</span>
-                    ))}
-                  </div>
-                </div>
-              )}
             </section>
-
-            <aside className="generation-review-column" aria-label="节点预览与模板检查">
-              <ReviewSection title="节点样式预览" meta="实时" variant="card">
-                <div className="topology-card-preview-stage">
-                  <TopologyCardPreview type={activeType} />
-                  <p>
-                    {activeType.executionMode === "manual"
-                      ? "手动 Card 展示用户填写的结构化信息，不对应 Markdown 文件。"
-                      : activeType.executionMode === "system"
-                        ? "根节点是内容集合中的独立入口；同一集合可以有多个根节点。"
-                        : "AI Card 是生成内容的入口；预览只展示摘要、来源与少量结果。"}
-                  </p>
-                </div>
-              </ReviewSection>
-
-              <ReviewSection
-                title="上下文策略"
-                meta={isAiNode ? "单选" : "不适用"}
-                variant="context"
-                disabled={!isAiNode}
-              >
-                <fieldset className="generation-context-options" disabled={!isAiNode}>
-                  <legend>选择生成内容使用的最大上下文范围</legend>
-                  {contextOptions.map((option) => (
-                    <label
-                      className={`generation-context-option${
-                        activeType.contextScope === option.value
-                          ? " is-selected"
-                          : ""
-                      }`}
-                      key={option.value}
-                    >
-                      <input
-                        type="radio"
-                        name={`context-scope-${activeType.id}`}
-                        value={option.value}
-                        checked={activeType.contextScope === option.value}
-                        onChange={() =>
-                          updateActiveType((type) => ({
-                            ...type,
-                            contextScope: option.value
-                          }))
-                        }
-                      />
-                      <span>
-                        <strong>{option.label}</strong>
-                        <small>{option.detail}</small>
-                      </span>
-                    </label>
-                  ))}
-                </fieldset>
-              </ReviewSection>
-
-              <ReviewSection
-                title="输出结构"
-                meta={isAiNode ? "只读" : "不适用"}
-                variant="schema"
-                disabled={!isAiNode}
-              >
-                <pre className="generation-schema-preview">
-                  <code>{`{
-  title: string
-  summary: string
-  blocks: heading | paragraph
-}`}</code>
-                </pre>
-              </ReviewSection>
-            </aside>
           </div>
 
           <footer className="generation-action-bar">

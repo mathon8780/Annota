@@ -45,8 +45,9 @@ import {
   stepContentZoom
 } from "../utils/contentZoom";
 import {
+  createGenerationTypeIndex,
   loadGenerationTypes,
-  type GenerationTypeConfig,
+  resolveArticleGenerationType,
   type GenerationTypeIconId
 } from "../utils/generationConfig";
 import {
@@ -58,6 +59,12 @@ import {
   reconcileReadingTrail,
   type ReadingPathMode
 } from "../utils/readingPathPreferences";
+import { loadReaderToolbarPreferences } from "../utils/readerToolbarPreferences";
+import {
+  buildArticleDescendantCounts,
+  sortArticleChildren,
+  sourceBlockIdsInDocumentOrder
+} from "../utils/articleNodeOrder";
 import { MarkdownEditor } from "./MarkdownEditor";
 import { Brand } from "./Brand";
 import { InlineFormattingToolbar } from "./InlineFormattingToolbar";
@@ -142,48 +149,6 @@ function articleContentZoomStyle(zoom: number) {
   } as CSSProperties;
 }
 
-function descendants(id: string, articles: Record<string, ArticleNode>) {
-  const seen = new Set<string>();
-  const visit = (nodeId: string) => {
-    articles[nodeId]?.childIds.forEach((childId) => {
-      if (seen.has(childId)) return;
-      seen.add(childId);
-      visit(childId);
-    });
-  };
-  visit(id);
-  return seen.size;
-}
-
-function resolveNodeType(
-  article: ArticleNode,
-  nodeTypes: readonly GenerationTypeConfig[]
-): GenerationTypeConfig {
-  const typeById = new Map(nodeTypes.map((type) => [type.id, type]));
-  const rootType = typeById.get("root") ?? nodeTypes[0];
-  const sourceType = article.source?.generationType
-    ? typeById.get(article.source.generationType)
-    : undefined;
-  const relationType = nodeTypes.find(
-    (type) => type.relationLabel === article.type || type.name === article.type
-  );
-  const configuredType = article.parentId === null ? rootType : sourceType ?? relationType;
-  if (configuredType) return configuredType;
-
-  const appearance = article.appearance;
-  const fallback = typeById.get("explain") ?? rootType ?? nodeTypes[0];
-  if (!appearance || !fallback) return nodeTypes[0];
-  return {
-    ...fallback,
-    id: appearance.typeId,
-    name: article.type,
-    relationLabel: article.type,
-    icon: appearance.icon,
-    cardVariant: appearance.cardVariant,
-    color: appearance.color
-  };
-}
-
 export function ReaderPage({
   readingPathMode,
   shortcuts,
@@ -224,7 +189,14 @@ export function ReaderPage({
   const [notice, setNotice] = useState("");
   const [readingPathWidth, setReadingPathWidth] = useState(readStoredPathWidth);
   const [contentZoom, setContentZoom] = useState(loadContentZoom);
+  const [documentBlockIds, setDocumentBlockIds] = useState<readonly string[]>([]);
+  const [visibleBlockIds, setVisibleBlockIds] = useState<readonly string[] | null>(null);
+  const [readerToolbarPreferences] = useState(loadReaderToolbarPreferences);
   const allNodeTypes = useMemo(() => loadGenerationTypes(), []);
+  const nodeTypeIndex = useMemo(
+    () => createGenerationTypeIndex(allNodeTypes),
+    [allNodeTypes]
+  );
   const generationTypes = useMemo(
     () =>
       allNodeTypes.filter(
@@ -235,6 +207,8 @@ export function ReaderPage({
   const [resizingPath, setResizingPath] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const readerSurfaceRef = useRef<HTMLElement>(null);
+  const articleScrollRegionRef = useRef<HTMLDivElement>(null);
+  const visibleBlocksFrameRef = useRef<number>();
   const contentZoomRef = useRef(contentZoom);
   const noticeTimer = useRef<number>();
   const formatCommandSequence = useRef(0);
@@ -291,15 +265,28 @@ export function ReaderPage({
     }
   }, [resolvedRetainedPathIds, retainedPathIds]);
 
-  const childNodes = useMemo(
-    () =>
-      currentArticle
-        ? currentArticle.childIds
-            .map((id) => data.articles[id])
-            .filter((item): item is ArticleNode => Boolean(item))
-        : [],
-    [currentArticle, data.articles]
+  const childNodes = useMemo(() => {
+    if (!currentArticle) return [];
+    const blockIds = documentBlockIds.length
+      ? documentBlockIds
+      : sourceBlockIdsInDocumentOrder(currentArticle, data.articles);
+    const ordered = sortArticleChildren(
+      currentArticle,
+      data.articles,
+      blockIds
+    );
+    if (visibleBlockIds === null) return ordered;
+    const visible = new Set(visibleBlockIds);
+    return ordered.filter((child) => {
+      const source = child.source;
+      return !source || source.parentId !== currentArticle.id || visible.has(source.blockId);
+    });
+  }, [currentArticle, data.articles, documentBlockIds, visibleBlockIds]);
+  const descendantCounts = useMemo(
+    () => buildArticleDescendantCounts(data.articles),
+    [data.articles]
   );
+  const hasAnyChildNodes = Boolean(currentArticle?.childIds.some((id) => data.articles[id]));
 
   const activeJobs = useMemo(
     () => data.jobs.filter((job) => job.parentId === currentArticle?.id),
@@ -387,7 +374,161 @@ export function ReaderPage({
     setSelection(null);
     setFormatCommand(null);
     setSaveState("已保存到本机");
+    setDocumentBlockIds([]);
+    setVisibleBlockIds(null);
   }, [currentArticle?.id]);
+
+  const handleBlockOrder = useCallback((blockIds: readonly string[]) => {
+    setDocumentBlockIds((current) =>
+      current.length === blockIds.length &&
+      current.every((blockId, index) => blockId === blockIds[index])
+        ? current
+        : [...blockIds]
+    );
+  }, []);
+
+  const measureVisibleBlocks = useCallback(() => {
+    const surface = readerSurfaceRef.current;
+    const articleRegion = articleScrollRegionRef.current;
+    if (!surface || !articleRegion) return;
+
+    const surfaceRect = surface.getBoundingClientRect();
+    const toolbar = surface.querySelector<HTMLElement>(
+      ":scope > .inline-formatting-toolbar"
+    );
+    const toolbarRect = toolbar?.getBoundingClientRect();
+    const viewportTop = Math.max(surfaceRect.top, toolbarRect?.bottom ?? surfaceRect.top);
+    const viewportBottom = surfaceRect.bottom;
+    const lines = articleRegion.querySelectorAll<HTMLElement>(
+      "[data-markdown-block-id]"
+    );
+    if (!lines.length || viewportBottom <= viewportTop) return;
+
+    const visible = new Set<string>();
+    lines.forEach((line) => {
+      const blockId = line.dataset.markdownBlockId;
+      if (!blockId) return;
+      const rect = line.getBoundingClientRect();
+      if (rect.height > 0 && rect.bottom > viewportTop && rect.top < viewportBottom) {
+        visible.add(blockId);
+      }
+    });
+    const orderedVisible = documentBlockIds.filter((blockId) => visible.has(blockId));
+    setVisibleBlockIds((current) =>
+      current &&
+      current.length === orderedVisible.length &&
+      current.every((blockId, index) => blockId === orderedVisible[index])
+        ? current
+        : orderedVisible
+    );
+  }, [documentBlockIds]);
+
+  useEffect(() => {
+    const surface = readerSurfaceRef.current;
+    const articleRegion = articleScrollRegionRef.current;
+    if (!surface || !articleRegion) return;
+
+    const scheduleMeasure = () => {
+      window.cancelAnimationFrame(visibleBlocksFrameRef.current ?? 0);
+      visibleBlocksFrameRef.current = window.requestAnimationFrame(measureVisibleBlocks);
+    };
+    const resizeObserver = typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(() => scheduleIndex());
+    let mutationObserver: MutationObserver;
+    let intersectionObserver: IntersectionObserver | null = null;
+    let observedBlockIds = new Map<Element, string>();
+    const visibleLines = new Set<Element>();
+
+    const publishVisibleBlocks = () => {
+      const visible = new Set<string>();
+      visibleLines.forEach((line) => {
+        const blockId = observedBlockIds.get(line);
+        if (blockId) visible.add(blockId);
+      });
+      const orderedVisible = documentBlockIds.filter((blockId) => visible.has(blockId));
+      setVisibleBlockIds((current) =>
+        current &&
+        current.length === orderedVisible.length &&
+        current.every((blockId, index) => blockId === orderedVisible[index])
+          ? current
+          : orderedVisible
+      );
+    };
+
+    const rebuildIntersectionIndex = () => {
+      intersectionObserver?.disconnect();
+      visibleLines.clear();
+      observedBlockIds = new Map();
+      const lines = articleRegion.querySelectorAll<HTMLElement>(
+        "[data-markdown-block-id]"
+      );
+      if (!lines.length) return;
+      const toolbar = surface.querySelector<HTMLElement>(
+        ":scope > .inline-formatting-toolbar"
+      );
+      intersectionObserver = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            if (entry.isIntersecting && entry.intersectionRatio > 0) {
+              visibleLines.add(entry.target);
+            } else {
+              visibleLines.delete(entry.target);
+            }
+          });
+          publishVisibleBlocks();
+        },
+        {
+          root: surface,
+          rootMargin: `-${toolbar?.offsetHeight ?? 0}px 0px 0px 0px`
+        }
+      );
+      lines.forEach((line) => {
+        const blockId = line.dataset.markdownBlockId;
+        if (!blockId) return;
+        observedBlockIds.set(line, blockId);
+        intersectionObserver?.observe(line);
+      });
+    };
+
+    const scheduleIndex = () => {
+      if (typeof IntersectionObserver === "undefined") {
+        scheduleMeasure();
+        return;
+      }
+      window.cancelAnimationFrame(visibleBlocksFrameRef.current ?? 0);
+      visibleBlocksFrameRef.current = window.requestAnimationFrame(
+        rebuildIntersectionIndex
+      );
+    };
+
+    mutationObserver = new MutationObserver(scheduleIndex);
+    mutationObserver.observe(articleRegion, {
+      attributes: true,
+      attributeFilter: ["data-markdown-block-id"],
+      childList: true,
+      subtree: true
+    });
+    resizeObserver?.observe(surface);
+    resizeObserver?.observe(articleRegion);
+    if (typeof IntersectionObserver === "undefined") {
+      surface.addEventListener("scroll", scheduleMeasure, { passive: true });
+      window.addEventListener("resize", scheduleMeasure);
+      scheduleMeasure();
+    } else {
+      window.addEventListener("resize", scheduleIndex);
+      scheduleIndex();
+    }
+    return () => {
+      mutationObserver.disconnect();
+      intersectionObserver?.disconnect();
+      resizeObserver?.disconnect();
+      surface.removeEventListener("scroll", scheduleMeasure);
+      window.removeEventListener("resize", scheduleMeasure);
+      window.removeEventListener("resize", scheduleIndex);
+      window.cancelAnimationFrame(visibleBlocksFrameRef.current ?? 0);
+    };
+  }, [contentZoom, currentArticle?.id, measureVisibleBlocks]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -560,7 +701,12 @@ export function ReaderPage({
           <span>{childNodes.length} 个{terms.subNotes}</span>
         </div>
 
-        <div className="generation-actions" aria-label={terms.highlightCreate}>
+        <div
+          className={`generation-actions${
+            readerToolbarPreferences.iconOnly ? " is-icon-only" : ""
+          }`}
+          aria-label={terms.highlightCreate}
+        >
           {generationTypes.map((generationType) => {
             const GenerationIcon = generationActionIcons[generationType.icon];
             return (
@@ -569,6 +715,7 @@ export function ReaderPage({
                 type="button"
                 disabled={!selection}
                 onClick={() => runGeneration(generationType.id)}
+                aria-label={`${generationType.name}选中文字`}
                 title={
                   selection
                     ? `${generationType.name}选中文字`
@@ -582,7 +729,9 @@ export function ReaderPage({
                 }
               >
                 <GenerationIcon aria-hidden="true" size={16} />
-                {generationType.name}
+                <span className="generation-button-label">
+                  {generationType.name}
+                </span>
               </button>
             );
           })}
@@ -621,7 +770,7 @@ export function ReaderPage({
             {displayedPath.map((article, index) => {
               const isCurrent = article.id === currentArticle.id;
               const isRetained = index >= currentPathIds.length;
-              const nodeType = resolveNodeType(article, allNodeTypes);
+              const nodeType = resolveArticleGenerationType(article, nodeTypeIndex);
               const NodeIcon = generationActionIcons[nodeType.icon];
               return (
               <div
@@ -658,7 +807,7 @@ export function ReaderPage({
             })}
           </div>
           {(() => {
-            const nodeType = resolveNodeType(currentArticle, allNodeTypes);
+            const nodeType = resolveArticleGenerationType(currentArticle, nodeTypeIndex);
             const NodeIcon = generationActionIcons[nodeType.icon];
             return (
               <div
@@ -710,7 +859,7 @@ export function ReaderPage({
             onToggleArticleWidth={() => setFullWidthArticle((value) => !value)}
           />
 
-          <div className="article-scroll-region">
+          <div className="article-scroll-region" ref={articleScrollRegionRef}>
             <article
               className={`article-column${fullWidthArticle ? " is-full-width" : ""}`}
               data-content-zoom={contentZoom}
@@ -731,6 +880,7 @@ export function ReaderPage({
                 onPersist={() => touchArticle(currentArticle.id)}
                 onSelection={setSelection}
                 onSaveState={setSaveState}
+                onBlockOrder={handleBlockOrder}
               />
 
               <footer className="article-footer-nav">
@@ -819,7 +969,7 @@ export function ReaderPage({
                     <p>{child.summary}</p>
                     <span className="child-card-meta">
                       <span>{child.type}</span>
-                      <small>{descendants(child.id, data.articles)} 篇后续</small>
+                      <small>{descendantCounts.get(child.id) ?? 0} 篇后续</small>
                     </span>
                   </span>
                 </button>
@@ -828,8 +978,16 @@ export function ReaderPage({
               {!childNodes.length && !activeJobs.length && (
                 <div className="children-empty">
                   <MessageSquareText aria-hidden="true" size={20} />
-                  <strong>还没有下一级{terms.subNotes}</strong>
-                  <p>在左侧正文中选择一段文字，然后点击顶部任一可生成节点。</p>
+                  <strong>
+                    {hasAnyChildNodes
+                      ? "当前阅读位置没有关联节点"
+                      : `还没有下一级${terms.subNotes}`}
+                  </strong>
+                  <p>
+                    {hasAnyChildNodes
+                      ? "继续滚动正文，右侧会按标记在文章中的顺序更新关联内容。"
+                      : "在左侧正文中选择一段文字，然后点击顶部任一可生成节点。"}
+                  </p>
                 </div>
               )}
             </div>

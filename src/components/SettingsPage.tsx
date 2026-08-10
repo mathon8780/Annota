@@ -81,6 +81,10 @@ import type {
 import { appThemes } from "../utils/themePreferences";
 import type { AppThemeId } from "../utils/themePreferences";
 import type { ReadingPathMode } from "../utils/readingPathPreferences";
+import {
+  loadReaderToolbarPreferences,
+  saveReaderToolbarPreferences
+} from "../utils/readerToolbarPreferences";
 import { discoverModels } from "../utils/modelDiscovery";
 import {
   BUILT_IN_MODEL_CATALOG_UPDATED_AT,
@@ -534,6 +538,7 @@ const settingCategories: SettingCategory[] = [
         title: "阅读与标注",
         items: [
           { label: "保留后续阅读路径", scope: "全局", slot: "compact" },
+          { label: "顶部交互仅显示图标", scope: "全局", slot: "compact" },
           { label: "正文行高", scope: "全局" },
           { label: "默认标注颜色", scope: "全局", slot: "compact" },
           { label: "减少动态效果", scope: "全局", slot: "compact" }
@@ -757,10 +762,17 @@ export function SettingsPage({
     initialSystemFontCatalog
   );
   const [fontQuery, setFontQuery] = useState("");
+  const [readerToolbarPreferences, setReaderToolbarPreferences] = useState(
+    loadReaderToolbarPreferences
+  );
 
   useEffect(() => {
     saveFontPreferences(fontPreferences);
   }, [fontPreferences]);
+
+  useEffect(() => {
+    saveReaderToolbarPreferences(readerToolbarPreferences);
+  }, [readerToolbarPreferences]);
 
   useEffect(() => {
     let disposed = false;
@@ -920,6 +932,28 @@ export function SettingsPage({
                                   {readingPathMode === "retain-branch"
                                     ? "保留分支"
                                     : "仅当前路径"}
+                                </span>
+                                <i aria-hidden="true" />
+                              </button>
+                            ) : activeCategory.id === "appearance" &&
+                              item.label === "顶部交互仅显示图标" ? (
+                              <button
+                                className="settings-switch-control"
+                                type="button"
+                                role="switch"
+                                aria-checked={readerToolbarPreferences.iconOnly}
+                                aria-label="顶部交互仅显示图标"
+                                onClick={() =>
+                                  setReaderToolbarPreferences((current) => ({
+                                    ...current,
+                                    iconOnly: !current.iconOnly
+                                  }))
+                                }
+                              >
+                                <span>
+                                  {readerToolbarPreferences.iconOnly
+                                    ? "仅图标"
+                                    : "图标与文字"}
                                 </span>
                                 <i aria-hidden="true" />
                               </button>

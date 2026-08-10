@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
+import type { ArticleNode } from "../types";
 import {
+  createGenerationTypeIndex,
   GENERATION_TYPES_STORAGE_KEY,
   initialGenerationTypes,
   loadGenerationTypes,
+  resolveArticleGenerationType,
   saveGenerationTypes,
   type GenerationTypeConfig
 } from "./generationConfig";
@@ -12,6 +15,36 @@ afterEach(() => {
 });
 
 describe("topology node generation configuration", () => {
+  it("resolves article node types through reusable lookup indexes", () => {
+    const index = createGenerationTypeIndex(initialGenerationTypes);
+    const article = {
+      id: "child",
+      rootId: "root",
+      parentId: "root",
+      title: "代码节点",
+      summary: "",
+      type: "任意旧标签",
+      childIds: [],
+      createdAt: "2026-08-11T00:00:00.000Z",
+      updatedAt: "2026-08-11T00:00:00.000Z",
+      source: {
+        parentId: "root",
+        blockId: "block-1",
+        quote: "code",
+        generationType: "code"
+      }
+    } satisfies ArticleNode;
+
+    expect(index.byRelationLabel.get("翻译")?.id).toBe("translate");
+    expect(resolveArticleGenerationType(article, index).id).toBe("code");
+    expect(
+      resolveArticleGenerationType(
+        { ...article, source: undefined, type: "未知旧节点" },
+        index
+      ).id
+    ).toBe("root");
+  });
+
   it("defines every card node family represented by the topology prototype", () => {
     expect(initialGenerationTypes.map((type) => type.id)).toEqual([
       "root",
@@ -57,7 +90,14 @@ describe("topology node generation configuration", () => {
       initialGenerationTypes
         .filter((type) => type.interactive)
         .map((type) => type.id)
-    ).toEqual(["socratic", "checklist", "flashcard"]);
+    ).toEqual([
+      "highlight",
+      "socratic",
+      "checklist",
+      "note",
+      "source",
+      "flashcard"
+    ]);
   });
 
   it("migrates legacy prompt types and appends newly introduced built-ins", () => {

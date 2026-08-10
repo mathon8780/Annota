@@ -37,6 +37,10 @@ export interface ArticleNode {
     blockId: string;
     quote: string;
     generationType: GenerationType;
+    start?: number;
+    end?: number;
+    documentStart?: number;
+    documentEnd?: number;
   };
 }
 
@@ -56,6 +60,10 @@ export interface GenerationJob {
   parentId: string;
   blockId: string;
   quote: string;
+  start?: number;
+  end?: number;
+  documentStart?: number;
+  documentEnd?: number;
   type: GenerationType;
   typeName: string;
   model?: string;

@@ -5,9 +5,9 @@ mod window_size;
 use markdown_store::{MarkdownDocument, MarkdownStore};
 use tauri::{LogicalSize, Manager, WindowEvent};
 use topology_store::{
-    TopologyCollection, TopologyGraph, TopologyInteraction, TopologyNode, TopologyRelation,
-    TopologyStore, UpsertTopologyCollectionRequest, UpsertTopologyInteractionRequest,
-    UpsertTopologyNodeRequest, UpsertTopologyRelationRequest,
+    SyncMarkdownTopologyRequest, TopologyCollection, TopologyGraph, TopologyInteraction,
+    TopologyNode, TopologyRelation, TopologyStore, UpsertTopologyCollectionRequest,
+    UpsertTopologyInteractionRequest, UpsertTopologyNodeRequest, UpsertTopologyRelationRequest,
 };
 use window_size::{WindowDimensions, WindowSizePersistence};
 
@@ -125,6 +125,14 @@ fn upsert_topology_collection(
     request: UpsertTopologyCollectionRequest,
 ) -> Result<TopologyCollection, String> {
     store.upsert_collection(request)
+}
+
+#[tauri::command]
+fn sync_markdown_topology(
+    store: tauri::State<'_, TopologyStore>,
+    request: SyncMarkdownTopologyRequest,
+) -> Result<TopologyGraph, String> {
+    store.sync_markdown_topology(request)
 }
 
 #[tauri::command]
@@ -545,6 +553,7 @@ pub fn run() {
             save_markdown_document,
             list_topology_collections,
             upsert_topology_collection,
+            sync_markdown_topology,
             load_topology_graph,
             delete_topology_collection,
             upsert_topology_node,

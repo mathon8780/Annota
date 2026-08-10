@@ -1,4 +1,4 @@
-import type { EditorState, Extension } from "@codemirror/state";
+import { StateField, type EditorState, type Extension } from "@codemirror/state";
 import {
   Decoration,
   EditorView,
@@ -1255,23 +1255,47 @@ function collectBlockLines(state: EditorState): BlockLines {
 
 function livePreviewDecorations(
   state: EditorState,
-  enabledSyntax: ReadonlySet<MarkdownSyntaxId>
+  enabledSyntax: ReadonlySet<MarkdownSyntaxId>,
+  blockLines: BlockLines
 ) {
   const decorations: DecorationRange[] = [];
-  const blockLines = collectBlockLines(state);
   const activeLines = new Set<number>();
   state.selection.ranges.forEach((range) => {
     if (range.empty) activeLines.add(state.doc.lineAt(range.head).number);
   });
 
   const replaceRanges: Array<[number, number]> = [];
-  const overlapsReplacement = (from: number, to: number) =>
-    replaceRanges.some(([left, right]) => from < right && to > left);
-  const canReplace = (from: number, to: number) =>
-    from < to && !overlapsReplacement(from, to);
+  const replacementIndex = (from: number) => {
+    let low = 0;
+    let high = replaceRanges.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (replaceRanges[middle][0] < from) low = middle + 1;
+      else high = middle;
+    }
+    return low;
+  };
+  const overlapsReplacement = (from: number, to: number) => {
+    const index = replacementIndex(from);
+    return (
+      (index > 0 && replaceRanges[index - 1][1] > from) ||
+      (index < replaceRanges.length && replaceRanges[index][0] < to)
+    );
+  };
+  const addReplacement = (from: number, to: number) => {
+    if (from >= to) return false;
+    const last = replaceRanges.at(-1);
+    if (!last || from >= last[1]) {
+      replaceRanges.push([from, to]);
+      return true;
+    }
+    const index = replacementIndex(from);
+    if (overlapsReplacement(from, to)) return false;
+    replaceRanges.splice(index, 0, [from, to]);
+    return true;
+  };
   const replace = (from: number, to: number) => {
-    if (!canReplace(from, to)) return;
-    replaceRanges.push([from, to]);
+    if (!addReplacement(from, to)) return;
     decorations.push(Decoration.replace({}).range(from, to));
   };
   const mark = (from: number, to: number, className: string) => {
@@ -1307,8 +1331,7 @@ function livePreviewDecorations(
         (activeLine) => activeLine >= codeBlock.startLine && activeLine <= codeBlock.endLine
       );
       if (!codeBlockIsActive) {
-        if (lineNumber === codeBlock.startLine && canReplace(codeBlock.from, codeBlock.to)) {
-          replaceRanges.push([codeBlock.from, codeBlock.to]);
+        if (lineNumber === codeBlock.startLine && addReplacement(codeBlock.from, codeBlock.to)) {
           decorations.push(
             Decoration.replace({
               block: true,
@@ -1341,8 +1364,7 @@ function livePreviewDecorations(
         (activeLine) => activeLine >= mathBlock.startLine && activeLine <= mathBlock.endLine
       );
       if (!mathBlockIsActive) {
-        if (lineNumber === mathBlock.startLine && canReplace(mathBlock.from, mathBlock.to)) {
-          replaceRanges.push([mathBlock.from, mathBlock.to]);
+        if (lineNumber === mathBlock.startLine && addReplacement(mathBlock.from, mathBlock.to)) {
           decorations.push(
             Decoration.replace({
               block: true,
@@ -1368,8 +1390,7 @@ function livePreviewDecorations(
         (activeLine) => activeLine >= callout.startLine && activeLine <= callout.endLine
       );
       if (!calloutIsActive) {
-        if (lineNumber === callout.startLine && canReplace(callout.from, callout.to)) {
-          replaceRanges.push([callout.from, callout.to]);
+        if (lineNumber === callout.startLine && addReplacement(callout.from, callout.to)) {
           decorations.push(
             Decoration.replace({ block: true, widget: new CalloutWidget(callout) }).range(
               callout.from,
@@ -1398,8 +1419,7 @@ function livePreviewDecorations(
       ? blockLines.tables.get(lineNumber)
       : undefined;
     if (table) {
-      if (lineNumber === table.startLine && canReplace(table.from, table.to)) {
-        replaceRanges.push([table.from, table.to]);
+      if (lineNumber === table.startLine && addReplacement(table.from, table.to)) {
         decorations.push(
           Decoration.replace({ block: true, widget: new TableWidget(table) }).range(
             table.from,
@@ -1426,16 +1446,14 @@ function livePreviewDecorations(
         if (isTask) {
           const taskFrom = markerTo + list[3].length;
           const taskTo = taskFrom + list[4].trimEnd().length;
-          if (canReplace(markerFrom, taskTo)) {
-            replaceRanges.push([markerFrom, taskTo]);
+          if (addReplacement(markerFrom, taskTo)) {
             decorations.push(
               Decoration.replace({
                 widget: new TaskCheckboxWidget(taskFrom, isChecked)
               }).range(markerFrom, taskTo)
             );
           }
-        } else if (!isActive && !isOrdered && canReplace(markerFrom, markerTo)) {
-          replaceRanges.push([markerFrom, markerTo]);
+        } else if (!isActive && !isOrdered && addReplacement(markerFrom, markerTo)) {
           decorations.push(
             Decoration.replace({ widget: new ListBulletWidget(markerFrom) }).range(
               markerFrom,
@@ -1452,8 +1470,7 @@ function livePreviewDecorations(
       for (const match of findInlineMath(text)) {
         const from = line.from + match.from;
         const to = line.from + match.to;
-        if (!canReplace(from, to)) continue;
-        replaceRanges.push([from, to]);
+        if (!addReplacement(from, to)) continue;
         decorations.push(
           Decoration.replace({
             widget: new MathWidget(match.expression, from, false)
@@ -1570,8 +1587,22 @@ export function livePreviewExtension(
   enabledSyntaxIds: readonly MarkdownSyntaxId[]
 ): Extension {
   const enabledSyntax = new Set(enabledSyntaxIds);
-  return EditorView.decorations.compute(
-    ["doc", "selection"],
-    (state) => livePreviewDecorations(state, enabledSyntax)
-  );
+  const blockLinesState = StateField.define<BlockLines>({
+    create: collectBlockLines,
+    update(value, transaction) {
+      return transaction.docChanged ? collectBlockLines(transaction.state) : value;
+    }
+  });
+  return [
+    blockLinesState,
+    EditorView.decorations.compute(
+      [blockLinesState, "selection"],
+      (state) =>
+        livePreviewDecorations(
+          state,
+          enabledSyntax,
+          state.field(blockLinesState)
+        )
+    )
+  ];
 }

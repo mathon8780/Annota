@@ -76,8 +76,22 @@ export function markdownSelection(
   from: number,
   to: number
 ): SelectionState | null {
+  return markdownSelectionFromRanges(
+    markdown,
+    markdownRanges(markdown, documentId),
+    from,
+    to
+  );
+}
+
+export function markdownSelectionFromRanges(
+  markdown: string,
+  ranges: readonly MarkdownRange[],
+  from: number,
+  to: number
+): SelectionState | null {
   if (from === to) return null;
-  const range = markdownRanges(markdown, documentId).find(
+  const range = ranges.find(
     (candidate) => from >= candidate.from && to <= candidate.to
   );
   if (!range) return null;

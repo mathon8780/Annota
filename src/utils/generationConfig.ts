@@ -1,3 +1,5 @@
+import type { ArticleNode } from "../types";
+
 export type ContextScope =
   | "containingParagraph"
   | "nearbyParagraphs"
@@ -41,7 +43,63 @@ export interface GenerationTypeConfig {
   contextScope: ContextScope;
 }
 
+export interface GenerationTypeIndex {
+  byId: ReadonlyMap<string, GenerationTypeConfig>;
+  byName: ReadonlyMap<string, GenerationTypeConfig>;
+  byRelationLabel: ReadonlyMap<string, GenerationTypeConfig>;
+  fallback: GenerationTypeConfig;
+  first: GenerationTypeConfig;
+  root: GenerationTypeConfig;
+}
+
 export const GENERATION_TYPES_STORAGE_KEY = "annota.generation-types.v1";
+
+export function createGenerationTypeIndex(
+  nodeTypes: readonly GenerationTypeConfig[]
+): GenerationTypeIndex {
+  const first = nodeTypes[0];
+  const fallback =
+    nodeTypes.find((type) => type.id === "explain") ?? first;
+  const root = nodeTypes.find((type) => type.id === "root") ?? first;
+  const byId = new Map<string, GenerationTypeConfig>();
+  const byName = new Map<string, GenerationTypeConfig>();
+  const byRelationLabel = new Map<string, GenerationTypeConfig>();
+  nodeTypes.forEach((type) => {
+    if (!byId.has(type.id)) byId.set(type.id, type);
+    if (!byName.has(type.name)) byName.set(type.name, type);
+    if (!byRelationLabel.has(type.relationLabel)) {
+      byRelationLabel.set(type.relationLabel, type);
+    }
+  });
+  return { byId, byName, byRelationLabel, fallback, first, root };
+}
+
+export function resolveArticleGenerationType(
+  article: ArticleNode,
+  index: GenerationTypeIndex
+): GenerationTypeConfig {
+  const sourceType = article.source?.generationType
+    ? index.byId.get(article.source.generationType)
+    : undefined;
+  const configuredType = article.parentId === null
+    ? index.root
+    : sourceType ??
+      index.byRelationLabel.get(article.type) ??
+      index.byName.get(article.type);
+  if (configuredType) return configuredType;
+
+  const appearance = article.appearance;
+  if (!appearance) return index.first;
+  return {
+    ...index.fallback,
+    id: appearance.typeId,
+    name: article.type,
+    relationLabel: article.type,
+    icon: appearance.icon,
+    cardVariant: appearance.cardVariant,
+    color: appearance.color
+  };
+}
 
 function nodeType(
   config: Omit<
@@ -129,6 +187,7 @@ export const initialGenerationTypes: GenerationTypeConfig[] = [
     icon: "highlight",
     cardVariant: "highlight",
     executionMode: "manual",
+    interactive: true,
     color: "#c05245",
     isBuiltIn: true,
     enabled: false,
@@ -219,6 +278,7 @@ export const initialGenerationTypes: GenerationTypeConfig[] = [
     icon: "note",
     cardVariant: "note",
     executionMode: "manual",
+    interactive: true,
     color: "#b56827",
     isBuiltIn: true,
     enabled: false,
@@ -232,6 +292,7 @@ export const initialGenerationTypes: GenerationTypeConfig[] = [
     icon: "source",
     cardVariant: "source",
     executionMode: "manual",
+    interactive: true,
     color: "#475569",
     isBuiltIn: true,
     enabled: false,

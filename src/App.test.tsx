@@ -283,6 +283,40 @@ describe("Annota core flow", () => {
     ).toBeInTheDocument();
   });
 
+  it("collapses the primary sidebar to an icon rail and expands it again", async () => {
+    const user = userEvent.setup();
+    const { container } = renderApp();
+    const sidebar = screen.getByRole("complementary", { name: "主页导航" });
+    const collapseButton = within(sidebar).getByRole("button", {
+      name: "收起左侧导航"
+    });
+    expect(collapseButton.querySelector(".home-sidebar-collapse-track")).toBeInTheDocument();
+    expect(collapseButton.querySelectorAll("svg")).toHaveLength(1);
+
+    await user.click(collapseButton);
+
+    expect(container.querySelector(".home-workspace")).toHaveClass(
+      "is-sidebar-collapsed"
+    );
+    expect(sidebar).toHaveClass("is-collapsed");
+    const expandButton = within(sidebar).getByRole("button", {
+      name: "展开左侧导航"
+    });
+    expect(expandButton).toBe(collapseButton);
+    expect(
+      within(sidebar).getByRole("button", { name: "拓扑节点" })
+    ).toHaveAttribute("title", "拓扑节点");
+
+    await user.click(
+      within(sidebar).getByRole("button", { name: "展开左侧导航" })
+    );
+
+    expect(container.querySelector(".home-workspace")).not.toHaveClass(
+      "is-sidebar-collapsed"
+    );
+    expect(sidebar).not.toHaveClass("is-collapsed");
+  });
+
   it("switches generation types and validates prompt-template drafts", async () => {
     const user = userEvent.setup();
     const generationPage = await openGenerationPage(user);
@@ -324,6 +358,10 @@ describe("Annota core flow", () => {
     });
     fireEvent.change(userPrompt, { target: { value: "{{unknown.value}}" } });
 
+    await user.click(
+      within(generationPage).getByRole("tab", { name: "检查" })
+    );
+
     expect(
       within(generationPage).getByText(
         "包含未知变量，请修正提示词模板。"
@@ -337,16 +375,13 @@ describe("Annota core flow", () => {
   it("uses one progressively wider context scope for each generation type", async () => {
     const user = userEvent.setup();
     const generationPage = await openGenerationPage(user);
-    const contextGroup = within(generationPage).getByRole("group", {
-      name: "选择生成内容使用的最大上下文范围"
+    const contextSelect = within(generationPage).getByRole("combobox", {
+      name: "上下文策略"
     });
-    const contextRadios = within(contextGroup).getAllByRole("radio");
+    const contextOptions = within(contextSelect).getAllByRole("option");
 
     expect(
-      contextRadios.map(
-        (radio) =>
-          radio.closest("label")?.querySelector("strong")?.textContent
-      )
+      contextOptions.map((option) => option.textContent)
     ).toEqual([
       "所在段落",
       "附近段落（上三个与下三个段落）",
@@ -355,18 +390,15 @@ describe("Annota core flow", () => {
       "父一级文章",
       "所有父级文章"
     ]);
-    expect(contextRadios).toHaveLength(6);
-    expect(contextRadios[0]).toBeChecked();
+    expect(contextOptions).toHaveLength(6);
+    expect(contextSelect).toHaveValue("containingParagraph");
 
-    await user.click(
-      within(contextGroup).getByRole("radio", { name: /附近段落/ })
-    );
+    await user.selectOptions(contextSelect, "nearbyParagraphs");
 
+    expect(contextSelect).toHaveValue("nearbyParagraphs");
     expect(
-      within(contextGroup).getByRole("radio", { name: /附近段落/ })
-    ).toBeChecked();
-    expect(contextRadios[0]).not.toBeChecked();
-    expect(contextRadios.filter((radio) => radio.matches(":checked"))).toHaveLength(1);
+      contextOptions.filter((option) => option.matches(":checked"))
+    ).toHaveLength(1);
     expect(within(generationPage).getByRole("status")).toHaveTextContent(
       "设置修改已自动保存"
     );
@@ -415,6 +447,10 @@ describe("Annota core flow", () => {
       })
     ).toHaveClass("is-translate");
 
+    await user.click(
+      within(generationPage).getByRole("tab", { name: "高级" })
+    );
+
     await user.selectOptions(
       within(generationPage).getByRole("combobox", { name: "节点样式" }),
       "compare"
@@ -445,12 +481,18 @@ describe("Annota core flow", () => {
     expect(
       within(generationPage).getByRole("combobox", { name: "调用模型" })
     ).toBeDisabled();
+    await user.click(
+      within(generationPage).getByRole("tab", { name: "提示词" })
+    );
     expect(
       within(generationPage).getByRole("textbox", { name: "System Prompt" })
     ).toBeDisabled();
     expect(
       within(generationPage).getByRole("checkbox", { name: "启用重点" })
     ).toBeInTheDocument();
+    await user.click(
+      within(generationPage).getByRole("tab", { name: "高级" })
+    );
     expect(
       within(generationPage).getByRole("checkbox", {
         name: "允许重点节点互动"
@@ -475,8 +517,8 @@ describe("Annota core flow", () => {
       within(generationPage).getByRole("textbox", { name: "节点类型名称" })
     ).toHaveValue("未命名节点");
     expect(
-      within(generationPage).getAllByRole("radio")[0]
-    ).toBeChecked();
+      within(generationPage).getByRole("combobox", { name: "上下文策略" })
+    ).toHaveValue("containingParagraph");
 
     await user.click(
       within(generationPage).getByRole("button", { name: "提示词预览" })
@@ -509,20 +551,39 @@ describe("Annota core flow", () => {
     expect(within(generationPage).getByRole("status")).toHaveTextContent(
       "所有修改都会自动保存到本机"
     );
+    const basicInformation = within(generationPage).getByRole("region", {
+      name: "基础信息"
+    });
+    const appearance = within(generationPage).getByRole("region", {
+      name: "标记与图标"
+    });
     expect(
-      Array.from(
-        generationPage.querySelectorAll(
-          ".generation-identity-grid > label > span:first-child, .generation-identity-grid > fieldset > legend"
-        )
-      ).map((label) => label.textContent)
-    ).toEqual([
-      "节点类型名称",
-      "调用模型",
-      "节点样式",
-      "拓扑互动",
-      "标记颜色",
-      "列表图标"
-    ]);
+      within(basicInformation).getByRole("textbox", { name: "节点类型名称" })
+    ).toBeInTheDocument();
+    expect(
+      within(basicInformation).getByRole("combobox", { name: "调用模型" })
+    ).toBeInTheDocument();
+    expect(
+      within(basicInformation).getByRole("combobox", { name: "上下文策略" })
+    ).toBeInTheDocument();
+    expect(
+      within(appearance).queryAllByRole("button", { name: /使用标记颜色：/ })
+    ).toHaveLength(0);
+    await user.click(
+      within(appearance).getByRole("button", { name: "钴蓝" })
+    );
+    expect(
+      within(appearance).getAllByRole("button", { name: /使用标记颜色：/ })
+    ).toHaveLength(8);
+    await user.click(
+      within(appearance).getByRole("button", { name: "钴蓝" })
+    );
+    await user.click(
+      within(appearance).getByRole("button", { name: "对话解释" })
+    );
+    expect(
+      within(appearance).getAllByRole("button", { name: /使用图标：/ })
+    ).toHaveLength(13);
     expect(
       within(generationPage).queryByRole("textbox", { name: "关系标签" })
     ).not.toBeInTheDocument();
@@ -531,9 +592,9 @@ describe("Annota core flow", () => {
     ).not.toBeInTheDocument();
     expect(
       within(generationPage).getAllByRole("button", {
-        name: /使用标记颜色：/
+        name: /使用图标：/
       })
-    ).toHaveLength(8);
+    ).toHaveLength(13);
     expect(
       within(generationPage).queryByText(
         "指定执行此行为时使用的模型；Demo 不会发起真实请求。"
@@ -567,22 +628,25 @@ describe("Annota core flow", () => {
       within(generationPage).queryByText("复制当前类型")
     ).not.toBeInTheDocument();
     expect(
-      within(generationPage).getByRole("complementary", {
-        name: "节点预览与模板检查"
+      within(generationPage).getByRole("region", {
+        name: "拓扑节点编辑"
       })
     ).toBeInTheDocument();
-    expect(generationPage.querySelector(".generation-trace")).toBeNull();
-
-    const reviewHeadings = within(
-      within(generationPage).getByRole("complementary", {
+    expect(
+      within(generationPage).queryByRole("complementary", {
         name: "节点预览与模板检查"
       })
-    ).getAllByRole("heading", { level: 3 });
-    expect(reviewHeadings.map((heading) => heading.textContent)).toEqual([
-      "节点样式预览",
-      "上下文策略",
-      "输出结构"
-    ]);
+    ).not.toBeInTheDocument();
+    expect(generationPage.querySelector(".generation-trace")).toBeNull();
+
+    expect(
+      within(generationPage)
+        .getAllByRole("tab")
+        .map((tab) => tab.textContent)
+    ).toEqual(["检查", "提示词", "高级", "输出协议", "模型请求参数"]);
+    expect(
+      within(generationPage).getByRole("region", { name: "节点样式预览" })
+    ).toBeInTheDocument();
     expect(
       within(generationPage).queryByText("版本控制")
     ).not.toBeInTheDocument();
@@ -632,6 +696,9 @@ describe("Annota core flow", () => {
     const modelSelect = within(generationPage).getByRole("combobox", {
       name: "调用模型"
     });
+    await user.click(
+      within(generationPage).getByRole("button", { name: "对话解释" })
+    );
     const translateIcon = within(generationPage).getByRole("button", {
       name: "使用图标：语言翻译"
     });
@@ -646,7 +713,9 @@ describe("Annota core flow", () => {
     await user.click(translateIcon);
 
     expect(modelSelect).toHaveValue("deepseek:deepseek-reasoner");
-    expect(translateIcon).toHaveAttribute("aria-pressed", "true");
+    expect(
+      within(generationPage).getByRole("button", { name: "语言翻译" })
+    ).toHaveAttribute("aria-expanded", "false");
     expect(
       explainButton
         .closest(".generation-type-item")
@@ -800,6 +869,69 @@ describe("Annota core flow", () => {
     expect(screen.getByRole("heading", { name: "继续生长你的知识树" })).toBeInTheDocument();
     expect(container.querySelector("#recent-title")).toHaveTextContent("最近浏览");
     expect(container.querySelector(".route-stage")).not.toHaveAttribute("data-motion");
+  });
+
+  it("follows visible Markdown blocks in the child card rail", async () => {
+    const user = userEvent.setup();
+    const viewportData = JSON.parse(JSON.stringify(seedData)) as typeof seedData;
+    viewportData.articles["ecs-component"].source = {
+      parentId: "ecs-root",
+      blockId: "ecs-root-b2",
+      quote: "Component",
+      generationType: "explain"
+    };
+    seedStoredAppData(viewportData);
+    renderApp(false);
+    await openFirstNotebook(user);
+
+    const surface = screen.getByRole("region", { name: "文章阅读区域" });
+    const toolbar = surface.querySelector<HTMLElement>(".inline-formatting-toolbar")!;
+    const rect = (top: number, bottom: number) => ({
+      bottom,
+      height: bottom - top,
+      left: 0,
+      right: 100,
+      top,
+      width: 100,
+      x: 0,
+      y: top,
+      toJSON: () => ({})
+    } as DOMRect);
+    vi.spyOn(surface, "getBoundingClientRect").mockReturnValue(rect(0, 600));
+    vi.spyOn(toolbar, "getBoundingClientRect").mockReturnValue(rect(0, 48));
+
+    await waitFor(() => {
+      expect(surface.querySelectorAll("[data-markdown-block-id]").length).toBeGreaterThan(0);
+    });
+    let visible = new Set(["ecs-root-b2", "ecs-root-b4"]);
+    surface.querySelectorAll<HTMLElement>("[data-markdown-block-id]").forEach((line) => {
+      vi.spyOn(line, "getBoundingClientRect").mockImplementation(() =>
+        visible.has(line.dataset.markdownBlockId ?? "") ? rect(100, 124) : rect(700, 724)
+      );
+    });
+
+    fireEvent.scroll(surface);
+    const childrenPanel = screen.getByRole("complementary", { name: "下一级子文章" });
+    await waitFor(() => {
+      const titles = Array.from(childrenPanel.querySelectorAll(".child-card strong"))
+        .map((title) => title.textContent);
+      expect(titles).toEqual([
+        seedData.articles["ecs-component"].title,
+        seedData.articles["ecs-system"].title,
+        seedData.articles["ecs-entity"].title
+      ]);
+    });
+
+    visible = new Set(["ecs-root-b4"]);
+    fireEvent.scroll(surface);
+    await waitFor(() => {
+      expect(within(childrenPanel).queryByText(seedData.articles["ecs-component"].title))
+        .not.toBeInTheDocument();
+      expect(within(childrenPanel).getByText(seedData.articles["ecs-system"].title))
+        .toBeInTheDocument();
+      expect(within(childrenPanel).getByText(seedData.articles["ecs-entity"].title))
+        .toBeInTheDocument();
+    });
   });
 
   it("adjusts the reading path width with the keyboard", async () => {
@@ -1423,6 +1555,33 @@ describe("Annota core flow", () => {
     expect(within(readingPath).queryByText("为什么物理查询会破坏批处理节奏"))
       .not.toBeInTheDocument();
     expect(document.querySelector(".path-step.is-retained")).toBeNull();
+  });
+
+  it("switches the reader interaction toolbar to icon-only mode", async () => {
+    const user = userEvent.setup();
+    const { container } = renderApp();
+
+    await user.click(screen.getByRole("button", { name: "打开设置" }));
+    const iconOnlySwitch = screen.getByRole("switch", {
+      name: "顶部交互仅显示图标"
+    });
+    expect(iconOnlySwitch).toHaveAttribute("aria-checked", "false");
+
+    await user.click(iconOnlySwitch);
+
+    expect(iconOnlySwitch).toHaveAttribute("aria-checked", "true");
+    expect(window.localStorage.getItem("annota.reader-toolbar.v1")).toContain(
+      '"iconOnly":true'
+    );
+
+    await user.click(screen.getByRole("button", { name: "主页" }));
+    await openFirstNotebook(user);
+    expect(container.querySelector(".generation-actions")).toHaveClass(
+      "is-icon-only"
+    );
+    expect(
+      screen.getByRole("button", { name: "解释选中文字" })
+    ).toBeInTheDocument();
   });
 
   it("autosaves text edited in the seamless document", async () => {

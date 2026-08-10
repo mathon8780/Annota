@@ -3,8 +3,11 @@ import { BookOpenText, CornerDownLeft, Search, X } from "lucide-react";
 import { HomePage } from "./components/HomePage";
 import { ReaderPage } from "./components/ReaderPage";
 import { WindowTitleBar } from "./components/WindowTitleBar";
-import { markdownToPlainText } from "./editor/markdownDocument";
-import { loadMarkdownDocument } from "./editor/markdownRepository";
+import {
+  loadMarkdownSearchText,
+  pruneMarkdownSearchDocuments,
+  subscribeMarkdownSearchDocuments
+} from "./editor/markdownRepository";
 import { useAppStore } from "./store/AppStore";
 import {
   applyContentStyle,
@@ -58,39 +61,67 @@ export default function App() {
     contentStyle,
     customContentStyle
   ).terms;
-
-  const results = useMemo(() => {
-    const normalized = query.trim().toLocaleLowerCase("zh-CN");
-    const values = Object.values(data.articles);
-    if (!normalized) return values.slice(0, 8);
-    return values
-      .filter((article) =>
-        [
+  const articleIds = Object.keys(data.articles);
+  const articleIdSignature = articleIds.join("\0");
+  const searchableArticles = useMemo(
+    () =>
+      Object.values(data.articles).map((article) => ({
+        article,
+        text: [
           article.title,
           article.summary,
-          markdownToPlainText(searchDocuments[article.id] ?? "")
+          searchDocuments[article.id] ?? ""
         ]
           .join(" ")
           .toLocaleLowerCase("zh-CN")
-          .includes(normalized)
-      )
-      .slice(0, 12);
-  }, [data.articles, query, searchDocuments]);
+      })),
+    [data.articles, searchDocuments]
+  );
+
+  const results = useMemo(() => {
+    const normalized = query.trim().toLocaleLowerCase("zh-CN");
+    if (!normalized) {
+      return searchableArticles.slice(0, 8).map(({ article }) => article);
+    }
+    return searchableArticles
+      .filter(({ text }) => text.includes(normalized))
+      .slice(0, 12)
+      .map(({ article }) => article);
+  }, [query, searchableArticles]);
 
   useEffect(() => {
+    pruneMarkdownSearchDocuments(articleIds);
     if (!commandOpen) return;
     let active = true;
+    const includedArticleIds = new Set(articleIds);
+    const unsubscribe = subscribeMarkdownSearchDocuments((documentId, text) => {
+      if (!includedArticleIds.has(documentId)) return;
+      setSearchDocuments((current) =>
+        current[documentId] === text
+          ? current
+          : { ...current, [documentId]: text }
+      );
+    });
     void Promise.all(
-      Object.keys(data.articles).map(async (id) => [id, (await loadMarkdownDocument(id)).content] as const)
+      articleIds.map(async (id) => [id, await loadMarkdownSearchText(id)] as const)
     ).then((entries) => {
-      if (active) setSearchDocuments(Object.fromEntries(entries));
+      if (!active) return;
+      const next = Object.fromEntries(entries);
+      setSearchDocuments((current) => {
+        const currentIds = Object.keys(current);
+        return currentIds.length === entries.length &&
+          currentIds.every((id) => current[id] === next[id])
+          ? current
+          : next;
+      });
     }).catch(() => {
       if (active) setSearchDocuments({});
     });
     return () => {
       active = false;
+      unsubscribe();
     };
-  }, [commandOpen, data.articles]);
+  }, [articleIdSignature, commandOpen]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

@@ -1,6 +1,6 @@
 use rusqlite::{params, Connection, OptionalExtension, Row, Transaction};
 use serde::{Deserialize, Serialize};
-use std::{fs, path::PathBuf, sync::Mutex};
+use std::{collections::HashSet, fs, path::PathBuf, sync::Mutex};
 
 const DATABASE_VERSION: i64 = 1;
 const MAX_ID_LENGTH: usize = 128;
@@ -145,6 +145,16 @@ pub struct UpsertTopologyInteractionRequest {
     pub state_json: String,
     #[serde(default = "default_true")]
     pub enabled: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncMarkdownTopologyRequest {
+    pub collection: UpsertTopologyCollectionRequest,
+    #[serde(default)]
+    pub nodes: Vec<UpsertTopologyNodeRequest>,
+    #[serde(default)]
+    pub relations: Vec<UpsertTopologyRelationRequest>,
 }
 
 fn default_true() -> bool {
@@ -402,6 +412,165 @@ impl TopologyStore {
                 map_collection,
             )
             .map_err(|error| error.to_string())
+    }
+
+    pub fn sync_markdown_topology(
+        &self,
+        request: SyncMarkdownTopologyRequest,
+    ) -> Result<TopologyGraph, String> {
+        validate_id("内容集合标识", &request.collection.id)?;
+        validate_text("内容集合标题", &request.collection.title)?;
+        validate_text("内容集合说明", &request.collection.description)?;
+
+        let node_ids = request
+            .nodes
+            .iter()
+            .map(|node| node.id.as_str())
+            .collect::<HashSet<_>>();
+        for node in &request.nodes {
+            validate_id("节点标识", &node.id)?;
+            validate_id("内容集合标识", &node.collection_id)?;
+            validate_text("节点标题", &node.title)?;
+            validate_text("节点摘要", &node.summary)?;
+            validate_json("节点互动状态", &node.interaction_state_json)?;
+            validate_json("节点外观", &node.appearance_json)?;
+            if node.collection_id != request.collection.id {
+                return Err("批量同步节点必须属于当前内容集合".to_string());
+            }
+            if node.content_mode != "markdown"
+                || node.is_manual
+                || node.content.is_some()
+                || node
+                    .document_id
+                    .as_deref()
+                    .map(str::trim)
+                    .unwrap_or("")
+                    .is_empty()
+            {
+                return Err("批量同步只接受文件关联的 Markdown 节点".to_string());
+            }
+        }
+        for relation in &request.relations {
+            validate_id("关系标识", &relation.id)?;
+            validate_id("内容集合标识", &relation.collection_id)?;
+            validate_id("来源节点标识", &relation.source_node_id)?;
+            validate_id("目标节点标识", &relation.target_node_id)?;
+            validate_json("关系元数据", &relation.metadata_json)?;
+            if relation.collection_id != request.collection.id {
+                return Err("批量同步关系必须属于当前内容集合".to_string());
+            }
+            if relation.source_node_id == relation.target_node_id {
+                return Err("拓扑关系不能指向节点自身".to_string());
+            }
+            if !node_ids.contains(relation.source_node_id.as_str())
+                || !node_ids.contains(relation.target_node_id.as_str())
+            {
+                return Err("批量同步关系必须连接本次同步的 Markdown 节点".to_string());
+            }
+        }
+
+        let collection_id = request.collection.id.clone();
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| error.to_string())?;
+        transaction
+            .execute(
+                r#"INSERT INTO topology_collections (id, title, description)
+                   VALUES (?1, ?2, ?3)
+                   ON CONFLICT(id) DO UPDATE SET
+                     title = excluded.title,
+                     description = excluded.description,
+                     updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"#,
+                params![
+                    &request.collection.id,
+                    &request.collection.title,
+                    &request.collection.description
+                ],
+            )
+            .map_err(|error| error.to_string())?;
+        {
+            let mut statement = transaction
+                .prepare(
+                    r#"INSERT INTO topology_nodes (
+                         id, collection_id, node_type, title, summary, content_mode, content,
+                         document_id, is_root, is_manual, enabled, interactive,
+                         interaction_state_json, appearance_json
+                       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+                       ON CONFLICT(id) DO UPDATE SET
+                         collection_id = excluded.collection_id,
+                         node_type = excluded.node_type,
+                         title = excluded.title,
+                         summary = excluded.summary,
+                         content_mode = excluded.content_mode,
+                         content = excluded.content,
+                         document_id = excluded.document_id,
+                         is_root = excluded.is_root,
+                         is_manual = excluded.is_manual,
+                         enabled = excluded.enabled,
+                         interactive = excluded.interactive,
+                         interaction_state_json = excluded.interaction_state_json,
+                         appearance_json = excluded.appearance_json,
+                         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"#,
+                )
+                .map_err(|error| error.to_string())?;
+            for node in &request.nodes {
+                statement
+                    .execute(params![
+                        &node.id,
+                        &node.collection_id,
+                        &node.node_type,
+                        &node.title,
+                        &node.summary,
+                        &node.content_mode,
+                        &node.content,
+                        &node.document_id,
+                        node.is_root,
+                        node.is_manual,
+                        node.enabled,
+                        node.interactive,
+                        &node.interaction_state_json,
+                        &node.appearance_json,
+                    ])
+                    .map_err(|error| error.to_string())?;
+            }
+        }
+        {
+            let mut statement = transaction
+                .prepare(
+                    r#"INSERT INTO topology_relations (
+                         id, collection_id, source_node_id, target_node_id, relation_type,
+                         label, directed, metadata_json
+                       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                       ON CONFLICT(id) DO UPDATE SET
+                         collection_id = excluded.collection_id,
+                         source_node_id = excluded.source_node_id,
+                         target_node_id = excluded.target_node_id,
+                         relation_type = excluded.relation_type,
+                         label = excluded.label,
+                         directed = excluded.directed,
+                         metadata_json = excluded.metadata_json,
+                         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"#,
+                )
+                .map_err(|error| error.to_string())?;
+            for relation in &request.relations {
+                statement
+                    .execute(params![
+                        &relation.id,
+                        &relation.collection_id,
+                        &relation.source_node_id,
+                        &relation.target_node_id,
+                        &relation.relation_type,
+                        &relation.label,
+                        relation.directed,
+                        &relation.metadata_json,
+                    ])
+                    .map_err(|error| error.to_string())?;
+            }
+        }
+        transaction.commit().map_err(|error| error.to_string())?;
+        drop(connection);
+        self.load_graph(&collection_id)
     }
 
     pub fn delete_collection(&self, collection_id: &str) -> Result<bool, String> {
@@ -813,5 +982,76 @@ mod tests {
             })
             .unwrap_err();
         assert!(error.contains("SQLite"));
+    }
+
+    #[test]
+    fn bulk_syncs_markdown_graph_without_replacing_manual_nodes() {
+        let store = test_store();
+        store
+            .upsert_node(UpsertTopologyNodeRequest {
+                id: "manual-1".into(),
+                collection_id: "collection-1".into(),
+                node_type: "note".into(),
+                title: "个人笔记".into(),
+                summary: String::new(),
+                content_mode: "database".into(),
+                content: Some("手动内容".into()),
+                document_id: None,
+                is_root: true,
+                is_manual: true,
+                enabled: true,
+                interactive: true,
+                interaction_state_json: "{}".into(),
+                appearance_json: "{}".into(),
+            })
+            .unwrap();
+
+        let markdown_node = |id: &str, is_root: bool| UpsertTopologyNodeRequest {
+            id: id.into(),
+            collection_id: "collection-1".into(),
+            node_type: if is_root { "root" } else { "explain" }.into(),
+            title: id.into(),
+            summary: String::new(),
+            content_mode: "markdown".into(),
+            content: None,
+            document_id: Some(id.into()),
+            is_root,
+            is_manual: false,
+            enabled: true,
+            interactive: false,
+            interaction_state_json: "{}".into(),
+            appearance_json: "{}".into(),
+        };
+        let graph = store
+            .sync_markdown_topology(SyncMarkdownTopologyRequest {
+                collection: UpsertTopologyCollectionRequest {
+                    id: "collection-1".into(),
+                    title: "同步后的集合".into(),
+                    description: "说明".into(),
+                },
+                nodes: vec![
+                    markdown_node("root-1", true),
+                    markdown_node("child-1", false),
+                ],
+                relations: vec![UpsertTopologyRelationRequest {
+                    id: "tree:root-1:child-1".into(),
+                    collection_id: "collection-1".into(),
+                    source_node_id: "root-1".into(),
+                    target_node_id: "child-1".into(),
+                    relation_type: "contains".into(),
+                    label: "下一级".into(),
+                    directed: true,
+                    metadata_json: r#"{"source":"markdown-tree"}"#.into(),
+                }],
+            })
+            .unwrap();
+
+        assert_eq!(graph.collection.title, "同步后的集合");
+        assert_eq!(graph.nodes.len(), 3);
+        assert!(graph.nodes.iter().any(|node| node.id == "manual-1"));
+        assert!(graph
+            .relations
+            .iter()
+            .any(|relation| relation.id == "tree:root-1:child-1"));
     }
 }

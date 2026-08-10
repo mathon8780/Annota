@@ -1,8 +1,8 @@
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { defaultHighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import { Compartment } from "@codemirror/state";
-import { EditorView, highlightSpecialChars, keymap } from "@codemirror/view";
+import { Compartment, StateField } from "@codemirror/state";
+import { Decoration, EditorView, highlightSpecialChars, keymap } from "@codemirror/view";
 import { GFM } from "@lezer/markdown";
 import { CodeXml, Eye } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -11,7 +11,11 @@ import type {
   MarkdownFormatType,
   SelectionState
 } from "../types";
-import { markdownSelection } from "../editor/markdownDocument";
+import {
+  markdownRanges,
+  markdownSelectionFromRanges,
+  type MarkdownRange
+} from "../editor/markdownDocument";
 import {
   markdownEditorAppearance,
   sourceModeHeadingExtension
@@ -36,6 +40,7 @@ interface MarkdownEditorProps {
   onPersist: () => void;
   onSelection: (selection: SelectionState | null) => void;
   onSaveState: (label: string) => void;
+  onBlockOrder: (blockIds: readonly string[]) => void;
 }
 
 type EditorMode = "live" | "source";
@@ -46,6 +51,45 @@ const markdownEditorSetup = [
   syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
   keymap.of([...defaultKeymap, ...historyKeymap])
 ];
+
+interface MarkdownBlockSnapshot {
+  ranges: readonly MarkdownRange[];
+  source: string;
+}
+
+function createMarkdownBlockState(articleId: string) {
+  return StateField.define<MarkdownBlockSnapshot>({
+    create(state) {
+      const source = state.doc.toString();
+      return { ranges: markdownRanges(source, articleId), source };
+    },
+    update(value, transaction) {
+      if (!transaction.docChanged) return value;
+      const source = transaction.state.doc.toString();
+      return { ranges: markdownRanges(source, articleId), source };
+    }
+  });
+}
+
+function blockIdentityExtension(blockState: StateField<MarkdownBlockSnapshot>) {
+  return EditorView.decorations.compute([blockState], (state) => {
+    const decorations = [];
+    for (const range of state.field(blockState).ranges) {
+      let line = state.doc.lineAt(Math.min(range.from, state.doc.length));
+      const lastLine = state.doc.lineAt(Math.min(range.to, state.doc.length)).number;
+      while (line.number <= lastLine) {
+        decorations.push(
+          Decoration.line({
+            attributes: { "data-markdown-block-id": range.id }
+          }).range(line.from)
+        );
+        if (line.number === lastLine) break;
+        line = state.doc.line(line.number + 1);
+      }
+    }
+    return Decoration.set(decorations, true);
+  });
+}
 
 function formatWrapper(type: MarkdownFormatType, color?: string) {
   if (type === "bold") return ["**", "**"] as const;
@@ -76,28 +120,48 @@ export function MarkdownEditor({
   saveShortcut,
   onPersist,
   onSelection,
-  onSaveState
+  onSaveState,
+  onBlockOrder
 }: MarkdownEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const persistTimer = useRef<number>();
   const handledFormatCommand = useRef(0);
   const previewCompartment = useRef(new Compartment());
-  const callbacks = useRef({ onPersist, onSelection, onSaveState, saveShortcut });
+  const callbacks = useRef({
+    onPersist,
+    onSelection,
+    onSaveState,
+    onBlockOrder,
+    saveShortcut
+  });
   const [mode, setMode] = useState<EditorMode>("live");
   const [syntaxIds] = useState(loadMarkdownSyntaxIds);
   const [loadError, setLoadError] = useState("");
-  callbacks.current = { onPersist, onSelection, onSaveState, saveShortcut };
+  callbacks.current = {
+    onPersist,
+    onSelection,
+    onSaveState,
+    onBlockOrder,
+    saveShortcut
+  };
 
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
     let disposed = false;
     let persistedDocument = "";
+    const markdownBlockState = createMarkdownBlockState(articleId);
 
     const syncSelection = (view: EditorView) => {
       const { from, to } = view.state.selection.main;
-      const selection = markdownSelection(view.state.doc.toString(), articleId, from, to);
+      const blockSnapshot = view.state.field(markdownBlockState);
+      const selection = markdownSelectionFromRanges(
+        blockSnapshot.source,
+        blockSnapshot.ranges,
+        from,
+        to
+      );
       if (selection) {
         const coordinates = view.coordsAtPos(from);
         if (coordinates) {
@@ -114,7 +178,12 @@ export function MarkdownEditor({
     const persist = async (label: string) => {
       const view = viewRef.current;
       if (!view) return;
-      const source = view.state.doc.toString();
+      const source = view.state.field(markdownBlockState).source;
+      if (source === persistedDocument) {
+        callbacks.current.onSaveState(label);
+        setLoadError("");
+        return;
+      }
       try {
         await saveMarkdownDocument(articleId, source);
         persistedDocument = source;
@@ -148,6 +217,8 @@ export function MarkdownEditor({
               extensions: [GFM]
             }),
             markdownEditorAppearance,
+            markdownBlockState,
+            blockIdentityExtension(markdownBlockState),
             fencedCodeHighlightExtension,
             EditorView.lineWrapping,
             EditorView.contentAttributes.of({
@@ -181,7 +252,11 @@ export function MarkdownEditor({
             }),
             EditorView.updateListener.of((update) => {
               if (update.docChanged) {
-                updateMarkdownSession(articleId, update.state.doc.toString());
+                const blockSnapshot = update.state.field(markdownBlockState);
+                updateMarkdownSession(articleId, blockSnapshot.source);
+                callbacks.current.onBlockOrder(
+                  blockSnapshot.ranges.map((range) => range.id)
+                );
                 schedulePersist();
               }
               if (update.selectionSet || update.docChanged) syncSelection(update.view);
@@ -190,6 +265,9 @@ export function MarkdownEditor({
           ]
         });
         viewRef.current = view;
+        callbacks.current.onBlockOrder(
+          view.state.field(markdownBlockState).ranges.map((range) => range.id)
+        );
         callbacks.current.onSaveState("已载入 Markdown");
       })
       .catch((error) => {
@@ -205,11 +283,12 @@ export function MarkdownEditor({
       const view = viewRef.current;
       viewRef.current = null;
       if (view) {
-        const source = view.state.doc.toString();
+        const source = view.state.field(markdownBlockState).source;
         if (source !== persistedDocument) void saveMarkdownDocument(articleId, source);
         view.destroy();
       }
       callbacks.current.onSelection(null);
+      callbacks.current.onBlockOrder([]);
     };
   }, [articleId]);
 

@@ -8,8 +8,7 @@ import {
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
   type KeyboardEvent as ReactKeyboardEvent,
-  type PointerEvent as ReactPointerEvent,
-  type WheelEvent
+  type PointerEvent as ReactPointerEvent
 } from "react";
 import {
   AlignLeft,
@@ -38,13 +37,20 @@ import {
   ZoomOut
 } from "lucide-react";
 import type { ArticleNode } from "../types";
+import {
+  sortArticleChildren,
+  sourceBlockIdsInDocumentOrder
+} from "../utils/articleNodeOrder";
 import type {
   TopologyGraphRecord,
   TopologyNodeRecord
 } from "../utils/topologyRepository";
 import {
+  createGenerationTypeIndex,
   loadGenerationTypes,
+  resolveArticleGenerationType,
   type GenerationTypeConfig,
+  type GenerationTypeIndex,
   type GenerationTypeIconId
 } from "../utils/generationConfig";
 import {
@@ -122,6 +128,7 @@ interface TopologyDisplayEdge {
   label: string;
   directed: boolean;
   persisted: boolean;
+  hierarchical: boolean;
 }
 
 interface TopologySizePreference {
@@ -143,10 +150,20 @@ const TOPOLOGY_NODE_WIDTH = 214;
 const TOPOLOGY_NODE_HEIGHT = 118;
 const TOPOLOGY_NODE_X_GAP = 276;
 const TOPOLOGY_NODE_Y_GAP = 154;
+const TOPOLOGY_BRANCH_GAP = TOPOLOGY_NODE_Y_GAP - TOPOLOGY_NODE_HEIGHT;
+const TOPOLOGY_ROOT_GAP = 72;
+const TOPOLOGY_SCENE_PADDING_Y = 96;
 const TOPOLOGY_CURRENT_FOCUS_SCALE = 0.9;
 const TOPOLOGY_MIN_SCALE = 0.18;
 const TOPOLOGY_MAX_SCALE = 1.7;
 const TOPOLOGY_FIT_PADDING = 36;
+const EDITABLE_INTERACTION_VARIANTS = new Set([
+  "highlight",
+  "checklist",
+  "note",
+  "source",
+  "flashcard"
+]);
 
 const topologyNodeIcons: Record<GenerationTypeIconId, typeof Network> = {
   root: BookOpenText,
@@ -164,46 +181,80 @@ const topologyNodeIcons: Record<GenerationTypeIconId, typeof Network> = {
   flashcard: GalleryHorizontalEnd
 };
 
-function resolveNodeType(
-  article: ArticleNode,
-  nodeTypes: readonly GenerationTypeConfig[]
-): GenerationTypeConfig {
-  const typeById = new Map(nodeTypes.map((type) => [type.id, type]));
-  const rootType = typeById.get("root") ?? nodeTypes[0];
-  const sourceType = article.source?.generationType
-    ? typeById.get(article.source.generationType)
-    : undefined;
-  const relationType = nodeTypes.find(
-    (type) => type.relationLabel === article.type
-  );
-  const nameType = nodeTypes.find((type) => type.name === article.type);
-  const configuredType =
-    article.parentId === null
-      ? rootType
-      : sourceType ?? relationType ?? nameType;
-  if (configuredType) return configuredType;
+function parseStateJson(value: string | null | undefined) {
+  try {
+    const parsed = JSON.parse(value ?? "{}") as Record<string, unknown>;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
 
-  const appearance = article.appearance;
-  const fallback = typeById.get("explain") ?? rootType ?? nodeTypes[0];
-  if (!appearance || !fallback) return nodeTypes[0];
-  return {
-    ...fallback,
-    id: appearance.typeId,
-    name: article.type,
-    relationLabel: article.type,
-    icon: appearance.icon,
-    cardVariant: appearance.cardVariant,
-    color: appearance.color
-  };
+function interactionStatesByNode(graph: TopologyGraphRecord | null) {
+  const interactionsByNode = new Map<
+    string,
+    TopologyGraphRecord["interactions"]
+  >();
+  (graph?.interactions ?? []).forEach((interaction) => {
+    const values = interactionsByNode.get(interaction.nodeId) ?? [];
+    interactionsByNode.set(interaction.nodeId, [...values, interaction]);
+  });
+  return new Map(
+    Array.from(interactionsByNode, ([nodeId, interactions]) => [
+      nodeId,
+      [...interactions]
+        .sort(
+          (left, right) =>
+            Number(left.interactionType === "topology-card") -
+            Number(right.interactionType === "topology-card")
+        )
+        .reduce<Record<string, unknown>>(
+          (state, interaction) => ({
+            ...state,
+            ...parseStateJson(interaction.stateJson)
+          }),
+          {}
+        )
+    ])
+  );
+}
+
+function stringItems(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function checklistItemsFromText(value: string): string[] {
+  return value
+    .split(/\r?\n|[；;]/)
+    .map((item) => item.replace(/^\s*[-*]\s*/, "").trim())
+    .filter(Boolean);
+}
+
+function topologySummary(
+  node: TopologyDisplayNode,
+  state: Record<string, unknown>
+) {
+  const variant = node.nodeType.cardVariant;
+  if (variant === "checklist") {
+    const items = stringItems(state.items);
+    return items.length ? items.join("；") : node.summary;
+  }
+  if (variant === "flashcard" && typeof state.answer === "string") {
+    return state.answer;
+  }
+  if (typeof state.content === "string") return state.content;
+  return node.summary;
 }
 
 function resolveStoredNodeType(
   node: TopologyNodeRecord,
-  nodeTypes: readonly GenerationTypeConfig[]
+  index: GenerationTypeIndex
 ): GenerationTypeConfig {
-  const configured = nodeTypes.find((type) => type.id === node.nodeType);
+  const configured = index.byId.get(node.nodeType);
   if (configured) return configured;
-  const fallback = nodeTypes.find((type) => type.id === "note") ?? nodeTypes[0];
+  const fallback = index.byId.get("note") ?? index.first;
   if (!fallback) throw new Error("没有可用的拓扑节点类型");
   try {
     const appearance = JSON.parse(node.appearanceJson) as Partial<GenerationTypeConfig>;
@@ -310,64 +361,177 @@ function readStoredTopologyPreference(): TopologySizePreference {
   return topologyPreferenceFromSize(TOPOLOGY_DEFAULT_SIZE);
 }
 
-function buildLayout(
+function articleChildOrder(
+  articles: Readonly<Record<string, ArticleNode>>
+) {
+  const values = new Map<string, ReadonlyMap<string, number>>();
+  Object.values(articles).forEach((parent) => {
+    const orderedChildren = sortArticleChildren(
+        parent,
+        articles,
+        sourceBlockIdsInDocumentOrder(parent, articles)
+      );
+    values.set(
+      parent.id,
+      new Map(orderedChildren.map((article, index) => [article.id, index]))
+    );
+  });
+  return values;
+}
+
+function compareChildIds(
+  parentId: string,
+  left: string,
+  right: string,
+  preferredOrder: ReadonlyMap<string, ReadonlyMap<string, number>>,
+  fallbackOrder: ReadonlyMap<string, number>
+) {
+  const orderedIds = preferredOrder.get(parentId);
+  const leftPreferred = orderedIds?.get(left);
+  const rightPreferred = orderedIds?.get(right);
+  const leftHasPreferredOrder = leftPreferred !== undefined;
+  const rightHasPreferredOrder = rightPreferred !== undefined;
+  if (leftHasPreferredOrder && rightHasPreferredOrder) {
+    return leftPreferred! - rightPreferred!;
+  }
+  if (leftHasPreferredOrder) return -1;
+  if (rightHasPreferredOrder) return 1;
+  return (
+    (fallbackOrder.get(`${parentId}:${left}`) ?? Number.MAX_SAFE_INTEGER) -
+      (fallbackOrder.get(`${parentId}:${right}`) ?? Number.MAX_SAFE_INTEGER) ||
+    left.localeCompare(right)
+  );
+}
+
+export function buildTopologyLayout(
   nodes: Record<string, TopologyDisplayNode>,
   rootIds: readonly string[],
-  edges: readonly TopologyDisplayEdge[]
+  edges: readonly TopologyDisplayEdge[],
+  articles: Readonly<Record<string, ArticleNode>>
 ) {
-  const children = new Map<string, string[]>();
+  const nodeIds = Object.keys(nodes);
+  const nodeIdSet = new Set(nodeIds);
+  const preferredOrder = articleChildOrder(articles);
+  const fallbackOrder = new Map(
+    edges.map((edge, index) => [`${edge.sourceId}:${edge.targetId}`, index])
+  );
+  const candidateChildSets = new Map<string, Set<string>>();
   edges.forEach((edge) => {
-    const values = children.get(edge.sourceId) ?? [];
-    if (!values.includes(edge.targetId)) values.push(edge.targetId);
-    children.set(edge.sourceId, values);
+    if (!edge.hierarchical) return;
+    if (!nodeIdSet.has(edge.sourceId) || !nodeIdSet.has(edge.targetId)) return;
+    const values = candidateChildSets.get(edge.sourceId) ?? new Set<string>();
+    values.add(edge.targetId);
+    candidateChildSets.set(edge.sourceId, values);
   });
+  const candidateChildren = new Map<string, string[]>();
+  candidateChildSets.forEach((values, parentId) => {
+    candidateChildren.set(parentId, Array.from(values).sort((left, right) =>
+      compareChildIds(parentId, left, right, preferredOrder, fallbackOrder)
+    ));
+  });
+
   const depths = new Map<string, number>();
-  const queue = rootIds.filter((id) => nodes[id]).map((id) => ({ id, depth: 0 }));
-  Object.keys(nodes).forEach((id) => {
-    if (!queue.some((item) => item.id === id) && !edges.some((edge) => edge.targetId === id)) {
-      queue.push({ id, depth: 0 });
+  const children = new Map<string, string[]>();
+  const forestRoots: string[] = [];
+  const forcedRoots = new Set(rootIds.filter((id) => nodeIdSet.has(id)));
+  const incoming = new Set(
+    edges
+      .filter((edge) => edge.hierarchical && nodeIdSet.has(edge.sourceId))
+      .map((edge) => edge.targetId)
+  );
+  const initialRoots = [
+    ...rootIds.filter((id) => nodeIdSet.has(id)),
+    ...nodeIds.filter((id) => !incoming.has(id)).sort((left, right) => left.localeCompare(right))
+  ];
+
+  const growTreeFrom = (root: string) => {
+    if (depths.has(root)) return;
+    forestRoots.push(root);
+    depths.set(root, 0);
+    const queue = [root];
+    let queueIndex = 0;
+    while (queueIndex < queue.length) {
+      const parentId = queue[queueIndex++];
+      const parentDepth = depths.get(parentId) ?? 0;
+      (candidateChildren.get(parentId) ?? []).forEach((childId) => {
+        if (childId === parentId || forcedRoots.has(childId) || depths.has(childId)) return;
+        depths.set(childId, parentDepth + 1);
+        const values = children.get(parentId) ?? [];
+        values.push(childId);
+        children.set(parentId, values);
+        queue.push(childId);
+      });
     }
-  });
-  while (queue.length) {
-    const next = queue.shift()!;
-    const previous = depths.get(next.id);
-    if (previous !== undefined && previous <= next.depth) continue;
-    depths.set(next.id, next.depth);
-    (children.get(next.id) ?? []).forEach((id) => {
-      if (nodes[id] && next.depth < Object.keys(nodes).length) {
-        queue.push({ id, depth: next.depth + 1 });
-      }
-    });
-  }
-  Object.keys(nodes).forEach((id) => {
-    if (!depths.has(id)) depths.set(id, 0);
-  });
-  const perDepth = new Map<number, number>();
-  const positions: Position[] = Object.keys(nodes)
-    .sort((left, right) => {
-      const depthDifference = (depths.get(left) ?? 0) - (depths.get(right) ?? 0);
-      if (depthDifference) return depthDifference;
-      const rootDifference = rootIds.indexOf(left) - rootIds.indexOf(right);
-      return rootDifference || left.localeCompare(right);
-    })
-    .map((id) => {
-      const depth = depths.get(id) ?? 0;
-      const index = perDepth.get(depth) ?? 0;
-      perDepth.set(depth, index + 1);
-      return {
-        id,
-        x: 36 + depth * TOPOLOGY_NODE_X_GAP,
-        y: 44 + index * TOPOLOGY_NODE_Y_GAP,
-        depth
-      };
-    });
-  const width = Math.max(
-    520,
-    ...positions.map((position) => position.x + TOPOLOGY_NODE_WIDTH + 36)
+  };
+
+  Array.from(new Set(initialRoots)).forEach(growTreeFrom);
+  nodeIds
+    .filter((id) => !depths.has(id))
+    .sort((left, right) => left.localeCompare(right))
+    .forEach(growTreeFrom);
+
+  const spans = new Map<string, number>();
+  const measureSubtree = (id: string): number => {
+    const childIds = children.get(id) ?? [];
+    if (!childIds.length) {
+      spans.set(id, TOPOLOGY_NODE_HEIGHT);
+      return TOPOLOGY_NODE_HEIGHT;
+    }
+    const childSpan = childIds.reduce(
+      (total, childId, index) =>
+        total + measureSubtree(childId) + (index ? TOPOLOGY_BRANCH_GAP : 0),
+      0
+    );
+    const span = Math.max(TOPOLOGY_NODE_HEIGHT, childSpan);
+    spans.set(id, span);
+    return span;
+  };
+  forestRoots.forEach(measureSubtree);
+  const forestSpan = forestRoots.reduce(
+    (total, id, index) =>
+      total + (spans.get(id) ?? TOPOLOGY_NODE_HEIGHT) + (index ? TOPOLOGY_ROOT_GAP : 0),
+    0
   );
   const height = Math.max(
-    260,
-    ...positions.map((position) => position.y + TOPOLOGY_NODE_HEIGHT + 44)
+    540,
+    forestSpan + TOPOLOGY_SCENE_PADDING_Y * 2
+  );
+  const forestTop = (height - forestSpan) / 2;
+  const positions: Position[] = [];
+  const positionsById = new Map<string, Position>();
+  const placeSubtree = (id: string, top: number) => {
+    const depth = depths.get(id) ?? 0;
+    const childIds = children.get(id) ?? [];
+    let y = top + ((spans.get(id) ?? TOPOLOGY_NODE_HEIGHT) - TOPOLOGY_NODE_HEIGHT) / 2;
+    if (childIds.length) {
+      let childTop = top;
+      childIds.forEach((childId) => {
+        placeSubtree(childId, childTop);
+        childTop += (spans.get(childId) ?? TOPOLOGY_NODE_HEIGHT) + TOPOLOGY_BRANCH_GAP;
+      });
+      const firstChild = positionsById.get(childIds[0]);
+      const lastChild = positionsById.get(childIds.at(-1)!);
+      if (firstChild && lastChild) {
+        y = (firstChild.y + lastChild.y) / 2;
+      }
+    }
+    const position = {
+      id,
+      x: 96 + depth * TOPOLOGY_NODE_X_GAP,
+      y,
+      depth
+    };
+    positions.push(position);
+    positionsById.set(id, position);
+  };
+  let rootTop = forestTop;
+  forestRoots.forEach((id) => {
+    placeSubtree(id, rootTop);
+    rootTop += (spans.get(id) ?? TOPOLOGY_NODE_HEIGHT) + TOPOLOGY_ROOT_GAP;
+  });
+  const width = Math.max(
+    620,
+    ...positions.map((position) => position.x + TOPOLOGY_NODE_WIDTH + 96)
   );
   return { positions, width, height };
 }
@@ -394,6 +558,14 @@ export function TopologyPanel({
   onUpdateInteraction
 }: TopologyPanelProps) {
   const allNodeTypes = useMemo(() => loadGenerationTypes(), []);
+  const nodeTypeIndex = useMemo(
+    () => createGenerationTypeIndex(allNodeTypes),
+    [allNodeTypes]
+  );
+  const interactionStates = useMemo(
+    () => interactionStatesByNode(topologyGraph),
+    [topologyGraph?.interactions]
+  );
   const manualNodeTypes = useMemo(
     () =>
       allNodeTypes.filter(
@@ -403,15 +575,26 @@ export function TopologyPanel({
   );
   const displayNodes = useMemo(() => {
     const values: Record<string, TopologyDisplayNode> = {};
+    const rootIdSet = new Set(rootIds);
     Object.values(articles).forEach((article) => {
-      if (!rootIds.includes(article.rootId) && !rootIds.includes(article.id)) return;
-      values[article.id] = {
+      if (!rootIdSet.has(article.rootId) && !rootIdSet.has(article.id)) return;
+      const displayNode: TopologyDisplayNode = {
         id: article.id,
         title: article.title,
         summary: article.summary,
-        nodeType: resolveNodeType(article, allNodeTypes),
+        nodeType: resolveArticleGenerationType(article, nodeTypeIndex),
         article
       };
+      const state = interactionStates.get(article.id) ?? {};
+      displayNode.summary = topologySummary(displayNode, state);
+      if (
+        displayNode.nodeType.cardVariant === "flashcard" &&
+        typeof state.question === "string" &&
+        state.question.trim()
+      ) {
+        displayNode.title = state.question;
+      }
+      values[article.id] = displayNode;
     });
     topologyGraph?.nodes.forEach((node) => {
       if (node.contentMode !== "database" || !node.enabled) return;
@@ -419,12 +602,18 @@ export function TopologyPanel({
         id: node.id,
         title: node.title,
         summary: node.summary || node.content?.replace(/\s+/g, " ").slice(0, 90) || "",
-        nodeType: resolveStoredNodeType(node, allNodeTypes),
+        nodeType: resolveStoredNodeType(node, nodeTypeIndex),
         manual: node
       };
     });
     return values;
-  }, [allNodeTypes, articles, rootIds, topologyGraph?.nodes]);
+  }, [
+    articles,
+    interactionStates,
+    nodeTypeIndex,
+    rootIds,
+    topologyGraph?.nodes
+  ]);
   const displayEdges = useMemo(() => {
     const values = new Map<string, TopologyDisplayEdge>();
     Object.values(articles).forEach((article) => {
@@ -437,7 +626,8 @@ export function TopologyPanel({
           targetId: childId,
           label: articles[childId]?.type ?? "下一级",
           directed: true,
-          persisted: false
+          persisted: false,
+          hierarchical: true
         });
       });
     });
@@ -451,7 +641,11 @@ export function TopologyPanel({
         targetId: relation.targetNodeId,
         label: relation.label,
         directed: relation.directed,
-        persisted: existing ? existing.persisted : true
+        persisted: existing ? existing.persisted : true,
+        hierarchical:
+          existing?.hierarchical ||
+          relation.relationType === "contains" ||
+          relation.relationType === "manual-child"
       });
     });
     return Array.from(values.values());
@@ -469,9 +663,16 @@ export function TopologyPanel({
     [rootIds, topologyGraph?.nodes]
   );
   const layout = useMemo(
-    () => buildLayout(displayNodes, resolvedRootIds, displayEdges),
-    [displayEdges, displayNodes, resolvedRootIds]
+    () => buildTopologyLayout(displayNodes, resolvedRootIds, displayEdges, articles),
+    [articles, displayEdges, displayNodes, resolvedRootIds]
   );
+  const outgoingEdgeCount = useMemo(() => {
+    const counts = new Map<string, number>();
+    displayEdges.forEach((edge) => {
+      counts.set(edge.sourceId, (counts.get(edge.sourceId) ?? 0) + 1);
+    });
+    return counts;
+  }, [displayEdges]);
   const [scale, setScale] = useState(0.78);
   const [pan, setPan] = useState({ x: 8, y: 12 });
   const [open, setOpen] = useState(false);
@@ -495,14 +696,15 @@ export function TopologyPanel({
   const [relationTargetId, setRelationTargetId] = useState("");
   const [relationLabel, setRelationLabel] = useState("关联");
   const [editorBusy, setEditorBusy] = useState(false);
+  const [interactiveContent, setInteractiveContent] = useState("");
+  const [interactiveItems, setInteractiveItems] = useState<string[]>([]);
+  const [interactiveQuestion, setInteractiveQuestion] = useState("");
+  const [interactiveAnswer, setInteractiveAnswer] = useState("");
   const selectedManualNode = selectedManualId
     ? topologyGraph?.nodes.find((node) => node.id === selectedManualId) ?? null
     : null;
   const selectedInteractiveNode = selectedInteractiveId
     ? displayNodes[selectedInteractiveId] ?? null
-    : null;
-  const selectedInteraction = selectedInteractiveId
-    ? topologyGraph?.interactions.find((item) => item.nodeId === selectedInteractiveId) ?? null
     : null;
   const drag = useRef<{ id: number; startX: number; startY: number; x: number; y: number } | null>(
     null
@@ -517,7 +719,11 @@ export function TopologyPanel({
   } | null>(null);
   const panelRef = useRef<HTMLElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
+  const sceneRef = useRef<HTMLDivElement>(null);
+  const scaleLabelRef = useRef<HTMLSpanElement>(null);
   const pointerInsideRef = useRef(false);
+  const transformRef = useRef({ pan, scale });
+  const wheelCommitTimerRef = useRef<number>();
   const sizeRef = useRef(size);
   const fullScreenRef = useRef(fullScreen);
   const lastViewportSizeRef = useRef(size);
@@ -529,7 +735,32 @@ export function TopologyPanel({
     [layout.positions]
   );
 
+  const applySceneTransform = useCallback(
+    (nextPan: { x: number; y: number }, nextScale: number) => {
+      transformRef.current = { pan: nextPan, scale: nextScale };
+      if (sceneRef.current) {
+        sceneRef.current.style.transform =
+          `translate(${nextPan.x}px, ${nextPan.y}px) scale(${nextScale})`;
+      }
+      if (scaleLabelRef.current) {
+        scaleLabelRef.current.textContent =
+          `${Math.round(nextScale * 100)}% · ${layout.positions.length} 节点`;
+      }
+    },
+    [layout.positions.length]
+  );
+
+  useLayoutEffect(() => {
+    applySceneTransform(pan, scale);
+  }, [applySceneTransform, pan, scale]);
+
+  useEffect(
+    () => () => window.clearTimeout(wheelCommitTimerRef.current),
+    []
+  );
+
   const zoom = (next: number) => {
+    window.clearTimeout(wheelCommitTimerRef.current);
     setFocusMode(null);
     setScale(Math.max(TOPOLOGY_MIN_SCALE, Math.min(TOPOLOGY_MAX_SCALE, next)));
   };
@@ -553,6 +784,7 @@ export function TopologyPanel({
     const position = byId[currentId];
     const viewport = focusViewportSize();
     if (!position || !viewport) return;
+    window.clearTimeout(wheelCommitTimerRef.current);
     const nextScale = TOPOLOGY_CURRENT_FOCUS_SCALE;
     setScale(nextScale);
     setPan({
@@ -565,6 +797,7 @@ export function TopologyPanel({
   const focusOverall = useCallback(() => {
     const viewport = focusViewportSize();
     if (!viewport) return;
+    window.clearTimeout(wheelCommitTimerRef.current);
     const availableWidth = Math.max(1, viewport.width - TOPOLOGY_FIT_PADDING * 2);
     const availableHeight = Math.max(1, viewport.height - TOPOLOGY_FIT_PADDING * 2);
     const nextScale = Math.max(
@@ -618,6 +851,33 @@ export function TopologyPanel({
     window.addEventListener("resize", handleWindowResize);
     return () => window.removeEventListener("resize", handleWindowResize);
   }, []);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const handleWheel = (event: globalThis.WheelEvent) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest(".topology-overlay")) return;
+      event.preventDefault();
+      setFocusMode(null);
+      const current = transformRef.current;
+      const nextScale = Math.max(
+        TOPOLOGY_MIN_SCALE,
+        Math.min(
+          TOPOLOGY_MAX_SCALE,
+          current.scale * Math.exp(-event.deltaY * 0.0012)
+        )
+      );
+      applySceneTransform(current.pan, nextScale);
+      window.clearTimeout(wheelCommitTimerRef.current);
+      wheelCommitTimerRef.current = window.setTimeout(
+        () => setScale(transformRef.current.scale),
+        120
+      );
+    };
+    viewport.addEventListener("wheel", handleWheel, { passive: false });
+    return () => viewport.removeEventListener("wheel", handleWheel);
+  }, [applySceneTransform]);
 
   useLayoutEffect(() => {
     const previousSize = lastViewportSizeRef.current;
@@ -689,13 +949,14 @@ export function TopologyPanel({
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
+    window.clearTimeout(wheelCommitTimerRef.current);
     setFocusMode(null);
     drag.current = {
       id: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
-      x: pan.x,
-      y: pan.y
+      x: transformRef.current.pan.x,
+      y: transformRef.current.pan.y
     };
     event.currentTarget.setPointerCapture?.(event.pointerId);
     event.currentTarget.classList.add("is-dragging");
@@ -703,23 +964,21 @@ export function TopologyPanel({
 
   const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (!drag.current || drag.current.id !== event.pointerId) return;
-    setPan({
+    applySceneTransform({
       x: drag.current.x + event.clientX - drag.current.startX,
       y: drag.current.y + event.clientY - drag.current.startY
-    });
+    }, transformRef.current.scale);
   };
 
   const stopDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (drag.current?.id === event.pointerId) {
+      setPan(transformRef.current.pan);
+    }
     drag.current = null;
     event.currentTarget.classList.remove("is-dragging");
     if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
       event.currentTarget.releasePointerCapture?.(event.pointerId);
     }
-  };
-
-  const handleWheel = (event: WheelEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    zoom(scale * Math.exp(-event.deltaY * 0.0012));
   };
 
   const setAndStoreSize = (nextSize: TopologySize) => {
@@ -766,6 +1025,25 @@ export function TopologyPanel({
     setRelationTargetId("");
   };
 
+  const openInteractiveEditor = (node: TopologyDisplayNode) => {
+    const state = interactionStates.get(node.id) ?? {};
+    const items = stringItems(state.items);
+    setInteractiveContent(
+      typeof state.content === "string" ? state.content : node.summary
+    );
+    setInteractiveItems(
+      items.length ? items : checklistItemsFromText(node.summary)
+    );
+    setInteractiveQuestion(
+      typeof state.question === "string" ? state.question : node.title
+    );
+    setInteractiveAnswer(
+      typeof state.answer === "string" ? state.answer : node.summary
+    );
+    setSelectedInteractiveId(node.id);
+    setSelectedManualId(null);
+  };
+
   const submitComposer = async () => {
     if (!draftTitle.trim() || editorBusy) return;
     setEditorBusy(true);
@@ -782,7 +1060,9 @@ export function TopologyPanel({
           content: draftContent,
           parentId: draftAsRoot ? null : currentId,
           isRoot: draftAsRoot,
-          interactive: nodeType.interactive,
+          interactive:
+            nodeType.interactive ||
+            EDITABLE_INTERACTION_VARIANTS.has(nodeType.cardVariant),
           icon: nodeType.icon,
           cardVariant: nodeType.cardVariant,
           color: nodeType.color
@@ -831,13 +1111,67 @@ export function TopologyPanel({
       return {};
     }
   })();
-  const selectedGraphInteractionState = (() => {
+  const selectedGraphInteractionState = selectedInteractiveId
+    ? interactionStates.get(selectedInteractiveId) ?? {}
+    : {};
+  const selectedManualNodeType = selectedManualNode
+    ? resolveStoredNodeType(selectedManualNode, nodeTypeIndex)
+    : null;
+  const selectedManualVariant = selectedManualNodeType?.cardVariant;
+  const selectedManualIsInteractive = Boolean(
+    selectedManualNodeType?.interactive ||
+      (selectedManualVariant && EDITABLE_INTERACTION_VARIANTS.has(selectedManualVariant))
+  );
+
+  const saveInteractiveCard = async () => {
+    if (!selectedInteractiveNode || editorBusy) return;
+    setEditorBusy(true);
     try {
-      return JSON.parse(selectedInteraction?.stateJson ?? "{}") as Record<string, unknown>;
-    } catch {
-      return {};
+      const variant = selectedInteractiveNode.nodeType.cardVariant;
+      const nextState: Record<string, unknown> = {
+        ...selectedGraphInteractionState
+      };
+      if (variant === "checklist") {
+        nextState.items = interactiveItems.map((item) => item.trim()).filter(Boolean);
+        const checked = new Set(
+          Array.isArray(selectedGraphInteractionState.checked)
+            ? (selectedGraphInteractionState.checked as number[])
+            : []
+        );
+        nextState.checked = [...checked].filter(
+          (index) => index >= 0 && index < (nextState.items as string[]).length
+        );
+      } else if (variant === "flashcard") {
+        nextState.question = interactiveQuestion.trim();
+        nextState.answer = interactiveAnswer.trim();
+      } else {
+        nextState.content = interactiveContent;
+      }
+      await onUpdateInteraction(
+        selectedInteractiveNode.id,
+        "topology-card",
+        nextState
+      );
+    } finally {
+      setEditorBusy(false);
     }
-  })();
+  };
+
+  const toggleInteractiveChecklistItem = (index: number) => {
+    if (!selectedInteractiveNode) return;
+    const checked = new Set(
+      Array.isArray(selectedGraphInteractionState.checked)
+        ? (selectedGraphInteractionState.checked as number[])
+        : []
+    );
+    if (checked.has(index)) checked.delete(index);
+    else checked.add(index);
+    void onUpdateInteraction(selectedInteractiveNode.id, "topology-card", {
+      ...selectedGraphInteractionState,
+      items: interactiveItems,
+      checked: [...checked]
+    });
+  };
 
   const sizeFromPointer = (event: ReactPointerEvent<HTMLDivElement>) => {
     const active = resize.current;
@@ -944,18 +1278,18 @@ export function TopologyPanel({
       <div
         ref={viewportRef}
         className="topology-viewport"
-        onWheel={handleWheel}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={stopDrag}
         onPointerCancel={stopDrag}
       >
         <div
+          ref={sceneRef}
           className="topology-scene"
           style={{
             width: layout.width,
             height: layout.height,
-            transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`
+            transform: `translate(${transformRef.current.pan.x}px, ${transformRef.current.pan.y}px) scale(${transformRef.current.scale})`
           }}
         >
           <svg
@@ -995,13 +1329,16 @@ export function TopologyPanel({
             if (!node) return null;
             const current = node.id === currentId;
             const nodeType = node.nodeType;
+            const nodeIsInteractive =
+              nodeType.interactive ||
+              EDITABLE_INTERACTION_VARIANTS.has(nodeType.cardVariant);
             const NodeIcon = topologyNodeIcons[nodeType.icon] ?? BookOpenText;
             return (
               <button
                 key={node.id}
                 className={`topology-node-card is-${nodeType.cardVariant}${
                   current ? " is-current" : ""
-                }${node.manual ? " is-manual" : ""}${nodeType.interactive ? " is-interactive" : ""}`}
+                }${node.manual ? " is-manual" : ""}${nodeIsInteractive ? " is-interactive" : ""}`}
                 type="button"
                 style={
                   {
@@ -1015,9 +1352,8 @@ export function TopologyPanel({
                   if (node.manual) {
                     openManualEditor(node.manual);
                     setSelectedInteractiveId(null);
-                  } else if (fullScreen && nodeType.interactive) {
-                    setSelectedInteractiveId(node.id);
-                    setSelectedManualId(null);
+                  } else if (fullScreen && nodeIsInteractive) {
+                    openInteractiveEditor(node);
                   } else if (!fullScreen && node.article) {
                     onNavigate(node.article.id);
                   }
@@ -1033,14 +1369,14 @@ export function TopologyPanel({
                   </span>
                   <strong>{nodeType.name}</strong>
                 </span>
-                <h3 className="topology-node-card-title">{node.title}</h3>
+                <span className="topology-node-card-title">{node.title}</span>
                 {fullScreen && (
                   <p className="topology-node-card-summary">{node.summary}</p>
                 )}
                 <footer className="topology-node-card-footer">
                   <span>第 {position.depth + 1} 层</span>
                   <span>
-                    {displayEdges.filter((edge) => edge.sourceId === node.id).length} 条关系
+                    {outgoingEdgeCount.get(node.id) ?? 0} 条关系
                   </span>
                   {node.manual && <span>SQLite</span>}
                   {current && (
@@ -1085,10 +1421,10 @@ export function TopologyPanel({
                 </button>
               </>
             )}
-            <button type="button" onClick={() => zoom(scale - 0.12)} aria-label="缩小拓扑">
+            <button type="button" onClick={() => zoom(transformRef.current.scale - 0.12)} aria-label="缩小拓扑">
               <ZoomOut aria-hidden="true" size={16} />
             </button>
-            <button type="button" onClick={() => zoom(scale + 0.12)} aria-label="放大拓扑">
+            <button type="button" onClick={() => zoom(transformRef.current.scale + 0.12)} aria-label="放大拓扑">
               <ZoomIn aria-hidden="true" size={16} />
             </button>
             <button
@@ -1122,7 +1458,9 @@ export function TopologyPanel({
             </button>
           </div>
           <div className="topology-overlay-copy" aria-live="polite">
-            <span>{Math.round(scale * 100)}% · {layout.positions.length} 节点</span>
+            <span ref={scaleLabelRef}>
+              {Math.round(transformRef.current.scale * 100)}% · {layout.positions.length} 节点
+            </span>
             <span>{fullScreen ? "双击进入文章 · 单击编辑手动节点" : "拖动 · 滚轮缩放"}</span>
             <kbd>{formatShortcut(focusShortcut)}</kbd>
           </div>
@@ -1201,13 +1539,30 @@ export function TopologyPanel({
             <input value={draftTitle} onChange={(event) => setDraftTitle(event.target.value)} />
           </label>
           <label>
-            <span>内容</span>
-            <textarea value={draftContent} onChange={(event) => setDraftContent(event.target.value)} rows={7} />
+            <span>
+              {selectedManualVariant === "highlight"
+                ? "重点内容"
+                : selectedManualVariant === "note"
+                  ? "笔记内容"
+                  : selectedManualVariant === "source"
+                    ? "来源、链接与摘录"
+                    : "内容"}
+            </span>
+            <textarea
+              value={draftContent}
+              onChange={(event) => setDraftContent(event.target.value)}
+              placeholder={
+                selectedManualVariant === "source"
+                  ? "填写来源名称、链接、页码或原文摘录"
+                  : "填写节点内部内容"
+              }
+              rows={7}
+            />
           </label>
-          {selectedManualNode.interactive && (
+          {selectedManualIsInteractive && (
             <div className="topology-node-interaction">
               <strong>节点互动</strong>
-              {selectedManualNode.nodeType === "checklist" ? (
+              {selectedManualVariant === "checklist" ? (
                 draftContent.split(/\r?\n/).filter(Boolean).map((item, index) => {
                   const checked = Array.isArray(selectedInteractionState.checked)
                     ? (selectedInteractionState.checked as number[]).includes(index)
@@ -1231,7 +1586,7 @@ export function TopologyPanel({
                     </label>
                   );
                 })
-              ) : selectedManualNode.nodeType === "flashcard" ? (
+              ) : selectedManualVariant === "flashcard" ? (
                 <button
                   type="button"
                   onClick={() => void updateInteractionState({
@@ -1241,6 +1596,42 @@ export function TopologyPanel({
                 >
                   {selectedInteractionState.revealed ? draftContent || "暂无答案" : "点击显示答案"}
                 </button>
+              ) : selectedManualVariant === "highlight" ? (
+                <label className="topology-interaction-toggle">
+                  <input
+                    type="checkbox"
+                    checked={selectedInteractionState.mastered === true}
+                    onChange={(event) => void updateInteractionState({
+                      ...selectedInteractionState,
+                      mastered: event.target.checked
+                    })}
+                  />
+                  <span>标记为已掌握</span>
+                </label>
+              ) : selectedManualVariant === "note" ? (
+                <label className="topology-interaction-toggle">
+                  <input
+                    type="checkbox"
+                    checked={selectedInteractionState.pinned === true}
+                    onChange={(event) => void updateInteractionState({
+                      ...selectedInteractionState,
+                      pinned: event.target.checked
+                    })}
+                  />
+                  <span>复习时置顶这条笔记</span>
+                </label>
+              ) : selectedManualVariant === "source" ? (
+                <label className="topology-interaction-toggle">
+                  <input
+                    type="checkbox"
+                    checked={selectedInteractionState.verified === true}
+                    onChange={(event) => void updateInteractionState({
+                      ...selectedInteractionState,
+                      verified: event.target.checked
+                    })}
+                  />
+                  <span>已与原文核对</span>
+                </label>
               ) : (
                 <textarea
                   rows={3}
@@ -1295,7 +1686,11 @@ export function TopologyPanel({
             >
               <Trash2 aria-hidden="true" size={15} /> 删除节点
             </button>
-            <button type="button" disabled={editorBusy} onClick={() => void updateSelectedManual()}>
+            <button
+              type="button"
+              disabled={editorBusy}
+              onClick={() => void updateSelectedManual({ interactive: selectedManualIsInteractive })}
+            >
               保存修改
             </button>
           </footer>
@@ -1305,58 +1700,135 @@ export function TopologyPanel({
         <section className="topology-node-editor topology-interactive-editor" aria-label="节点互动">
           <header>
             <div>
-              <span>INTERACTIVE CARD</span>
+              <span>EDITABLE INTERACTIVE CARD</span>
               <strong>{selectedInteractiveNode.title}</strong>
             </div>
             <button type="button" onClick={() => setSelectedInteractiveId(null)} aria-label="关闭互动面板">
               <X aria-hidden="true" size={16} />
             </button>
           </header>
-          <p>{selectedInteractiveNode.summary || "该节点已开启拓扑互动。"}</p>
+          <p>
+            在拓扑中修改的 Card 内容保存到 SQLite，不会覆盖对应的 Markdown 正文。
+          </p>
           {selectedInteractiveNode.nodeType.cardVariant === "checklist" ? (
-            <div className="topology-node-interaction">
-              {selectedInteractiveNode.summary.split(/[；;。\n]/).filter(Boolean).map((item, index) => {
+            <div className="topology-node-interaction topology-checklist-editor">
+              <strong>清单条目</strong>
+              {interactiveItems.map((item, index) => {
                 const checked = Array.isArray(selectedGraphInteractionState.checked)
                   ? (selectedGraphInteractionState.checked as number[]).includes(index)
                   : false;
                 return (
-                  <label key={`${index}-${item}`}>
+                  <div className="topology-checklist-row" key={index}>
                     <input
                       type="checkbox"
                       checked={checked}
-                      onChange={() => {
-                        const values = new Set(
+                      onChange={() => toggleInteractiveChecklistItem(index)}
+                    />
+                    <input
+                      aria-label={`清单条目 ${index + 1}`}
+                      value={item}
+                      onChange={(event) =>
+                        setInteractiveItems((current) =>
+                          current.map((value, itemIndex) =>
+                            itemIndex === index ? event.target.value : value
+                          )
+                        )
+                      }
+                    />
+                    <button
+                      type="button"
+                      aria-label={`删除清单条目 ${index + 1}`}
+                      onClick={() => {
+                        const nextItems = interactiveItems.filter(
+                          (_, itemIndex) => itemIndex !== index
+                        );
+                        const nextChecked = (
                           Array.isArray(selectedGraphInteractionState.checked)
                             ? (selectedGraphInteractionState.checked as number[])
                             : []
-                        );
-                        if (checked) values.delete(index); else values.add(index);
+                        )
+                          .filter((itemIndex) => itemIndex !== index)
+                          .map((itemIndex) =>
+                            itemIndex > index ? itemIndex - 1 : itemIndex
+                          );
+                        setInteractiveItems(nextItems);
                         void onUpdateInteraction(
                           selectedInteractiveNode.id,
-                          "checklist",
-                          { ...selectedGraphInteractionState, checked: [...values] }
+                          "topology-card",
+                          {
+                            ...selectedGraphInteractionState,
+                            items: nextItems,
+                            checked: nextChecked
+                          }
                         );
                       }}
-                    />
-                    <span>{item.trim()}</span>
-                  </label>
+                    >
+                      <Trash2 aria-hidden="true" size={14} />
+                    </button>
+                  </div>
                 );
               })}
+              <button
+                className="topology-add-item"
+                type="button"
+                onClick={() => setInteractiveItems((current) => [...current, "新条目"])}
+              >
+                <Plus aria-hidden="true" size={14} /> 添加条目
+              </button>
             </div>
           ) : selectedInteractiveNode.nodeType.cardVariant === "flashcard" ? (
-            <button
-              className="topology-flashcard-reveal"
-              type="button"
-              onClick={() => void onUpdateInteraction(
-                selectedInteractiveNode.id,
-                "flashcard",
-                { ...selectedGraphInteractionState, revealed: !selectedGraphInteractionState.revealed }
-              )}
-            >
-              {selectedGraphInteractionState.revealed
-                ? selectedInteractiveNode.summary || "暂无答案"
-                : "点击翻开卡片"}
-            </button>
+            <div className="topology-flashcard-editor">
+              <label>
+                <span>卡片问题</span>
+                <input
+                  value={interactiveQuestion}
+                  onChange={(event) => setInteractiveQuestion(event.target.value)}
+                />
+              </label>
+              <label>
+                <span>卡片答案</span>
+                <textarea
+                  rows={5}
+                  value={interactiveAnswer}
+                  onChange={(event) => setInteractiveAnswer(event.target.value)}
+                />
+              </label>
+              <button
+                className="topology-flashcard-reveal"
+                type="button"
+                onClick={() => void onUpdateInteraction(
+                  selectedInteractiveNode.id,
+                  "topology-card",
+                  {
+                    ...selectedGraphInteractionState,
+                    question: interactiveQuestion,
+                    answer: interactiveAnswer,
+                    revealed: !selectedGraphInteractionState.revealed
+                  }
+                )}
+              >
+                {selectedGraphInteractionState.revealed
+                  ? interactiveAnswer || "暂无答案"
+                  : interactiveQuestion || "点击翻开卡片"}
+              </button>
+            </div>
+          ) : EDITABLE_INTERACTION_VARIANTS.has(
+              selectedInteractiveNode.nodeType.cardVariant
+            ) ? (
+            <label>
+              <span>
+                {selectedInteractiveNode.nodeType.cardVariant === "highlight"
+                  ? "重点内容"
+                  : selectedInteractiveNode.nodeType.cardVariant === "note"
+                    ? "笔记内容"
+                    : "来源、链接与摘录"}
+              </span>
+              <textarea
+                rows={8}
+                value={interactiveContent}
+                onChange={(event) => setInteractiveContent(event.target.value)}
+              />
+            </label>
           ) : (
             <label>
               <span>你的回应</span>
@@ -1373,6 +1845,17 @@ export function TopologyPanel({
           )}
           <footer>
             <small>互动状态存入 SQLite，不改写节点对应的 Markdown 正文。</small>
+            {EDITABLE_INTERACTION_VARIANTS.has(
+              selectedInteractiveNode.nodeType.cardVariant
+            ) && (
+              <button
+                type="button"
+                disabled={editorBusy}
+                onClick={() => void saveInteractiveCard()}
+              >
+                保存 Card 内容
+              </button>
+            )}
           </footer>
         </section>
       )}

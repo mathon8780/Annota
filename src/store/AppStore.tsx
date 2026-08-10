@@ -42,7 +42,7 @@ import {
   deleteTopologyNode,
   deleteTopologyRelation,
   loadTopologyGraph,
-  upsertTopologyCollection,
+  syncMarkdownTopology,
   upsertTopologyInteraction,
   upsertTopologyNode,
   upsertTopologyRelation,
@@ -379,13 +379,21 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
   const [topologyGraph, setTopologyGraph] = useState<TopologyGraphRecord | null>(null);
   const [topologyError, setTopologyError] = useState("");
 
+  const durableAppDataJson = useMemo(
+    () =>
+      JSON.stringify({
+        notebooks: data.notebooks,
+        articles: data.articles,
+        jobs: [],
+        currentNotebookId: null,
+        currentArticleId: null
+      }),
+    [data.articles, data.notebooks]
+  );
+
   useEffect(() => {
-    const persistable = { ...data, jobs: [] };
-    window.localStorage.setItem(
-      APP_DATA_STORAGE_KEY,
-      JSON.stringify(persistable)
-    );
-  }, [data]);
+    window.localStorage.setItem(APP_DATA_STORAGE_KEY, durableAppDataJson);
+  }, [durableAppDataJson]);
 
   const openNotebook = useCallback((notebookId: string, articleId?: string) => {
     dispatch({ type: "open-notebook", notebookId, articleId });
@@ -483,9 +491,56 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
     return graph;
   }, []);
 
+  const markdownTopologySync = useMemo(() => {
+    const notebook = data.notebooks.find(
+      (item) => item.id === data.currentNotebookId
+    );
+    if (!notebook) return null;
+    const rootIds = new Set(notebook.rootIds ?? [notebook.rootId]);
+    const articles = Object.values(data.articles).filter(
+      (article) => rootIds.has(article.rootId) || rootIds.has(article.id)
+    );
+    const request = {
+      collection: {
+        id: notebook.id,
+        title: notebook.title,
+        description: notebook.summary
+      },
+      nodes: articles.map((article) => ({
+        id: article.id,
+        collectionId: notebook.id,
+        nodeType:
+          article.appearance?.typeId ?? (article.parentId ? "explain" : "root"),
+        title: article.title,
+        summary: article.summary,
+        contentMode: "markdown" as const,
+        content: null,
+        documentId: article.id,
+        isRoot: article.parentId === null,
+        isManual: false,
+        enabled: true,
+        interactive: false,
+        interactionStateJson: "{}",
+        appearanceJson: JSON.stringify(article.appearance ?? {})
+      })),
+      relations: articles.flatMap((article) =>
+        article.childIds.map((childId) => ({
+          id: `tree:${article.id}:${childId}`,
+          collectionId: notebook.id,
+          sourceNodeId: article.id,
+          targetNodeId: childId,
+          relationType: "contains",
+          label: data.articles[childId]?.type ?? "下一级",
+          directed: true,
+          metadataJson: '{"source":"markdown-tree"}'
+        }))
+      )
+    };
+    return { request, signature: JSON.stringify(request) };
+  }, [data.articles, data.currentNotebookId, data.notebooks]);
+
   useEffect(() => {
-    const notebook = data.notebooks.find((item) => item.id === data.currentNotebookId);
-    if (!notebook) {
+    if (!markdownTopologySync) {
       setTopologyGraph(null);
       setTopologyError("");
       return;
@@ -493,52 +548,7 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
     let cancelled = false;
     void (async () => {
       try {
-        await upsertTopologyCollection({
-          id: notebook.id,
-          title: notebook.title,
-          description: notebook.summary
-        });
-        const rootIds = new Set(notebook.rootIds ?? [notebook.rootId]);
-        const articles = Object.values(data.articles).filter(
-          (article) => rootIds.has(article.rootId) || rootIds.has(article.id)
-        );
-        await Promise.all(
-          articles.map((article) =>
-            upsertTopologyNode({
-              id: article.id,
-              collectionId: notebook.id,
-              nodeType: article.appearance?.typeId ?? (article.parentId ? "explain" : "root"),
-              title: article.title,
-              summary: article.summary,
-              contentMode: "markdown",
-              content: null,
-              documentId: article.id,
-              isRoot: article.parentId === null,
-              isManual: false,
-              enabled: true,
-              interactive: false,
-              interactionStateJson: "{}",
-              appearanceJson: JSON.stringify(article.appearance ?? {})
-            })
-          )
-        );
-        await Promise.all(
-          articles.flatMap((article) =>
-            article.childIds.map((childId) =>
-              upsertTopologyRelation({
-                id: `tree:${article.id}:${childId}`,
-                collectionId: notebook.id,
-                sourceNodeId: article.id,
-                targetNodeId: childId,
-                relationType: "contains",
-                label: data.articles[childId]?.type ?? "下一级",
-                directed: true,
-                metadataJson: JSON.stringify({ source: "markdown-tree" })
-              })
-            )
-          )
-        );
-        const graph = await loadTopologyGraph(notebook.id);
+        const graph = await syncMarkdownTopology(markdownTopologySync.request);
         if (!cancelled) {
           setTopologyGraph(graph);
           setTopologyError("");
@@ -552,7 +562,7 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
     return () => {
       cancelled = true;
     };
-  }, [data.articles, data.currentNotebookId, data.notebooks]);
+  }, [markdownTopologySync?.signature]);
 
   const createManualTopologyNode = useCallback(
     async (draft: {
@@ -818,6 +828,10 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
         parentId,
         blockId: selection.blockId,
         quote: selection.text,
+        start: selection.start,
+        end: selection.end,
+        documentStart: selection.documentStart,
+        documentEnd: selection.documentEnd,
         type: generationType.id,
         typeName: generationType.name,
         model: `${resolvedModel.provider.name} · ${resolvedModel.model}`,
@@ -895,7 +909,11 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
               parentId: parent.id,
               blockId: selection.blockId,
               quote: selection.text,
-              generationType: generationType.id
+              generationType: generationType.id,
+              start: selection.start,
+              end: selection.end,
+              documentStart: selection.documentStart,
+              documentEnd: selection.documentEnd
             }
           };
           await saveMarkdownDocument(articleId, generated.markdown);

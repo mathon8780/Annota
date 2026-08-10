@@ -4,12 +4,12 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
-  type TouchEvent as ReactTouchEvent,
-  type WheelEvent as ReactWheelEvent
+  type TouchEvent as ReactTouchEvent
 } from "react";
 import {
   BookOpenText,
   ChevronDown,
+  ChevronLeft,
   FileInput,
   Import,
   LibraryBig,
@@ -132,6 +132,7 @@ export function HomePage({
   } = useAppStore();
   const [activeHomeView, setActiveHomeView] = useState<"home" | "generation">("home");
   const [activePage, setActivePage] = useState<"overview" | "recent">("overview");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [filter, setFilter] = useState("");
   const [newTitle, setNewTitle] = useState("");
   const [actionMenuOpen, setActionMenuOpen] = useState(false);
@@ -139,6 +140,7 @@ export function HomePage({
   const newDialogRef = useRef<HTMLDialogElement>(null);
   const overviewScrollRef = useRef<HTMLElement>(null);
   const recentScrollRef = useRef<HTMLElement>(null);
+  const pageViewportRef = useRef<HTMLDivElement>(null);
   const touchStartYRef = useRef<number | null>(null);
 
   const notebooks = useMemo(() => {
@@ -235,22 +237,28 @@ export function HomePage({
     recentScrollRef.current?.focus({ preventScroll: true });
   };
 
-  const handlePageWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
-    if (Math.abs(event.deltaY) < 8) return;
-    if (activePage === "overview" && event.deltaY > 0 && overviewIsAtBottom()) {
-      event.preventDefault();
-      showRecent();
-      return;
-    }
-    if (
-      activePage === "recent" &&
-      event.deltaY < 0 &&
-      (recentScrollRef.current?.scrollTop ?? 0) <= 1
-    ) {
-      event.preventDefault();
-      showOverview();
-    }
-  };
+  useEffect(() => {
+    const viewport = pageViewportRef.current;
+    if (!viewport) return;
+    const handlePageWheel = (event: globalThis.WheelEvent) => {
+      if (Math.abs(event.deltaY) < 8) return;
+      if (activePage === "overview" && event.deltaY > 0 && overviewIsAtBottom()) {
+        event.preventDefault();
+        showRecent();
+        return;
+      }
+      if (
+        activePage === "recent" &&
+        event.deltaY < 0 &&
+        (recentScrollRef.current?.scrollTop ?? 0) <= 1
+      ) {
+        event.preventDefault();
+        showOverview();
+      }
+    };
+    viewport.addEventListener("wheel", handlePageWheel, { passive: false });
+    return () => viewport.removeEventListener("wheel", handlePageWheel);
+  }, [activeHomeView, activePage, settingsOpen]);
 
   const handlePageKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (
@@ -295,15 +303,40 @@ export function HomePage({
 
   return (
     <div className="home-app">
-      <main className="home-workspace">
-        <div className="home-sidebar-shell">
-          <aside className="home-sidebar" aria-label={`${terms.home}导航`}>
+      <main
+        className={`home-workspace${sidebarCollapsed ? " is-sidebar-collapsed" : ""}`}
+      >
+        <div
+          className={`home-sidebar-shell${sidebarCollapsed ? " is-collapsed" : ""}`}
+        >
+          <aside
+            className={`home-sidebar${sidebarCollapsed ? " is-collapsed" : ""}`}
+            aria-label={`${terms.home}导航`}
+          >
+            <div className="home-sidebar-head">
+              <button
+                className="home-sidebar-collapse"
+                type="button"
+                aria-label={sidebarCollapsed ? "展开左侧导航" : "收起左侧导航"}
+                title={sidebarCollapsed ? "展开左侧导航" : "收起左侧导航"}
+                onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+              >
+                <span className="home-sidebar-collapse-label">收起导航</span>
+                <span className="home-sidebar-collapse-track" aria-hidden="true">
+                  <span className="home-sidebar-collapse-thumb">
+                    <ChevronLeft size={14} />
+                  </span>
+                </span>
+              </button>
+            </div>
             <nav>
               <button
                 className={`home-nav-item${
                   !settingsOpen && activeHomeView === "home" ? " is-active" : ""
                 }`}
                 type="button"
+                aria-label={terms.home}
+                title={sidebarCollapsed ? terms.home : undefined}
                 aria-current={
                   !settingsOpen && activeHomeView === "home" ? "page" : undefined
                 }
@@ -323,6 +356,8 @@ export function HomePage({
                     : ""
                 }`}
                 type="button"
+                aria-label="拓扑节点"
+                title={sidebarCollapsed ? "拓扑节点" : undefined}
                 aria-current={
                   !settingsOpen && activeHomeView === "generation"
                     ? "page"
@@ -340,7 +375,12 @@ export function HomePage({
             </nav>
 
             <div className="home-sidebar-footer">
-              <button type="button" onClick={() => fileRef.current?.click()}>
+              <button
+                type="button"
+                aria-label="导入材料"
+                title={sidebarCollapsed ? "导入材料" : undefined}
+                onClick={() => fileRef.current?.click()}
+              >
                 <Import aria-hidden="true" size={16} />
                 <span>导入材料</span>
               </button>
@@ -348,6 +388,7 @@ export function HomePage({
                 className={settingsOpen ? "is-active" : undefined}
                 type="button"
                 aria-label="打开设置"
+                title={sidebarCollapsed ? "设置" : undefined}
                 aria-current={settingsOpen ? "page" : undefined}
                 onClick={onOpenSettings}
               >
@@ -407,12 +448,12 @@ export function HomePage({
 
               {activeHomeView === "home" ? (
                 <div
+                  ref={pageViewportRef}
                   className="home-page-viewport"
                   data-active-page={activePage}
                   role="region"
                   aria-label="主页分页内容"
                   tabIndex={0}
-                  onWheel={handlePageWheel}
                   onKeyDown={handlePageKeyDown}
                   onTouchStart={handleTouchStart}
                   onTouchEnd={handleTouchEnd}

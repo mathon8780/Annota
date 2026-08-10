@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   clearBrowserMarkdownDocuments,
   loadMarkdownDocument,
+  loadMarkdownSearchText,
+  subscribeMarkdownSearchDocuments,
   saveMarkdownDocument
 } from "./markdownRepository";
 
@@ -27,5 +29,21 @@ describe("browser Markdown repository fallback", () => {
     await expect(loadMarkdownDocument("../outside", "text")).rejects.toThrow(
       "文档标识无效"
     );
+  });
+
+  it("caches searchable text and publishes only meaningful saved changes", async () => {
+    await loadMarkdownDocument("article-1", "# 初始\n^internal");
+    expect(await loadMarkdownSearchText("article-1")).toBe("初始");
+
+    const updates: Array<[string, string]> = [];
+    const unsubscribe = subscribeMarkdownSearchDocuments((documentId, text) => {
+      updates.push([documentId, text]);
+    });
+    await saveMarkdownDocument("article-1", "# 更新内容\n");
+    await saveMarkdownDocument("article-1", "# **更新内容**\n");
+    unsubscribe();
+
+    expect(updates).toEqual([["article-1", "更新内容"]]);
+    expect(await loadMarkdownSearchText("article-1")).toBe("更新内容");
   });
 });

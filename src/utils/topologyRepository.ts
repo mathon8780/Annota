@@ -69,6 +69,16 @@ export type UpsertTopologyInteraction = Omit<
   "createdAt" | "updatedAt"
 >;
 
+export interface SyncMarkdownTopologyRequest {
+  collection: {
+    id: string;
+    title: string;
+    description: string;
+  };
+  nodes: UpsertTopologyNode[];
+  relations: UpsertTopologyRelation[];
+}
+
 interface BrowserState {
   collections: Record<string, TopologyCollectionRecord>;
   nodes: Record<string, TopologyNodeRecord>;
@@ -107,6 +117,28 @@ function now() {
   return new Date().toISOString();
 }
 
+function browserGraph(
+  state: BrowserState,
+  collectionId: string
+): TopologyGraphRecord {
+  const collection = state.collections[collectionId];
+  if (!collection) throw new Error("内容集合不存在");
+  const nodes = Object.values(state.nodes).filter(
+    (node) => node.collectionId === collectionId
+  );
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  return {
+    collection,
+    nodes,
+    relations: Object.values(state.relations).filter(
+      (relation) => relation.collectionId === collectionId
+    ),
+    interactions: Object.values(state.interactions).filter((item) =>
+      nodeIds.has(item.nodeId)
+    )
+  };
+}
+
 export async function upsertTopologyCollection(request: {
   id: string;
   title: string;
@@ -119,6 +151,51 @@ export async function upsertTopologyCollection(request: {
   state.collections[value.id] = value;
   writeState(state);
   return value;
+}
+
+export async function syncMarkdownTopology(
+  request: SyncMarkdownTopologyRequest
+): Promise<TopologyGraphRecord> {
+  if (isTauri()) return invoke("sync_markdown_topology", { request });
+
+  const state = readState();
+  const timestamp = now();
+  const previousCollection = state.collections[request.collection.id];
+  state.collections[request.collection.id] = {
+    ...request.collection,
+    createdAt: previousCollection?.createdAt ?? timestamp,
+    updatedAt: timestamp
+  };
+  request.nodes.forEach((node) => {
+    if (node.collectionId !== request.collection.id) {
+      throw new Error("拓扑节点必须属于当前内容集合");
+    }
+    if (node.contentMode !== "markdown" || node.isManual) {
+      throw new Error("批量同步只接受 Markdown 节点");
+    }
+    const previous = state.nodes[node.id];
+    state.nodes[node.id] = {
+      ...node,
+      createdAt: previous?.createdAt ?? timestamp,
+      updatedAt: timestamp
+    };
+  });
+  request.relations.forEach((relation) => {
+    if (relation.collectionId !== request.collection.id) {
+      throw new Error("拓扑关系必须属于当前内容集合");
+    }
+    if (relation.sourceNodeId === relation.targetNodeId) {
+      throw new Error("拓扑关系不能连接节点自身");
+    }
+    const previous = state.relations[relation.id];
+    state.relations[relation.id] = {
+      ...relation,
+      createdAt: previous?.createdAt ?? timestamp,
+      updatedAt: timestamp
+    };
+  });
+  writeState(state);
+  return browserGraph(state, request.collection.id);
 }
 
 export async function loadTopologyGraph(collectionId: string): Promise<TopologyGraphRecord> {
