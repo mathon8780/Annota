@@ -244,6 +244,9 @@ const notebooks: Notebook[] = [
     rootId: "ecs-root",
     title: articles["ecs-root"].title,
     summary: articles["ecs-root"].summary,
+    description: articles["ecs-root"].summary,
+    color: "#315fdb",
+    icon: "library",
     updatedAt: now,
     lastOpenedNodeId: "ecs-root",
     accent: "cobalt"
@@ -253,6 +256,9 @@ const notebooks: Notebook[] = [
     rootId: "cpp-polymorphism-root",
     title: articles["cpp-polymorphism-root"].title,
     summary: articles["cpp-polymorphism-root"].summary,
+    description: articles["cpp-polymorphism-root"].summary,
+    color: "#315fdb",
+    icon: "library",
     updatedAt: articles["cpp-polymorphism-root"].updatedAt,
     lastOpenedNodeId: "cpp-polymorphism-root",
     accent: "cobalt"
@@ -262,6 +268,9 @@ const notebooks: Notebook[] = [
     rootId: "cpp-vtable-root",
     title: articles["cpp-vtable-root"].title,
     summary: articles["cpp-vtable-root"].summary,
+    description: articles["cpp-vtable-root"].summary,
+    color: "#b96f13",
+    icon: "library",
     updatedAt: articles["cpp-vtable-root"].updatedAt,
     lastOpenedNodeId: "cpp-vtable-root",
     accent: "amber"
@@ -271,6 +280,9 @@ const notebooks: Notebook[] = [
     rootId: "cpp-virtual-destructor-root",
     title: articles["cpp-virtual-destructor-root"].title,
     summary: articles["cpp-virtual-destructor-root"].summary,
+    description: articles["cpp-virtual-destructor-root"].summary,
+    color: "#277c61",
+    icon: "library",
     updatedAt: articles["cpp-virtual-destructor-root"].updatedAt,
     lastOpenedNodeId: "cpp-virtual-destructor-root",
     accent: "green"
@@ -280,6 +292,9 @@ const notebooks: Notebook[] = [
     rootId: "cpp-template-root",
     title: articles["cpp-template-root"].title,
     summary: articles["cpp-template-root"].summary,
+    description: articles["cpp-template-root"].summary,
+    color: "#315fdb",
+    icon: "library",
     updatedAt: articles["cpp-template-root"].updatedAt,
     lastOpenedNodeId: "cpp-template-root",
     accent: "cobalt"
@@ -289,6 +304,9 @@ const notebooks: Notebook[] = [
     rootId: "attention-root",
     title: articles["attention-root"].title,
     summary: articles["attention-root"].summary,
+    description: articles["attention-root"].summary,
+    color: "#277c61",
+    icon: "library",
     updatedAt: articles["attention-root"].updatedAt,
     lastOpenedNodeId: "attention-root",
     accent: "green"
@@ -298,6 +316,9 @@ const notebooks: Notebook[] = [
     rootId: "llm-root",
     title: articles["llm-root"].title,
     summary: articles["llm-root"].summary,
+    description: articles["llm-root"].summary,
+    color: "#b96f13",
+    icon: "library",
     updatedAt: articles["llm-root"].updatedAt,
     lastOpenedNodeId: "llm-root",
     accent: "amber"
@@ -307,6 +328,9 @@ const notebooks: Notebook[] = [
     rootId: "graph-root",
     title: articles["graph-root"].title,
     summary: articles["graph-root"].summary,
+    description: articles["graph-root"].summary,
+    color: "#315fdb",
+    icon: "library",
     updatedAt: articles["graph-root"].updatedAt,
     lastOpenedNodeId: "graph-root",
     accent: "cobalt"

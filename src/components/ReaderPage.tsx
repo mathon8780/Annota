@@ -20,6 +20,7 @@ import {
   Highlighter,
   Home,
   Languages,
+  Lightbulb,
   ListChecks,
   LoaderCircle,
   MessageSquareText,
@@ -27,8 +28,11 @@ import {
   NotebookPen,
   Quote,
   Save,
+  Sigma,
   Sparkles,
-  Tag
+  Tag,
+  TriangleAlert,
+  Workflow
 } from "lucide-react";
 import { useAppStore } from "../store/AppStore";
 import type {
@@ -88,7 +92,12 @@ const generationActionIcons: Record<GenerationTypeIconId, typeof Sparkles> = {
   checklist: ListChecks,
   note: NotebookPen,
   source: Quote,
-  flashcard: GalleryHorizontalEnd
+  flashcard: GalleryHorizontalEnd,
+  formula: Sigma,
+  diagram: Workflow,
+  pitfall: TriangleAlert,
+  analogy: Lightbulb,
+  task: LoaderCircle
 };
 
 type ViewTransitionDocument = Document & {
@@ -174,6 +183,8 @@ export function ReaderPage({
     topologyError,
     createManualTopologyNode,
     updateManualTopologyNode,
+    updateNodeConfig,
+    regenerateNode,
     removeManualTopologyNode,
     createTopologyRelation,
     removeTopologyRelation,
@@ -413,7 +424,7 @@ export function ReaderPage({
         visible.add(blockId);
       }
     });
-    const orderedVisible = documentBlockIds.filter((blockId) => visible.has(blockId));
+    const orderedVisible = [...visible];
     setVisibleBlockIds((current) =>
       current &&
       current.length === orderedVisible.length &&
@@ -421,7 +432,7 @@ export function ReaderPage({
         ? current
         : orderedVisible
     );
-  }, [documentBlockIds]);
+  }, []);
 
   useEffect(() => {
     const surface = readerSurfaceRef.current;
@@ -441,12 +452,9 @@ export function ReaderPage({
     const visibleLines = new Set<Element>();
 
     const publishVisibleBlocks = () => {
-      const visible = new Set<string>();
-      visibleLines.forEach((line) => {
-        const blockId = observedBlockIds.get(line);
-        if (blockId) visible.add(blockId);
-      });
-      const orderedVisible = documentBlockIds.filter((blockId) => visible.has(blockId));
+      const orderedVisible = [...observedBlockIds]
+        .filter(([line]) => visibleLines.has(line))
+        .map(([, blockId]) => blockId);
       setVisibleBlockIds((current) =>
         current &&
         current.length === orderedVisible.length &&
@@ -873,6 +881,7 @@ export function ReaderPage({
 
               <MarkdownEditor
                 articleId={currentArticle.id}
+                knowledgePointId={currentArticle.rootId}
                 formatCommand={formatCommand}
                 resetVersion={editorResetVersion}
                 saveShortcut={shortcuts["save-article"]}
@@ -898,7 +907,7 @@ export function ReaderPage({
                   onClick={() => navigateTo(currentArticle.rootId)}
                 >
                   <Home aria-hidden="true" size={16} />
-                  回到当前根节点
+                  回到当前知识点
                 </button>
               </footer>
             </article>
@@ -1012,6 +1021,8 @@ export function ReaderPage({
         onCreateRoot={createRootArticle}
         onCreateManualNode={createManualTopologyNode}
         onUpdateManualNode={updateManualTopologyNode}
+        onUpdateNodeConfig={updateNodeConfig}
+        onRegenerateNode={regenerateNode}
         onRemoveManualNode={removeManualTopologyNode}
         onCreateRelation={createTopologyRelation}
         onRemoveRelation={removeTopologyRelation}

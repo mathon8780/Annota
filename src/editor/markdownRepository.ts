@@ -19,6 +19,12 @@ function assertDocumentId(documentId: string) {
   }
 }
 
+function assertKnowledgePointId(knowledgePointId: string) {
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(knowledgePointId)) {
+    throw new Error("知识点标识无效");
+  }
+}
+
 function browserStorageKey(documentId: string) {
   return `${BROWSER_DOCUMENT_PREFIX}${documentId}`;
 }
@@ -41,9 +47,11 @@ function publishSavedDocument(documentId: string, content: string) {
 
 export async function loadMarkdownDocument(
   documentId: string,
-  initialContent = ""
+  initialContent = "",
+  knowledgePointId = documentId
 ): Promise<MarkdownDocumentSnapshot> {
   assertDocumentId(documentId);
+  assertKnowledgePointId(knowledgePointId);
   const sessionContent = documentSessions.get(documentId);
   if (sessionContent !== undefined) {
     return { content: sessionContent, relativePath: `session/${documentId}.md` };
@@ -51,7 +59,8 @@ export async function loadMarkdownDocument(
   if (isTauri()) {
     const snapshot = await invoke<MarkdownDocumentSnapshot>("load_markdown_document", {
       documentId,
-      initialContent
+      initialContent,
+      knowledgePointId
     });
     documentSessions.set(documentId, snapshot.content);
     return snapshot;
@@ -93,21 +102,29 @@ export function pruneMarkdownSearchDocuments(documentIds: readonly string[]) {
 
 export async function saveMarkdownDocument(
   documentId: string,
-  content: string
+  content: string,
+  knowledgePointId = documentId
 ): Promise<MarkdownDocumentSnapshot> {
   assertDocumentId(documentId);
+  assertKnowledgePointId(knowledgePointId);
   documentSessions.set(documentId, content);
   if (isTauri()) {
     const snapshot = await invoke<MarkdownDocumentSnapshot>("save_markdown_document", {
       documentId,
-      content
+      content,
+      knowledgePointId
     });
     publishSavedDocument(documentId, snapshot.content);
     return snapshot;
   }
   window.localStorage.setItem(browserStorageKey(documentId), content);
   publishSavedDocument(documentId, content);
-  return { content, relativePath: `browser/${documentId}.md` };
+  return { content, relativePath: `browser/${knowledgePointId}/${documentId}.md` };
+}
+
+export function clearMarkdownWorkspaceSession() {
+  documentSessions.clear();
+  searchableDocuments.clear();
 }
 
 export function clearBrowserMarkdownDocuments() {
@@ -115,7 +132,6 @@ export function clearBrowserMarkdownDocuments() {
   Object.keys(window.localStorage)
     .filter((key) => key.startsWith(BROWSER_DOCUMENT_PREFIX))
     .forEach((key) => window.localStorage.removeItem(key));
-  documentSessions.clear();
-  searchableDocuments.clear();
+  clearMarkdownWorkspaceSession();
   searchDocumentListeners.clear();
 }

@@ -126,10 +126,6 @@ export function loadFontPreferences(): FontPreferences {
   }
 }
 
-export function systemFontPreference(fontFamily: string) {
-  return `${SYSTEM_FONT_PREFIX}${fontFamily}`;
-}
-
 export function systemFontName(preference: string) {
   return preference.startsWith(SYSTEM_FONT_PREFIX)
     ? preference.slice(SYSTEM_FONT_PREFIX.length)

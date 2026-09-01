@@ -1,4 +1,5 @@
-import type { ArticleNode } from "../types";
+import { invoke, isTauri } from "@tauri-apps/api/core";
+import type { ArticleNode, NodeFamily } from "../types";
 
 export type ContextScope =
   | "containingParagraph"
@@ -21,14 +22,35 @@ export type GenerationTypeIconId =
   | "checklist"
   | "note"
   | "source"
-  | "flashcard";
+  | "flashcard"
+  | "formula"
+  | "diagram"
+  | "pitfall"
+  | "analogy"
+  | "task";
 
 export type TopologyCardVariant = GenerationTypeIconId;
 export type NodeExecutionMode = "ai" | "manual" | "system";
 
+export interface NodeModelParameters {
+  temperature: number;
+  topP: number;
+  maxTokens: number;
+}
+
+export type NodeDisplayField =
+  | "type"
+  | "title"
+  | "summary"
+  | "source"
+  | "model"
+  | "content";
+
 export interface GenerationTypeConfig {
   id: string;
   name: string;
+  description: string;
+  family: NodeFamily;
   icon: GenerationTypeIconId;
   cardVariant: TopologyCardVariant;
   executionMode: NodeExecutionMode;
@@ -37,10 +59,12 @@ export interface GenerationTypeConfig {
   isBuiltIn: boolean;
   enabled: boolean;
   modelBindingId: string;
+  modelParameters: NodeModelParameters;
   relationLabel: string;
   systemPrompt: string;
   userPrompt: string;
   contextScope: ContextScope;
+  displayFields: NodeDisplayField[];
 }
 
 export interface GenerationTypeIndex {
@@ -53,6 +77,32 @@ export interface GenerationTypeIndex {
 }
 
 export const GENERATION_TYPES_STORAGE_KEY = "annota.generation-types.v1";
+export const GENERATION_TYPES_HYDRATED_EVENT = "annota:generation-types-hydrated";
+
+export const TYPE_FAMILIES: Readonly<Record<string, NodeFamily>> = {
+  root: "笔记",
+  explain: "笔记",
+  translate: "笔记",
+  summary: "记录",
+  highlight: "记录",
+  socratic: "交互",
+  terms: "记录",
+  compare: "记录",
+  code: "笔记",
+  checklist: "交互",
+  note: "记录",
+  source: "记录",
+  flashcard: "交互",
+  formula: "记录",
+  diagram: "记录",
+  pitfall: "记录",
+  analogy: "记录",
+  task: "交互"
+};
+
+export function typeFamily(id: string): NodeFamily {
+  return TYPE_FAMILIES[id] ?? "记录";
+}
 
 export function createGenerationTypeIndex(
   nodeTypes: readonly GenerationTypeConfig[]
@@ -104,28 +154,45 @@ export function resolveArticleGenerationType(
 function nodeType(
   config: Omit<
     GenerationTypeConfig,
-    "modelBindingId" | "contextScope" | "interactive"
+    | "description"
+    | "family"
+    | "modelBindingId"
+    | "modelParameters"
+    | "contextScope"
+    | "interactive"
+    | "displayFields"
   > &
-    Pick<Partial<GenerationTypeConfig>, "interactive">
+    Pick<
+      Partial<GenerationTypeConfig>,
+      "description" | "family" | "interactive" | "displayFields"
+    >
 ): GenerationTypeConfig {
   return {
     ...config,
+    description: config.description ?? `${config.name}节点的行为与展示配置。`,
+    family: config.family ?? typeFamily(config.id),
     interactive: config.interactive ?? false,
     modelBindingId: "global-default",
-    contextScope: "containingParagraph"
+    modelParameters: {
+      temperature: 0.3,
+      topP: 1,
+      maxTokens: 2048
+    },
+    contextScope: "containingParagraph",
+    displayFields: config.displayFields ?? ["type", "title", "summary", "content"]
   };
 }
 
 export const rootDefaults = nodeType({
   id: "root",
-  name: "根节点",
+  name: "知识点",
   icon: "root",
   cardVariant: "root",
   executionMode: "system",
   color: "#475569",
   isBuiltIn: true,
   enabled: false,
-  relationLabel: "根节点",
+  relationLabel: "主文章",
   systemPrompt: "",
   userPrompt: ""
 });
@@ -315,6 +382,71 @@ export const initialGenerationTypes: GenerationTypeConfig[] = [
       "把选区转换为一张适合主动回忆的复习闪卡。问题必须具体，答案应简短但完整。使用 {{output.language}}。",
     userPrompt:
       "根据 <selection>{{selection.text}}</selection> 生成一个问题和答案，并参考 {{block.text}}。"
+  }),
+  nodeType({
+    id: "formula",
+    name: "公式",
+    icon: "formula",
+    cardVariant: "formula",
+    executionMode: "manual",
+    color: "#0284c7",
+    isBuiltIn: true,
+    enabled: false,
+    relationLabel: "公式",
+    systemPrompt: "",
+    userPrompt: ""
+  }),
+  nodeType({
+    id: "diagram",
+    name: "架构图",
+    icon: "diagram",
+    cardVariant: "diagram",
+    executionMode: "manual",
+    color: "#059669",
+    isBuiltIn: true,
+    enabled: false,
+    relationLabel: "架构图",
+    systemPrompt: "",
+    userPrompt: ""
+  }),
+  nodeType({
+    id: "pitfall",
+    name: "避坑",
+    icon: "pitfall",
+    cardVariant: "pitfall",
+    executionMode: "manual",
+    color: "#e11d48",
+    isBuiltIn: true,
+    enabled: false,
+    relationLabel: "避坑",
+    systemPrompt: "",
+    userPrompt: ""
+  }),
+  nodeType({
+    id: "analogy",
+    name: "类比",
+    icon: "analogy",
+    cardVariant: "analogy",
+    executionMode: "manual",
+    color: "#b45309",
+    isBuiltIn: true,
+    enabled: false,
+    relationLabel: "类比",
+    systemPrompt: "",
+    userPrompt: ""
+  }),
+  nodeType({
+    id: "task",
+    name: "任务",
+    icon: "task",
+    cardVariant: "task",
+    executionMode: "manual",
+    color: "#64748b",
+    isBuiltIn: true,
+    enabled: false,
+    relationLabel: "任务",
+    systemPrompt: "",
+    userPrompt: ""
   })
 ];
 
@@ -339,7 +471,12 @@ const iconIds: GenerationTypeIconId[] = [
   "checklist",
   "note",
   "source",
-  "flashcard"
+  "flashcard",
+  "formula",
+  "diagram",
+  "pitfall",
+  "analogy",
+  "task"
 ];
 const executionModes: NodeExecutionMode[] = ["ai", "manual", "system"];
 
@@ -356,7 +493,11 @@ export function isTopologyCardVariant(
 }
 
 export function cloneGenerationType(type: GenerationTypeConfig) {
-  return { ...type };
+  return {
+    ...type,
+    modelParameters: { ...type.modelParameters },
+    displayFields: [...type.displayFields]
+  };
 }
 
 function inferredVariant(value: Partial<GenerationTypeConfig>, fallback: GenerationTypeConfig) {
@@ -399,6 +540,14 @@ function normalizeGenerationType(
       value.id === "root" && value.name === "主文章"
         ? rootDefaults.name
         : value.name,
+    description:
+      typeof value.description === "string"
+        ? value.description
+        : fallback.description,
+    family:
+      value.family === "笔记" || value.family === "记录" || value.family === "交互"
+        ? value.family
+        : typeFamily(value.id),
     icon: iconIds.includes(value.icon as GenerationTypeIconId)
       ? (value.icon as GenerationTypeIconId)
       : fallback.icon,
@@ -420,6 +569,20 @@ function normalizeGenerationType(
       executionMode === "ai" && typeof value.modelBindingId === "string"
         ? value.modelBindingId
         : "global-default",
+    modelParameters: {
+      temperature:
+        typeof value.modelParameters?.temperature === "number"
+          ? Math.min(2, Math.max(0, value.modelParameters.temperature))
+          : fallback.modelParameters.temperature,
+      topP:
+        typeof value.modelParameters?.topP === "number"
+          ? Math.min(1, Math.max(0, value.modelParameters.topP))
+          : fallback.modelParameters.topP,
+      maxTokens:
+        typeof value.modelParameters?.maxTokens === "number"
+          ? Math.min(32768, Math.max(128, Math.round(value.modelParameters.maxTokens)))
+          : fallback.modelParameters.maxTokens
+    },
     relationLabel:
       typeof value.relationLabel === "string"
         ? value.relationLabel
@@ -430,7 +593,15 @@ function normalizeGenerationType(
       executionMode === "ai" &&
       contextScopes.includes(value.contextScope as ContextScope)
       ? (value.contextScope as ContextScope)
-      : "containingParagraph"
+      : "containingParagraph",
+    displayFields: Array.isArray(value.displayFields)
+      ? value.displayFields.filter(
+          (field): field is NodeDisplayField =>
+            ["type", "title", "summary", "source", "model", "content"].includes(
+              field as NodeDisplayField
+            )
+        )
+      : [...fallback.displayFields]
   };
 }
 
@@ -477,6 +648,33 @@ export function saveGenerationTypes(types: GenerationTypeConfig[]) {
   } catch {
     // Keep editing available if storage is unavailable.
   }
+  if (isTauri()) {
+    void invoke("replace_node_type_definitions", { definitions: types }).catch(
+      () => undefined
+    );
+  }
+}
+
+export async function hydrateGenerationTypesFromDatabase() {
+  if (!isTauri()) return loadGenerationTypes();
+  const definitions = await invoke<unknown[]>("load_node_type_definitions");
+  if (!definitions.length) {
+    const initial = loadGenerationTypes();
+    await invoke("replace_node_type_definitions", { definitions: initial });
+    return initial;
+  }
+  window.localStorage.setItem(
+    GENERATION_TYPES_STORAGE_KEY,
+    JSON.stringify(definitions)
+  );
+  const hydrated = loadGenerationTypes();
+  window.dispatchEvent(new CustomEvent(GENERATION_TYPES_HYDRATED_EVENT));
+  return hydrated;
+}
+
+export function subscribeGenerationTypeHydration(listener: () => void) {
+  window.addEventListener(GENERATION_TYPES_HYDRATED_EVENT, listener);
+  return () => window.removeEventListener(GENERATION_TYPES_HYDRATED_EVENT, listener);
 }
 
 export function renderPromptTemplate(
@@ -490,4 +688,115 @@ export function renderPromptTemplate(
         ? values[variable]
         : original
   );
+}
+
+/** 节点级配置:未配置(undefined/null)的字段继承类型级配置。 */
+export interface NodeLevelConfig {
+  modelBindingId?: string | null;
+  modelParameters?: Partial<NodeModelParameters> | null;
+  systemPrompt?: string | null;
+  userPrompt?: string | null;
+  displayFields?: NodeDisplayField[] | null;
+}
+
+const NODE_DISPLAY_FIELDS: readonly NodeDisplayField[] = [
+  "type",
+  "title",
+  "summary",
+  "source",
+  "model",
+  "content"
+];
+
+/** 兼容旧载荷/任意 JSON 的节点级配置归一化;非法结构丢弃对应字段。 */
+export function normalizeNodeLevelConfig(
+  value: unknown
+): NodeLevelConfig | null {
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const normalized: NodeLevelConfig = {};
+  if (typeof raw.modelBindingId === "string") {
+    normalized.modelBindingId = raw.modelBindingId;
+  }
+  if (raw.modelParameters && typeof raw.modelParameters === "object") {
+    const parameters = raw.modelParameters as Record<string, unknown>;
+    const modelParameters: Partial<NodeModelParameters> = {};
+    if (typeof parameters.temperature === "number") {
+      modelParameters.temperature = Math.min(2, Math.max(0, parameters.temperature));
+    }
+    if (typeof parameters.topP === "number") {
+      modelParameters.topP = Math.min(1, Math.max(0, parameters.topP));
+    }
+    if (typeof parameters.maxTokens === "number") {
+      modelParameters.maxTokens = Math.min(32768, Math.max(128, Math.round(parameters.maxTokens)));
+    }
+    if (Object.keys(modelParameters).length > 0) {
+      normalized.modelParameters = modelParameters;
+    }
+  }
+  if (typeof raw.systemPrompt === "string") {
+    normalized.systemPrompt = raw.systemPrompt;
+  }
+  if (typeof raw.userPrompt === "string") {
+    normalized.userPrompt = raw.userPrompt;
+  }
+  if (Array.isArray(raw.displayFields)) {
+    const displayFields = raw.displayFields.filter(
+      (field): field is NodeDisplayField =>
+        typeof field === "string" &&
+        NODE_DISPLAY_FIELDS.includes(field as NodeDisplayField)
+    );
+    if (displayFields.length > 0) {
+      normalized.displayFields = Array.from(new Set(displayFields));
+    }
+  }
+  return Object.keys(normalized).length > 0 ? normalized : null;
+}
+
+/** 节点级配置覆盖类型级配置:未配置字段继承类型级,返回合并后的完整配置。 */
+export function mergeNodeLevelConfig(
+  nodeConfig: NodeLevelConfig | null | undefined,
+  typeConfig: GenerationTypeConfig
+): GenerationTypeConfig {
+  if (!nodeConfig) return typeConfig;
+  return {
+    ...typeConfig,
+    modelBindingId:
+      typeof nodeConfig.modelBindingId === "string"
+        ? nodeConfig.modelBindingId
+        : typeConfig.modelBindingId,
+    modelParameters: {
+      temperature:
+        typeof nodeConfig.modelParameters?.temperature === "number"
+          ? nodeConfig.modelParameters.temperature
+          : typeConfig.modelParameters.temperature,
+      topP:
+        typeof nodeConfig.modelParameters?.topP === "number"
+          ? nodeConfig.modelParameters.topP
+          : typeConfig.modelParameters.topP,
+      maxTokens:
+        typeof nodeConfig.modelParameters?.maxTokens === "number"
+          ? nodeConfig.modelParameters.maxTokens
+          : typeConfig.modelParameters.maxTokens
+    },
+    systemPrompt:
+      typeof nodeConfig.systemPrompt === "string"
+        ? nodeConfig.systemPrompt
+        : typeConfig.systemPrompt,
+    userPrompt:
+      typeof nodeConfig.userPrompt === "string"
+        ? nodeConfig.userPrompt
+        : typeConfig.userPrompt,
+    displayFields:
+      Array.isArray(nodeConfig.displayFields) && nodeConfig.displayFields.length > 0
+        ? nodeConfig.displayFields
+        : typeConfig.displayFields
+  };
 }

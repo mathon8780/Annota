@@ -33,6 +33,8 @@ import type { ShortcutBinding } from "../utils/shortcuts";
 
 interface MarkdownEditorProps {
   articleId: string;
+  /** 所属知识点的根文章标识;决定 Markdown 文件落盘的文件夹。 */
+  knowledgePointId?: string;
   contentZoom: number;
   formatCommand: InlineFormatCommand | null;
   resetVersion: number;
@@ -114,6 +116,7 @@ function formatWrapper(type: MarkdownFormatType, color?: string) {
 
 export function MarkdownEditor({
   articleId,
+  knowledgePointId,
   contentZoom,
   formatCommand,
   resetVersion,
@@ -185,7 +188,7 @@ export function MarkdownEditor({
         return;
       }
       try {
-        await saveMarkdownDocument(articleId, source);
+        await saveMarkdownDocument(articleId, source, knowledgePointId);
         persistedDocument = source;
         callbacks.current.onPersist();
         callbacks.current.onSaveState(label);
@@ -203,7 +206,7 @@ export function MarkdownEditor({
       persistTimer.current = window.setTimeout(() => void persist("已保存至 Markdown"), 450);
     };
 
-    void loadMarkdownDocument(articleId)
+    void loadMarkdownDocument(articleId, "", knowledgePointId)
       .then((snapshot) => {
         if (disposed) return;
         persistedDocument = snapshot.content;
@@ -284,13 +287,15 @@ export function MarkdownEditor({
       viewRef.current = null;
       if (view) {
         const source = view.state.field(markdownBlockState).source;
-        if (source !== persistedDocument) void saveMarkdownDocument(articleId, source);
+        if (source !== persistedDocument) {
+          void saveMarkdownDocument(articleId, source, knowledgePointId);
+        }
         view.destroy();
       }
       callbacks.current.onSelection(null);
       callbacks.current.onBlockOrder([]);
     };
-  }, [articleId]);
+  }, [articleId, knowledgePointId]);
 
   useEffect(() => {
     const view = viewRef.current;

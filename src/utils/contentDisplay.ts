@@ -42,7 +42,7 @@ export const contentStyles: readonly ContentStyleDefinition[] = [
       home: "主页",
       graph: "知识图谱",
       recent: "最近浏览",
-      newNote: "新建文章",
+      newNote: "新建集合",
       subNotes: "子文章",
       highlightCreate: "划词生成"
     }
@@ -112,7 +112,7 @@ export const contentTermLabels: ReadonlyArray<{
   { key: "home", label: "主页" },
   { key: "graph", label: "知识图谱" },
   { key: "recent", label: "最近浏览" },
-  { key: "newNote", label: "新建文章" },
+  { key: "newNote", label: "新建集合" },
   { key: "subNotes", label: "子文章" },
   { key: "highlightCreate", label: "划词生成" }
 ];

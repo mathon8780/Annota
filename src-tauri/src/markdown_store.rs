@@ -1,16 +1,19 @@
 use serde::Serialize;
 use std::{
-    fs::{self, OpenOptions},
-    io::{self, Write},
+    fs,
+    io,
     path::{Path, PathBuf},
     sync::Mutex,
 };
+use uuid::Uuid;
+
+use crate::transaction_journal::TransactionJournal;
 
 const MAX_DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
-const CONTENT_RESET_MARKER: &str = ".content-reset.single-markdown-v1";
 
 pub struct MarkdownStore {
     root: PathBuf,
+    journal: TransactionJournal,
     write_lock: Mutex<()>,
 }
 
@@ -22,9 +25,10 @@ pub struct MarkdownDocument {
 }
 
 impl MarkdownStore {
-    pub fn new(app_data_dir: PathBuf) -> Self {
+    pub fn new(workspace_root: PathBuf, database_path: PathBuf) -> Self {
         Self {
-            root: app_data_dir.join("vault").join("documents"),
+            journal: TransactionJournal::new(workspace_root.clone(), database_path),
+            root: workspace_root,
             write_lock: Mutex::new(()),
         }
     }
@@ -41,11 +45,6 @@ impl MarkdownStore {
         Ok(())
     }
 
-    fn document_path(&self, document_id: &str) -> Result<PathBuf, String> {
-        Self::validate_id(document_id)?;
-        Ok(self.root.join(format!("{document_id}.md")))
-    }
-
     fn validate_content(content: &str) -> Result<(), String> {
         if content.len() > MAX_DOCUMENT_BYTES {
             return Err("Markdown 文档超过 16 MiB 的首期限制".to_string());
@@ -53,71 +52,28 @@ impl MarkdownStore {
         Ok(())
     }
 
-    fn relative_path(document_id: &str) -> String {
-        format!("vault/documents/{document_id}.md")
+    /// 已登记文档始终复用原路径；新文档进入所属知识点的独立目录，
+    /// Markdown 文件名本身只使用随机字符串。
+    fn resolve_relative_path(
+        &self,
+        document_id: &str,
+        knowledge_point_id: Option<&str>,
+    ) -> Result<String, String> {
+        Self::validate_id(document_id)?;
+        if let Some(registered) = self.journal.resolve_document_path(document_id)? {
+            return Ok(registered);
+        }
+        let knowledge_point_id = knowledge_point_id
+            .ok_or_else(|| "创建 Markdown 文档时缺少知识点标识".to_string())?;
+        Self::validate_id(knowledge_point_id)?;
+        let random = Uuid::new_v4().to_string().replace('-', "");
+        Ok(format!("notes/{knowledge_point_id}/{random}.md"))
     }
 
-    pub fn apply_content_reset(&self) -> Result<(), String> {
-        let _guard = self
-            .write_lock
-            .lock()
-            .map_err(|_| "Markdown 仓库写入锁已损坏".to_string())?;
-        let app_data_dir = self
-            .root
-            .parent()
-            .and_then(Path::parent)
-            .ok_or_else(|| "Markdown 仓库目录无效".to_string())?;
-        let marker = app_data_dir.join(CONTENT_RESET_MARKER);
-        if marker.exists() {
-            return Ok(());
-        }
-        if self.root.exists() {
-            fs::remove_dir_all(&self.root)
-                .map_err(|error| format!("无法清空旧 Markdown 文章：{error}"))?;
-        }
-        fs::create_dir_all(app_data_dir)
-            .map_err(|error| format!("无法创建应用数据目录：{error}"))?;
-        fs::write(&marker, b"single-markdown-v1\n")
-            .map_err(|error| format!("无法记录文章清空迁移：{error}"))?;
-        Ok(())
-    }
-
-    fn recover_if_needed(path: &Path) -> io::Result<()> {
+    fn recover_legacy_backup_if_needed(path: &Path) -> io::Result<()> {
         let backup = path.with_extension("md.bak");
         if !path.exists() && backup.exists() {
             fs::rename(backup, path)?;
-        }
-        Ok(())
-    }
-
-    fn durable_write(path: &Path, content: &str) -> io::Result<()> {
-        let temporary = path.with_extension("md.tmp");
-        let backup = path.with_extension("md.bak");
-        if temporary.exists() {
-            fs::remove_file(&temporary)?;
-        }
-        let mut file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&temporary)?;
-        file.write_all(content.as_bytes())?;
-        file.sync_all()?;
-
-        if path.exists() {
-            if backup.exists() {
-                fs::remove_file(&backup)?;
-            }
-            fs::rename(path, &backup)?;
-        }
-        if let Err(error) = fs::rename(&temporary, path) {
-            if backup.exists() && !path.exists() {
-                let _ = fs::rename(&backup, path);
-            }
-            let _ = fs::remove_file(&temporary);
-            return Err(error);
-        }
-        if backup.exists() {
-            fs::remove_file(backup)?;
         }
         Ok(())
     }
@@ -126,46 +82,62 @@ impl MarkdownStore {
         &self,
         document_id: &str,
         initial_content: &str,
+        knowledge_point_id: Option<&str>,
     ) -> Result<MarkdownDocument, String> {
         Self::validate_content(initial_content)?;
         let _guard = self
             .write_lock
             .lock()
             .map_err(|_| "Markdown 仓库写入锁已损坏".to_string())?;
-        let path = self.document_path(document_id)?;
-        fs::create_dir_all(&self.root)
-            .map_err(|error| format!("无法创建 Markdown 仓库：{error}"))?;
-        Self::recover_if_needed(&path)
+        let relative_path = self.resolve_relative_path(document_id, knowledge_point_id)?;
+        let path = self.root.join(&relative_path);
+        let parent = path
+            .parent()
+            .ok_or_else(|| "Markdown 文档路径无效".to_string())?;
+        fs::create_dir_all(parent).map_err(|error| format!("无法创建 Markdown 仓库：{error}"))?;
+        Self::recover_legacy_backup_if_needed(&path)
             .map_err(|error| format!("无法恢复 Markdown 文档：{error}"))?;
         if !path.exists() {
-            Self::durable_write(&path, initial_content)
+            self.journal
+                .write_document(document_id, &relative_path, initial_content)
                 .map_err(|error| format!("无法创建 Markdown 文档：{error}"))?;
         }
         let content = fs::read_to_string(&path)
             .map_err(|error| format!("无法读取 Markdown 文档：{error}"))?;
         Self::validate_content(&content)?;
+        self.journal
+            .reconcile_document(document_id, &relative_path, &content)?;
         Ok(MarkdownDocument {
             content,
-            relative_path: Self::relative_path(document_id),
+            relative_path,
         })
     }
 
-    pub fn save(&self, document_id: &str, content: &str) -> Result<MarkdownDocument, String> {
+    pub fn save(
+        &self,
+        document_id: &str,
+        content: &str,
+        knowledge_point_id: Option<&str>,
+    ) -> Result<MarkdownDocument, String> {
         Self::validate_content(content)?;
         let _guard = self
             .write_lock
             .lock()
             .map_err(|_| "Markdown 仓库写入锁已损坏".to_string())?;
-        let path = self.document_path(document_id)?;
-        fs::create_dir_all(&self.root)
-            .map_err(|error| format!("无法创建 Markdown 仓库：{error}"))?;
-        Self::recover_if_needed(&path)
+        let relative_path = self.resolve_relative_path(document_id, knowledge_point_id)?;
+        let path = self.root.join(&relative_path);
+        let parent = path
+            .parent()
+            .ok_or_else(|| "Markdown 文档路径无效".to_string())?;
+        fs::create_dir_all(parent).map_err(|error| format!("无法创建 Markdown 仓库：{error}"))?;
+        Self::recover_legacy_backup_if_needed(&path)
             .map_err(|error| format!("无法恢复 Markdown 文档：{error}"))?;
-        Self::durable_write(&path, content)
+        self.journal
+            .write_document(document_id, &relative_path, content)
             .map_err(|error| format!("无法保存 Markdown 文档：{error}"))?;
         Ok(MarkdownDocument {
             content: content.to_string(),
-            relative_path: Self::relative_path(document_id),
+            relative_path,
         })
     }
 }
@@ -173,6 +145,8 @@ impl MarkdownStore {
 #[cfg(test)]
 mod tests {
     use super::MarkdownStore;
+    use crate::topology_store::TopologyStore;
+    use rusqlite::Connection;
     use std::{fs, path::PathBuf};
 
     struct TestDirectory(PathBuf);
@@ -198,51 +172,85 @@ mod tests {
         }
     }
 
+    fn test_store(directory: &TestDirectory) -> MarkdownStore {
+        let database_path = directory.0.join(".annota/library.sqlite3");
+        TopologyStore::open(database_path.clone()).expect("database should be initialized");
+        MarkdownStore::new(directory.0.clone(), database_path)
+    }
+
     #[test]
     fn creates_and_updates_managed_markdown_document() {
         let directory = TestDirectory::new("save");
-        let store = MarkdownStore::new(directory.0.clone());
+        let store = test_store(&directory);
         let created = store
-            .load_or_create("article-1", "# 初始内容\n")
+            .load_or_create("article-1", "# 初始内容\n", Some("knowledge-1"))
             .expect("document should be created");
         assert_eq!(created.content, "# 初始内容\n");
-        assert_eq!(created.relative_path, "vault/documents/article-1.md");
+        assert!(
+            regex_is_random_note_path(&created.relative_path),
+            "新文档应使用随机文件名，实际为 {}",
+            created.relative_path
+        );
+        let first_path = created.relative_path.clone();
+        let file_on_disk = directory.0.join(&first_path);
+        assert!(file_on_disk.is_file(), "随机路径文件应存在：{first_path}");
 
         store
-            .save("article-1", "# 已更新\n")
+            .save("article-1", "# 已更新\n", Some("knowledge-1"))
             .expect("document should be saved");
         let reloaded = store
-            .load_or_create("article-1", "不会覆盖")
+            .load_or_create("article-1", "不会覆盖", Some("knowledge-1"))
             .expect("document should be reloaded");
         assert_eq!(reloaded.content, "# 已更新\n");
+        assert_eq!(
+            reloaded.relative_path, first_path,
+            "二次加载应复用数据库登记的同一路径"
+        );
+        let connection = Connection::open(directory.0.join(".annota/library.sqlite3")).unwrap();
+        let (relative_path, revision, byte_length) = connection
+            .query_row(
+                "SELECT relative_path, revision, byte_length FROM documents WHERE id = 'article-1'",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(relative_path, first_path, "documents 应登记随机路径");
+        assert_eq!(revision, 2);
+        assert_eq!(byte_length, "# 已更新\n".len() as i64);
+    }
+
+    fn regex_is_random_note_path(path: &str) -> bool {
+        let mut parts = path.split('/');
+        matches!(
+            (parts.next(), parts.next(), parts.next(), parts.next()),
+            (Some("notes"), Some("knowledge-1"), Some(name), None)
+                if name.ends_with(".md")
+                    && name[..name.len() - 3].len() == 32
+                    && name[..name.len() - 3]
+                        .bytes()
+                        .all(|value| value.is_ascii_alphanumeric())
+        )
     }
 
     #[test]
     fn rejects_document_ids_that_can_escape_the_store() {
         let directory = TestDirectory::new("path");
-        let store = MarkdownStore::new(directory.0.clone());
-        assert!(store.load_or_create("../outside", "text").is_err());
-    }
-
-    #[test]
-    fn clears_existing_documents_exactly_once() {
-        let directory = TestDirectory::new("content-reset");
-        let store = MarkdownStore::new(directory.0.clone());
-        store
-            .save("old-article", "旧正文")
-            .expect("old document should be saved");
-
-        store
-            .apply_content_reset()
-            .expect("first reset should clear documents");
-        assert!(!directory.0.join("vault/documents/old-article.md").exists());
-
-        store
-            .save("new-article", "新正文")
-            .expect("new document should be saved");
-        store
-            .apply_content_reset()
-            .expect("second reset should be a no-op");
-        assert!(directory.0.join("vault/documents/new-article.md").exists());
+        let store = test_store(&directory);
+        assert!(
+            store
+                .load_or_create("../outside", "text", Some("knowledge-1"))
+                .is_err()
+        );
+        assert!(
+            store
+                .load_or_create("article-1", "text", Some("../outside"))
+                .is_err()
+        );
     }
 }

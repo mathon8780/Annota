@@ -1,0 +1,2939 @@
+
+.app-notice {
+  min-height: 44px;
+  padding: 0 var(--space-4);
+  position: fixed;
+  left: 50%;
+  bottom: var(--space-6);
+  z-index: 180;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-accent-ink);
+  background: var(--color-ink);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-lg);
+  transform: translateX(-50%);
+}
+
+.reader-shortcut-hint {
+  position: fixed;
+  right: var(--space-6);
+  bottom: var(--space-2);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-faint);
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+
+/* Topology */
+
+.topology-shell {
+  width: min(var(--topology-width, 420px), calc(100vw - 32px));
+  height: min(var(--topology-height, 322px), calc(100vh - 128px));
+  position: fixed;
+  right: var(--space-6);
+  bottom: var(--space-8);
+  z-index: 90;
+  pointer-events: none;
+}
+
+.topology-shell.is-open {
+  pointer-events: auto;
+}
+
+.topology-shell.is-fullscreen {
+  z-index: 140;
+}
+
+.topology-trigger {
+  width: 50px;
+  height: 50px;
+  padding: 0;
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  z-index: 91;
+  display: grid;
+  place-items: center;
+  color: var(--color-accent);
+  background: var(--color-paper-solid);
+  border: var(--rule-thin) solid var(--color-accent);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-xl);
+  cursor: pointer;
+  opacity: 1;
+  pointer-events: auto;
+  transform: scale(1);
+  transform-origin: center;
+  transition:
+    opacity 200ms var(--ease-out),
+    transform 200ms var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out);
+}
+
+.topology-trigger:hover {
+  background: var(--color-paper);
+  transform: scale(1.05);
+}
+
+.topology-trigger:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-paper-solid), 0 0 0 4px var(--color-focus);
+}
+
+.topology-shell.is-open .topology-trigger {
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.82);
+  transition-delay: 0ms;
+}
+
+.topology-panel {
+  width: 50px;
+  height: 50px;
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  z-index: 90;
+  overflow: hidden;
+  color: var(--color-ink);
+  background: var(--color-paper-solid);
+  border: var(--rule-thin) solid var(--color-accent);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-xl);
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.96);
+  transform-origin: right bottom;
+  view-transition-name: article-topology-panel;
+  transition:
+    width 200ms var(--ease-in-out),
+    height 200ms var(--ease-in-out),
+    border-radius 200ms var(--ease-in-out),
+    opacity 200ms var(--ease-in),
+    transform 200ms var(--ease-in-out);
+}
+
+.topology-shell.is-open .topology-panel:not(.is-fullscreen),
+.topology-panel.is-pinned,
+.topology-panel.is-resizing {
+  width: 100%;
+  height: 100%;
+  border-radius: var(--radius-md);
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+  transition-duration: 240ms;
+  transition-delay: 0ms;
+}
+
+.topology-panel.is-fullscreen {
+  width: auto;
+  height: auto;
+  position: fixed;
+  inset:
+    calc(var(--titlebar-height) + 62px)
+    0
+    0
+    calc(var(--reading-path-width, 246px) + var(--space-2));
+  z-index: 140;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+  transition: none;
+  animation: topology-fullscreen-in var(--dur-slow) var(--ease-out) backwards;
+}
+
+html.is-topology-transitioning .topology-panel.is-fullscreen {
+  animation: none;
+}
+
+html.is-topology-transitioning .topology-node-card,
+html.is-topology-transitioning .topology-links path {
+  animation: none !important;
+}
+
+.topology-panel.is-fullscreen.is-shared-transition {
+  animation: none;
+}
+
+html.is-topology-transitioning::view-transition-old(root),
+html.is-topology-transitioning::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+html::view-transition-group(article-topology-panel) {
+  animation-duration: 420ms;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+html.is-topology-transitioning-back::view-transition-group(article-topology-panel) {
+  animation-duration: 300ms;
+}
+
+html::view-transition-old(article-topology-panel),
+html::view-transition-new(article-topology-panel) {
+  mix-blend-mode: normal;
+}
+
+.topology-content {
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  transform: translate3d(6px, 6px, 0) scale(0.985);
+  transform-origin: right bottom;
+  transition:
+    opacity 200ms var(--ease-in),
+    transform 200ms var(--ease-in-out);
+}
+
+.topology-shell.is-open .topology-content,
+.topology-panel.is-pinned .topology-content,
+.topology-panel.is-resizing .topology-content,
+.topology-panel.is-fullscreen .topology-content {
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity 160ms var(--ease-out) 50ms,
+    transform 190ms var(--ease-out) 50ms;
+}
+
+.topology-panel.is-fullscreen .topology-content {
+  transition: none;
+}
+
+.topology-resize-handle {
+  position: absolute;
+  z-index: 6;
+  touch-action: none;
+}
+
+.topology-resize-handle.is-left {
+  width: 9px;
+  top: 10px;
+  bottom: 10px;
+  left: 0;
+  cursor: ew-resize;
+}
+
+.topology-resize-handle.is-top {
+  height: 9px;
+  top: 0;
+  right: 10px;
+  left: 10px;
+  cursor: ns-resize;
+}
+
+.topology-resize-handle.is-top-left {
+  width: 15px;
+  height: 15px;
+  top: 0;
+  left: 0;
+  z-index: 7;
+  cursor: nwse-resize;
+}
+
+.topology-resize-handle::after {
+  content: "";
+  position: absolute;
+  background: var(--color-accent);
+  border-radius: var(--radius-pill);
+  opacity: 0;
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+
+.topology-resize-handle.is-left::after {
+  width: 3px;
+  height: 48px;
+  top: 50%;
+  left: 1px;
+  transform: translateY(-50%) scaleY(0.7);
+}
+
+.topology-resize-handle.is-top::after {
+  width: 48px;
+  height: 3px;
+  top: 1px;
+  left: 50%;
+  transform: translateX(-50%) scaleX(0.7);
+}
+
+.topology-resize-handle:hover::after,
+.topology-resize-handle:focus-visible::after,
+.topology-panel.is-resizing .topology-resize-handle::after {
+  opacity: 1;
+}
+
+.topology-resize-handle.is-left:hover::after,
+.topology-resize-handle.is-left:focus-visible::after,
+.topology-panel.is-resizing .topology-resize-handle.is-left::after {
+  transform: translateY(-50%) scaleY(1);
+}
+
+.topology-resize-handle.is-top:hover::after,
+.topology-resize-handle.is-top:focus-visible::after,
+.topology-panel.is-resizing .topology-resize-handle.is-top::after {
+  transform: translateX(-50%) scaleX(1);
+}
+
+.topology-resize-handle:focus-visible {
+  outline: var(--rule-focus) solid var(--color-focus);
+  outline-offset: calc(var(--rule-focus) * -1);
+}
+
+.topology-actions {
+  display: flex;
+  align-items: center;
+  padding: 3px;
+  background: color-mix(in oklch, var(--color-paper-solid) 82%, transparent);
+  border: var(--rule-thin) solid color-mix(in oklch, var(--color-rule) 72%, transparent);
+  border-radius: var(--radius-pill);
+  box-shadow: 0 8px 24px color-mix(in oklch, var(--color-shadow) 18%, transparent);
+  backdrop-filter: blur(12px);
+}
+
+.topology-actions button {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  color: var(--color-muted);
+  background: transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition:
+    transform var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out);
+}
+
+.topology-actions button:active {
+  transform: scale(0.94);
+}
+
+.topology-actions button.is-active {
+  color: var(--color-warning);
+  background: var(--color-warning-soft);
+}
+
+.topology-viewport {
+  height: 100%;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(circle, var(--color-rule-strong) 1px, transparent 1px),
+    var(--color-paper-soft);
+  background-size: 18px 18px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.topology-panel.is-fullscreen .topology-viewport {
+  height: 100%;
+}
+
+.topology-viewport.is-dragging {
+  cursor: grabbing;
+}
+
+.topology-overlay {
+  position: absolute;
+  right: var(--space-3);
+  bottom: var(--space-2);
+  left: var(--space-3);
+  z-index: 5;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: var(--space-2);
+  cursor: default;
+}
+
+.topology-overlay > .topology-actions {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+}
+
+.topology-overlay-copy {
+  min-width: 0;
+  max-width: 100%;
+  min-height: 18px;
+  padding: 2px 7px;
+  grid-column: 1;
+  grid-row: 1;
+  justify-self: start;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-muted);
+  background: color-mix(in oklch, var(--color-paper-solid) 38%, transparent);
+  border-radius: var(--radius-pill);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1.3;
+  opacity: 0.6;
+  pointer-events: none;
+  backdrop-filter: blur(6px);
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.topology-overlay-copy span,
+.topology-overlay-copy kbd {
+  white-space: nowrap;
+}
+
+.topology-overlay-copy span + span::before {
+  content: "·";
+  margin-right: 6px;
+  color: var(--color-faint);
+}
+
+.topology-overlay-copy kbd {
+  color: var(--color-ink-soft);
+}
+
+.topology-viewport:hover .topology-overlay-copy,
+.topology-viewport:focus-within .topology-overlay-copy {
+  opacity: 0.72;
+}
+
+.topology-scene {
+  position: absolute;
+  inset: 0 auto auto 0;
+  transform-origin: 0 0;
+}
+
+.topology-scene.is-animating {
+  transition: transform 300ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+
+html.is-topology-transitioning .topology-scene.is-animating {
+  transition: none;
+}
+
+.topology-links {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.topology-links path {
+  fill: none;
+  stroke: var(--topology-link-color, var(--color-accent));
+  stroke-width: 1.6;
+  opacity: 0.5;
+}
+
+.topology-shell.is-open .topology-links path {
+  animation: topology-link-in 480ms var(--ease-out) backwards;
+  animation-delay: calc(min(var(--node-order, 0), 15) * 28ms + 160ms);
+}
+
+.topology-links path.is-persisted {
+  opacity: 0.3;
+  stroke-dasharray: 0.016 0.014;
+}
+
+.topology-shell.is-open .topology-links path.is-persisted {
+  animation-name: topology-link-persisted-in;
+}
+
+@keyframes topology-link-in {
+  from {
+    stroke-dasharray: 1;
+    stroke-dashoffset: 1;
+    opacity: 0;
+  }
+  to {
+    stroke-dasharray: 1;
+    stroke-dashoffset: 0;
+    opacity: 0.5;
+  }
+}
+
+@keyframes topology-link-persisted-in {
+  from {
+    stroke-dasharray: 1;
+    stroke-dashoffset: 1;
+    opacity: 0;
+  }
+  to {
+    stroke-dasharray: 0.016 0.014;
+    stroke-dashoffset: 0;
+    opacity: 0.3;
+  }
+}
+
+.topology-node-card {
+  --topology-card-color: var(--color-accent);
+  padding: 11px 12px 10px;
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: var(--color-ink);
+  background: var(--color-paper-solid);
+  border: var(--rule-thin) solid color-mix(in oklch, var(--topology-card-color) 30%, var(--color-rule));
+  border-top: 3px solid var(--topology-card-color);
+  border-radius: var(--radius-md);
+  box-shadow: 0 9px 22px color-mix(in oklch, var(--topology-card-color) 10%, var(--color-shadow-soft));
+  text-align: left;
+  cursor: pointer;
+  isolation: isolate;
+  transition:
+    border-color var(--dur-base) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
+}
+
+.topology-shell.is-open .topology-node-card {
+  animation: topology-card-in 300ms var(--ease-out) backwards;
+  animation-delay: calc(min(var(--node-order, 0), 15) * 28ms);
+}
+
+@keyframes topology-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.topology-node-card::after {
+  content: "";
+  width: 52px;
+  height: 52px;
+  position: absolute;
+  top: -27px;
+  right: -17px;
+  z-index: -1;
+  background: color-mix(in oklch, var(--topology-card-color) 11%, transparent);
+  border-radius: 50%;
+}
+
+.topology-node-card.is-current {
+  border-color: var(--topology-card-color);
+  outline: 4px solid color-mix(in oklch, var(--topology-card-color) 12%, transparent);
+  box-shadow: 0 14px 30px color-mix(in oklch, var(--topology-card-color) 20%, transparent);
+  animation: topology-current-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes topology-current-pulse {
+  0%,
+  100% {
+    outline-color: color-mix(in oklch, var(--topology-card-color) 12%, transparent);
+  }
+  50% {
+    outline-color: color-mix(in oklch, var(--topology-card-color) 24%, transparent);
+  }
+}
+
+.topology-node-card.is-manual::after {
+  content: "DB";
+  position: absolute;
+  top: 9px;
+  right: 10px;
+  padding: 2px 5px;
+  border: 1px solid color-mix(in srgb, var(--topology-card-color) 28%, transparent);
+  border-radius: 999px;
+  color: var(--topology-card-color);
+  font: 700 9px/1.2 var(--font-mono);
+  letter-spacing: 0.08em;
+}
+
+.topology-node-card.is-interactive .topology-node-card-icon::after {
+  content: "";
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 6px;
+  height: 6px;
+  border: 2px solid var(--color-paper-solid);
+  border-radius: 50%;
+  background: #2f8468;
+}
+
+.topology-storage-error {
+  position: absolute;
+  left: 22px;
+  bottom: 22px;
+  z-index: 8;
+  max-width: min(520px, calc(100vw - 44px));
+  padding: 10px 13px;
+  border: 1px solid color-mix(in oklch, var(--color-error) 28%, transparent);
+  border-radius: 8px;
+  background: color-mix(in oklch, var(--color-error-soft) 60%, var(--color-paper-solid));
+  color: var(--color-error);
+  font-size: 12px;
+  animation: topology-editor-in 220ms var(--ease-out) backwards;
+}
+
+.topology-node-editor {
+  position: absolute;
+  top: 72px;
+  right: 22px;
+  z-index: 12;
+  display: grid;
+  width: min(370px, calc(100vw - 44px));
+  max-height: calc(100vh - 102px);
+  gap: 14px;
+  padding: 18px;
+  overflow: auto;
+  border: 1px solid var(--color-rule-strong);
+  border-top: 3px solid var(--color-accent);
+  border-radius: 12px;
+  background: color-mix(in oklch, var(--color-paper-solid) 92%, transparent);
+  box-shadow: 0 22px 56px color-mix(in oklch, var(--color-shadow) 55%, transparent);
+  backdrop-filter: blur(18px);
+  animation: topology-editor-in 220ms var(--ease-out) backwards;
+}
+
+@keyframes topology-editor-in {
+  from {
+    opacity: 0;
+    transform: translate3d(12px, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.topology-node-editor > header,
+.topology-node-editor > footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.topology-node-editor > header > div {
+  display: grid;
+  gap: 3px;
+}
+
+.topology-node-editor > header span,
+.topology-node-editor > footer small {
+  color: var(--color-muted);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+.topology-node-editor > header strong {
+  font-size: 16px;
+}
+
+.topology-node-editor > header > button,
+.topology-relation-list button {
+  display: inline-grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid var(--color-rule);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-muted);
+}
+
+.topology-interactive-editor > p {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.topology-flashcard-reveal {
+  min-height: 150px;
+  padding: 18px;
+  border: 1px dashed color-mix(in oklch, var(--color-accent) 34%, transparent);
+  border-radius: 14px;
+  background: linear-gradient(
+    145deg,
+    color-mix(in oklch, var(--color-accent) 10%, var(--color-paper-solid)),
+    var(--color-paper-solid)
+  );
+  color: color-mix(in oklch, var(--color-accent) 72%, var(--color-ink));
+  font-weight: 700;
+  line-height: 1.6;
+}
+
+.topology-node-editor > label {
+  display: grid;
+  gap: 6px;
+  color: var(--color-muted);
+  font-size: 11px;
+}
+
+.topology-node-editor input,
+.topology-node-editor select,
+.topology-node-editor textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--color-rule-strong);
+  border-radius: 7px;
+  background: var(--color-paper-solid);
+  color: var(--color-ink);
+  font: inherit;
+  outline: none;
+}
+
+.topology-node-editor input,
+.topology-node-editor select {
+  min-height: 36px;
+  padding: 7px 10px;
+}
+
+.topology-node-editor textarea {
+  resize: vertical;
+  padding: 10px;
+  line-height: 1.55;
+}
+
+.topology-node-editor input:focus,
+.topology-node-editor select:focus,
+.topology-node-editor textarea:focus {
+  border-color: var(--color-focus);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-focus) 14%, transparent);
+}
+
+.topology-node-editor-check {
+  grid-template-columns: auto 1fr !important;
+  align-items: center;
+}
+
+.topology-node-editor-check input,
+.topology-node-interaction input {
+  width: auto;
+  min-height: auto;
+}
+
+.topology-node-editor > footer {
+  align-items: flex-end;
+  padding-top: 4px;
+  border-top: 1px solid var(--color-rule);
+}
+
+.topology-node-editor > footer small {
+  max-width: 215px;
+  line-height: 1.5;
+  letter-spacing: 0;
+}
+
+.topology-node-editor > footer button,
+.topology-relation-editor > button,
+.topology-node-interaction > button {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 11px;
+  border: 1px solid color-mix(in oklch, var(--color-accent) 30%, transparent);
+  border-radius: 7px;
+  background: var(--color-accent);
+  color: var(--color-accent-ink);
+  font-weight: 650;
+}
+
+.topology-node-editor > footer button.is-danger {
+  border-color: color-mix(in oklch, var(--color-error) 22%, transparent);
+  background: color-mix(in oklch, var(--color-error-soft) 60%, var(--color-paper-solid));
+  color: var(--color-error);
+}
+
+.topology-node-editor button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.topology-node-interaction,
+.topology-relation-editor {
+  display: grid;
+  gap: 8px;
+  padding: 11px;
+  border: 1px solid var(--color-rule);
+  border-radius: 8px;
+  background: color-mix(in oklch, var(--color-paper-soft) 55%, transparent);
+}
+
+.topology-node-interaction > strong,
+.topology-relation-editor > strong {
+  font-size: 12px;
+}
+
+.topology-node-interaction > label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.topology-interaction-toggle {
+  min-height: 36px;
+  padding: 8px 10px;
+  align-items: center !important;
+  border: 1px solid color-mix(in oklch, var(--color-accent) 16%, transparent);
+  border-radius: 7px;
+  background: var(--color-paper-solid);
+}
+
+.topology-checklist-editor {
+  gap: 10px;
+}
+
+.topology-checklist-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.topology-checklist-row > input:not([type="checkbox"]) {
+  width: 100%;
+  min-height: 34px;
+}
+
+.topology-checklist-row > button {
+  display: inline-grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid color-mix(in oklch, var(--color-error) 18%, transparent);
+  border-radius: 7px;
+  background: color-mix(in oklch, var(--color-error-soft) 60%, var(--color-paper-solid));
+  color: var(--color-error);
+}
+
+.topology-node-interaction > .topology-add-item {
+  justify-self: start;
+  background: var(--color-paper-solid);
+  color: var(--color-accent);
+}
+
+.topology-flashcard-editor {
+  display: grid;
+  gap: 12px;
+}
+
+.topology-flashcard-editor > label {
+  display: grid;
+  gap: 6px;
+  color: var(--color-muted);
+  font-size: 11px;
+}
+
+.topology-relation-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.topology-relation-list > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 4px 3px 8px;
+  border: 1px solid var(--color-rule);
+  border-radius: 999px;
+  background: var(--color-paper-solid);
+  font-size: 11px;
+}
+
+.topology-relation-list button {
+  width: 22px;
+  height: 22px;
+  border: 0;
+}
+
+.topology-node-card-head {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--topology-card-color);
+}
+
+.topology-node-card-head > strong {
+  min-width: 0;
+  display: block;
+  overflow: hidden;
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topology-node-card-origin {
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--color-faint);
+  font-family: var(--font-mono);
+  font-size: 7px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topology-node-card-icon {
+  width: 25px;
+  height: 25px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  color: var(--topology-card-color);
+  background: color-mix(in oklch, var(--topology-card-color) 11%, var(--color-paper-solid));
+  border: var(--rule-thin) solid color-mix(in oklch, var(--topology-card-color) 22%, var(--color-rule));
+  border-radius: 8px;
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.topology-node-card-title {
+  min-width: 0;
+  margin: 8px 0 0;
+  overflow: hidden;
+  color: var(--color-ink);
+  font-size: 11px;
+  font-weight: 760;
+  line-height: 1.32;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topology-node-card-summary {
+  min-width: 0;
+  margin-top: 5px;
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--color-muted);
+  font-size: 9px;
+  line-height: 1.4;
+  -webkit-box-orient: vertical;
+
+}
+
+.topology-node-card-text {
+  min-width: 0;
+  margin: 5px 0 0;
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--color-muted);
+  font-size: 9px;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+
+}
+
+.topology-node-card-footer {
+  min-width: 0;
+  margin-top: auto;
+  padding-top: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  color: var(--color-faint);
+  border-top: var(--rule-thin) solid color-mix(in oklch, var(--topology-card-color) 16%, var(--color-rule));
+  font-family: var(--font-mono);
+  font-size: 7px;
+  line-height: 1;
+}
+
+.topology-node-card-footer span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topology-node-card-current {
+  padding: 3px 7px;
+  position: absolute;
+  top: 7px;
+  right: 9px;
+  color: var(--topology-card-color);
+  background: color-mix(in oklch, var(--topology-card-color) 10%, var(--color-paper-solid));
+  border: var(--rule-thin) solid color-mix(in oklch, var(--topology-card-color) 25%, var(--color-rule));
+  border-radius: var(--radius-pill);
+  font-size: 7px;
+  font-style: normal;
+}
+
+.topology-node-card.is-root {
+  background:
+    linear-gradient(145deg, color-mix(in oklch, var(--topology-card-color) 9%, var(--color-paper-solid)), var(--color-paper-solid));
+  box-shadow: 0 13px 30px color-mix(in oklch, var(--topology-card-color) 16%, transparent);
+}
+
+.topology-node-card.is-root .topology-node-card-title {
+  font-size: 12px;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+
+}
+
+.topology-node-card.is-code {
+  color: #cbd5e1;
+  background: #111827;
+  border-color: color-mix(in oklch, var(--topology-card-color) 52%, #334155);
+  border-top-color: var(--topology-card-color);
+}
+
+.topology-node-card.is-code .topology-node-card-title,
+.topology-node-card.is-code .topology-node-card-head {
+  color: #f8fafc;
+}
+
+.topology-node-card.is-code .topology-node-card-icon {
+  color: #e2e8f0;
+  background: #1e293b;
+  border-color: #475569;
+}
+
+.topology-node-card.is-code .topology-node-card-text,
+.topology-node-card.is-code .topology-node-card-footer,
+.topology-node-card.is-code .topology-node-card-body {
+  color: #94a3b8;
+  border-color: #334155;
+}
+
+.topology-node-card.is-note {
+  background: color-mix(in oklch, var(--topology-card-color) 9%, var(--color-paper-solid));
+  border-style: dashed;
+  border-top-style: solid;
+  transform: rotate(-0.8deg);
+}
+
+.topology-node-card.is-flashcard {
+  background: linear-gradient(145deg, color-mix(in oklch, var(--topology-card-color) 8%, var(--color-paper-solid)), var(--color-paper-solid));
+  border-radius: 19px;
+}
+
+.topology-node-card.is-summary,
+.topology-node-card.is-formula,
+.topology-node-card.is-diagram,
+.topology-node-card.is-pitfall,
+.topology-node-card.is-analogy,
+.topology-node-card.is-task {
+  background: linear-gradient(145deg, color-mix(in oklch, var(--topology-card-color) 8%, var(--color-paper-solid)), var(--color-paper-solid));
+}
+
+.topology-node-card-metric {
+  min-width: 0;
+  margin-top: 5px;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.topology-node-card-metric strong {
+  color: var(--topology-card-color);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.topology-node-card-metric span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-muted);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topology-node-card-formula-box {
+  min-width: 0;
+  margin-top: 5px;
+  padding: 7px 9px;
+  overflow: hidden;
+  color: var(--color-ink);
+  background: color-mix(in oklch, var(--topology-card-color) 9%, var(--color-paper-solid));
+  border: 1px solid color-mix(in oklch, var(--topology-card-color) 22%, var(--color-rule));
+  border-radius: 8px;
+  font-family: "Times New Roman", "Noto Serif SC", serif;
+  font-size: 10px;
+  line-height: 1.4;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topology-node-card-formula-meta {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-muted);
+  font-size: 8px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topology-node-card-diagram-preview {
+  min-width: 0;
+  margin-top: 5px;
+  padding: 5px 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  background: color-mix(in oklch, var(--topology-card-color) 7%, var(--color-paper-solid));
+  border: 1px dashed color-mix(in oklch, var(--topology-card-color) 34%, var(--color-rule));
+  border-radius: 8px;
+}
+
+.topology-node-card-diagram-flow {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.topology-node-card-diagram-node {
+  min-width: 0;
+  padding: 2px 4px;
+  overflow: hidden;
+  color: var(--color-ink);
+  background: var(--color-paper-solid);
+  border: 1px solid var(--color-rule);
+  border-radius: 4px;
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topology-node-card-diagram-arrow {
+  flex: 0 0 auto;
+  color: var(--topology-card-color);
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.topology-node-card-pitfall-box {
+  min-width: 0;
+  margin-top: 5px;
+  display: grid;
+  gap: 4px;
+}
+
+.topology-node-card-pitfall-bad,
+.topology-node-card-pitfall-good {
+  min-width: 0;
+  padding: 4px 6px;
+  overflow: hidden;
+  border-radius: 0 6px 6px 0;
+  font-size: 8.5px;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+
+}
+
+.topology-node-card-pitfall-bad strong,
+.topology-node-card-pitfall-good strong {
+  font-weight: 750;
+}
+
+.topology-node-card-pitfall-bad {
+  color: color-mix(in oklch, #e11d48 72%, var(--color-ink));
+  background: color-mix(in oklch, #e11d48 9%, var(--color-paper-solid));
+  border-left: 3px solid color-mix(in oklch, #e11d48 60%, var(--topology-card-color));
+}
+
+.topology-node-card-pitfall-good {
+  color: color-mix(in oklch, #059669 72%, var(--color-ink));
+  background: color-mix(in oklch, #059669 9%, var(--color-paper-solid));
+  border-left: 3px solid color-mix(in oklch, #059669 60%, var(--topology-card-color));
+}
+
+.topology-node-card-analogy-quote {
+  min-width: 0;
+  margin: 5px 0 0;
+  padding: 6px 8px;
+  overflow: hidden;
+  color: var(--color-ink);
+  background: color-mix(in oklch, var(--topology-card-color) 7%, var(--color-paper-solid));
+  border-left: 3px solid var(--topology-card-color);
+  border-radius: 0 6px 6px 0;
+  font-family: "Noto Serif SC", "Songti SC", serif;
+  font-size: 9.5px;
+  font-style: italic;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+
+}
+
+.topology-node-card.is-task {
+  border-style: dashed;
+  border-top-style: solid;
+}
+
+.topology-node-card-task-indicator {
+  min-width: 0;
+  margin-top: 5px;
+  padding: 5px 7px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: color-mix(in oklch, var(--topology-card-color) 9%, var(--color-paper-solid));
+  border-radius: 7px;
+}
+
+.topology-node-card-task-indicator > span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-muted);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topology-node-card-task-spinner {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  border: 2px solid color-mix(in oklch, var(--topology-card-color) 22%, transparent);
+  border-top-color: var(--topology-card-color);
+  border-radius: 50%;
+  animation: topology-spin 800ms linear infinite;
+}
+
+.topology-node-card-task-detail {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-faint);
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes topology-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.topology-node-card.is-highlight,
+.topology-node-card.is-source {
+  border-left: 4px solid var(--topology-card-color);
+}
+
+.topology-node-card.is-highlight .topology-node-card-title,
+.topology-node-card.is-source .topology-node-card-title,
+.topology-node-card.is-note .topology-node-card-title {
+  font-family: "Noto Serif SC", "Songti SC", serif;
+}
+
+.topology-node-card.is-terms {
+  background: color-mix(in oklch, var(--topology-card-color) 5%, var(--color-paper-solid));
+}
+
+.topology-node-card.is-terms .topology-node-card-title {
+  font-size: 10px;
+}
+
+/* ---- 差异化卡片内容结构 ---- */
+
+.topology-node-card-body {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  margin-top: 5px;
+}
+
+.topology-node-card-quote {
+  min-width: 0;
+  margin: 5px 0 0;
+  padding-left: 0;
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--color-muted);
+  font-family: "Noto Serif SC", "Songti SC", serif;
+  font-size: 10px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+
+}
+
+.topology-node-card.is-highlight .topology-node-card-quote,
+.topology-node-card.is-source .topology-node-card-quote {
+  padding-left: 7px;
+  border-left: 3px solid var(--topology-card-color);
+}
+
+.topology-node-card-bilingual,
+.topology-node-card-split {
+  min-width: 0;
+  margin-top: 5px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.topology-node-card-bilingual > span,
+.topology-node-card-split > span {
+  min-width: 0;
+  padding: 5px 6px;
+  overflow: hidden;
+  color: var(--color-muted);
+  background: color-mix(in oklch, var(--topology-card-color) 7%, var(--color-paper-solid));
+  border: 1px solid color-mix(in oklch, var(--topology-card-color) 18%, var(--color-rule));
+  border-radius: 6px;
+  font-size: 9px;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+
+}
+
+.topology-node-card-bilingual > span > small {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--topology-card-color);
+  font-family: var(--font-mono);
+  font-size: 7px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+
+.topology-node-card-qa {
+  min-width: 0;
+  margin-top: 5px;
+  display: grid;
+  gap: 4px;
+}
+
+.topology-node-card-qa > strong {
+  display: -webkit-box;
+  overflow: hidden;
+  padding: 6px 8px;
+  color: var(--topology-card-color);
+  background: color-mix(in oklch, var(--topology-card-color) 10%, var(--color-paper-solid));
+  border-radius: 7px;
+  font-size: 10px;
+  font-weight: 750;
+  line-height: 1.4;
+  -webkit-box-orient: vertical;
+
+}
+
+.topology-node-card-qa > span {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--color-muted);
+  font-size: 9px;
+  line-height: 1.4;
+  -webkit-box-orient: vertical;
+
+}
+
+.topology-node-card-code {
+  min-width: 0;
+  margin-top: 5px;
+  padding: 6px 8px;
+  overflow: hidden;
+  display: block;
+  color: #a7f3d0;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topology-node-card-checklist {
+  min-width: 0;
+  margin-top: 5px;
+  display: grid;
+  gap: 3px;
+}
+
+.topology-node-card-checklist > span {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  color: var(--color-muted);
+  font-size: 9px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topology-node-card-checklist > span.is-checkable {
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 1px 3px;
+  margin-left: -3px;
+  transition: background var(--dur-base) var(--ease-out);
+}
+
+.topology-node-card-checklist > span.is-checkable:hover {
+  background: color-mix(in oklch, var(--topology-card-color) 12%, transparent);
+}
+
+.topology-node-card-checklist svg,
+.topology-node-card-checklist i {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  color: var(--topology-card-color);
+  border: 1px solid var(--topology-card-color);
+  border-radius: 4px;
+  font-style: normal;
+}
+
+.topology-node-card-flash {
+  min-width: 0;
+  margin-top: 5px;
+  padding: 7px 9px;
+  overflow: hidden;
+  display: -webkit-box;
+  color: color-mix(in oklch, var(--topology-card-color) 78%, var(--color-ink));
+  background: color-mix(in oklch, var(--topology-card-color) 9%, var(--color-paper-solid));
+  border: 1px dashed color-mix(in oklch, var(--topology-card-color) 34%, transparent);
+  border-radius: 8px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+
+}
+
+.topology-node-card-terms {
+  min-width: 0;
+  margin-top: 5px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.topology-node-card-terms > span {
+  max-width: 100%;
+  padding: 3px 7px;
+  overflow: hidden;
+  color: var(--topology-card-color);
+  background: color-mix(in oklch, var(--topology-card-color) 9%, var(--color-paper-soft));
+  border: 1px solid color-mix(in oklch, var(--topology-card-color) 26%, var(--color-rule));
+  border-radius: 999px;
+  font-size: 8px;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topology-node-card-facts {
+  min-width: 0;
+  margin-top: 1px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.topology-node-card-facts > span {
+  padding: 3px 7px;
+  color: var(--color-muted);
+  background: color-mix(in oklch, var(--topology-card-color) 8%, var(--color-paper-solid));
+  border: 1px solid color-mix(in oklch, var(--topology-card-color) 20%, var(--color-rule));
+  border-radius: 999px;
+  font-size: 8px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.topology-node-card.is-code .topology-node-card-quote {
+  color: #bfdbfe;
+  border-left-color: #334155;
+}
+
+.topology-node-card.is-code .topology-node-card-qa > strong {
+  background: #1e293b;
+}
+
+.topology-node-card.is-code .topology-node-card-bilingual > span,
+.topology-node-card.is-code .topology-node-card-split > span {
+  background: #1e293b;
+  border-color: #334155;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@keyframes article-forward-in {
+  from {
+    opacity: 0;
+    transform: translate3d(12px, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes article-back-in {
+  from {
+    opacity: 0;
+    transform: translate3d(-10px, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes article-settle-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 6px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes dialog-surface-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes dialog-backdrop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes topology-fullscreen-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (hover: hover) {
+  .generation-type-delete:hover,
+  .generation-type-create:hover,
+  .generation-icon-options button:hover:not([aria-pressed="true"]),
+  .generation-variable-chip:hover,
+  .generation-preview-dialog button:hover,
+  .generation-action-bar button:hover:not(:disabled) {
+    color: var(--color-accent);
+    background: var(--color-accent-soft);
+    border-color: color-mix(
+      in oklch,
+      var(--color-accent) 28%,
+      var(--color-rule)
+    );
+  }
+
+  .generation-type-item:hover:not(.is-active) {
+    color: var(--color-ink);
+    background: var(--color-paper-hover);
+  }
+
+  .generation-action-bar button.is-primary:hover:not(:disabled),
+  .generation-action-bar
+    button[data-variant="primary"]:hover:not(:disabled) {
+    color: var(--color-accent-ink);
+    background: var(--color-accent-hover);
+    border-color: var(--color-accent-hover);
+    transform: translateY(-1px);
+  }
+
+  .window-controls button:hover {
+    color: var(--color-ink);
+    background: var(--color-paper-hover);
+  }
+
+  .window-controls .window-close-button:hover {
+    color: var(--color-accent-ink);
+    background: var(--color-window-close);
+  }
+
+  .button:hover:not(:disabled) {
+    transform: translateY(-1px);
+    border-color: var(--color-ink-soft);
+    box-shadow: 0 8px 20px var(--color-shadow-soft);
+  }
+
+  .button.primary:hover:not(:disabled) {
+    background: var(--color-ink-soft);
+  }
+
+  .icon-button:hover,
+  .home-sidebar-footer button:hover,
+  .sort-button:hover,
+  .generation-button:hover:not(:disabled),
+  .inline-formatting-toolbar button:hover:not(:disabled),
+  .topology-actions button:hover {
+    color: var(--color-ink);
+    background: var(--color-paper-hover);
+    transform: scale(1.08);
+  }
+
+  .home-nav-item:hover:not(.is-active),
+  .home-scroll-cue:hover {
+    color: var(--color-ink);
+    background: var(--color-paper-soft);
+  }
+
+  .path-step button:hover:not(.is-current) {
+    color: var(--color-ink);
+    background: color-mix(in oklch, var(--path-node-color) 6%, var(--color-paper-solid));
+    border-color: color-mix(in oklch, var(--path-node-color) 24%, var(--color-rule));
+    transform: translateX(2px);
+  }
+
+  .global-search-trigger:hover {
+    background: var(--color-paper-solid);
+    border-color: var(--color-rule-strong);
+  }
+
+  .home-action-dock:hover .home-action-trigger {
+    background: var(--color-accent);
+    box-shadow: 0 16px 38px color-mix(in oklch, var(--color-accent) 30%, transparent);
+    transform: translateY(-2px);
+  }
+
+  .home-action-dock:hover .home-action-trigger svg {
+    transform: rotate(45deg);
+  }
+
+  .home-action-dock:hover .home-action-menu {
+    visibility: visible;
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0) scale(1);
+  }
+
+  .notebook-card:is(:hover, :focus-within) {
+    transform: translateY(-1px);
+    border-color: var(--color-rule-strong);
+  }
+
+  .notebook-card:is(:hover, :focus-within) .card-rail {
+    transform: scaleY(1);
+  }
+
+  .notebook-footer > button:hover {
+    background: var(--color-accent-soft);
+  }
+
+  .command-result:hover {
+    background: var(--color-paper-soft);
+  }
+
+  .child-card:hover {
+    transform: translateY(-1px);
+    border-color: var(--color-accent);
+  }
+
+  .reading-path-resizer:hover span {
+    opacity: 1;
+  }
+
+  .topology-node-card:hover {
+    border-color: var(--topology-card-color);
+    box-shadow: 0 18px 40px color-mix(in oklch, var(--topology-card-color) 24%, transparent);
+    transform: translateY(-3px);
+  }
+
+  .topology-node-card:hover .topology-node-card-icon {
+    transform: scale(1.08);
+  }
+
+  .topology-node-card.is-note:hover {
+    transform: translateY(-3px) rotate(-0.8deg);
+  }
+}
+
+.topology-node-card:active {
+  transform: translateY(1px) scale(0.99);
+}
+
+.topology-node-card.is-note:active {
+  transform: translateY(1px) scale(0.99) rotate(-0.8deg);
+}
+
+.topology-viewport.is-dragging .topology-node-card:active {
+  transform: translateY(0) scale(1);
+}
+
+.topology-viewport.is-dragging .topology-node-card.is-note:active {
+  transform: rotate(-0.8deg);
+}
+
+@media (max-width: 1180px) {
+  .home-workspace {
+    grid-template-columns: 56px minmax(0, 1fr);
+  }
+
+  .home-workspace.is-sidebar-collapsed {
+    grid-template-columns: 56px minmax(0, 1fr);
+  }
+
+  .home-sidebar-shell {
+    width: 56px;
+    overflow: visible;
+  }
+
+  .home-sidebar-shell.is-collapsed,
+  .home-sidebar.is-collapsed {
+    width: 56px;
+    /* 覆盖基础规则里的收起态 10px 水平内边距：窄窗内容区按 56px 窄栏计算，
+       否则内容区只剩 36px，36px 宽的轨道会撑出按钮并被裁切 */
+    padding-right: 6px;
+    padding-left: 6px;
+  }
+
+  .home-sidebar {
+    width: 56px;
+    padding: var(--space-4) 6px;
+    position: absolute;
+    inset: 0 auto 0 0;
+    z-index: 1;
+    overflow-x: hidden;
+    scrollbar-width: none;
+    background: var(--color-paper-solid);
+    transition:
+      width var(--home-sidebar-motion) var(--home-sidebar-ease),
+      padding var(--home-sidebar-motion) var(--home-sidebar-ease),
+      box-shadow var(--home-sidebar-motion) var(--home-sidebar-ease);
+  }
+
+  .home-sidebar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .home-nav-item,
+  .home-sidebar-footer button {
+    width: 44px;
+    padding-right: 0;
+    justify-content: flex-start;
+    gap: 0;
+    flex: 0 0 auto;
+  }
+
+  .home-nav-item {
+    padding-left: calc(50% - 8.5px);
+  }
+
+  .home-sidebar-footer button {
+    padding-left: calc(50% - 8px);
+  }
+
+  .home-nav-item svg,
+  .home-sidebar-footer button svg {
+    flex: 0 0 auto;
+    transition: transform var(--home-sidebar-motion) var(--home-sidebar-ease);
+  }
+
+  .home-nav-item span,
+  .home-sidebar-footer button span {
+    max-width: 0;
+    opacity: 0;
+    transform: translateX(-8px);
+    visibility: hidden;
+    white-space: nowrap;
+    transition-delay: 0ms, 0ms, 0ms, 250ms;
+  }
+
+  .sidebar-section-title,
+
+
+  .home-sidebar-collapse {
+    padding: 3px;
+    justify-content: space-between;
+    gap: 0;
+  }
+
+  .home-sidebar-collapse-label {
+    max-width: 0;
+    opacity: 0;
+    transform: translateX(-8px);
+    transition-delay: 0ms;
+  }
+
+  .home-sidebar-collapse-track {
+    width: 36px;
+  }
+
+  /* 窄窗时侧栏始终呈现为窄栏，但“已收起”指示只应反映真实状态 */
+  .home-sidebar.is-collapsed .home-sidebar-collapse-thumb {
+    color: var(--color-paper-solid);
+    background: var(--color-accent);
+    transform: translateX(14px);
+  }
+
+  .home-sidebar.is-collapsed .home-sidebar-collapse-thumb svg {
+    transform: rotate(180deg);
+  }
+
+  /* 展开状态选择器同时覆盖“悬停窄栏”与“指针已移入展开飞层”两种情形，
+     否则鼠标一越过 56px 窄栏边缘飞层就会瞬间缩回 */
+  .home-sidebar-shell:not(.is-collapsed):is(:hover, :has(.home-sidebar:hover)) .home-sidebar {
+    width: 236px;
+    padding-right: var(--space-3);
+    padding-left: var(--space-3);
+    box-shadow: 16px 0 32px color-mix(
+      in oklch,
+      var(--color-shadow) 72%,
+      transparent
+    );
+  }
+
+  .home-sidebar-shell:not(.is-collapsed):is(:hover, :has(.home-sidebar:hover)) .home-nav-item,
+  .home-sidebar-shell:not(.is-collapsed):is(:hover, :has(.home-sidebar:hover)) .home-sidebar-footer button {
+    width: 100%;
+    padding-right: var(--space-3);
+    /* calc 形式保证与收起态 calc(50% - 半宽) 可插值，避免瞬间跳变 */
+    padding-left: calc(0% + var(--space-3));
+    justify-content: flex-start;
+    gap: var(--space-3);
+  }
+
+  .home-sidebar-shell:not(.is-collapsed):is(:hover, :has(.home-sidebar:hover)) .home-nav-item span,
+  .home-sidebar-shell:not(.is-collapsed):is(:hover, :has(.home-sidebar:hover)) .home-sidebar-footer button span {
+    max-width: 160px;
+    flex: 0 1 auto;
+    opacity: 1;
+    transform: translateX(0);
+    visibility: visible;
+    transition-delay: 90ms, 110ms, 90ms, 0ms;
+  }
+
+  .home-sidebar-shell:not(.is-collapsed):is(:hover, :has(.home-sidebar:hover)) .home-nav-item span,
+  .home-sidebar-shell:not(.is-collapsed):is(:hover, :has(.home-sidebar:hover)) .sidebar-section-title,
+  .home-sidebar-shell:not(.is-collapsed):is(:hover, :has(.home-sidebar:hover)) .home-sidebar-footer button span {
+    opacity: 1;
+    visibility: visible;
+  }
+
+
+  .home-sidebar-shell:not(.is-collapsed):is(:hover, :has(.home-sidebar:hover)) .home-sidebar-collapse {
+    padding: 4px 5px 4px 10px;
+    justify-content: space-between;
+    gap: var(--space-2);
+  }
+
+  .home-sidebar-shell:not(.is-collapsed):is(:hover, :has(.home-sidebar:hover)) .home-sidebar-collapse-label {
+    max-width: 112px;
+    opacity: 1;
+    transform: translateX(0);
+    transition-delay: 90ms, 110ms, 90ms;
+  }
+
+  .home-sidebar-shell:not(.is-collapsed):is(:hover, :has(.home-sidebar:hover)) .home-sidebar-collapse-track {
+    width: 42px;
+  }
+
+  .home-sidebar-shell:not(.is-collapsed):is(:hover, :has(.home-sidebar:hover)) .home-sidebar-collapse-thumb {
+    color: var(--color-accent);
+    background: var(--color-paper-solid);
+    transform: translateX(0);
+  }
+
+  .home-sidebar-shell:not(.is-collapsed):is(:hover, :has(.home-sidebar:hover)) .home-sidebar-collapse-thumb svg {
+    transform: rotate(0deg);
+  }
+
+  .reader-meta {
+    display: none;
+  }
+
+  .reader-workspace {
+    grid-template-columns:
+      var(--reading-path-width, 246px)
+      var(--space-2)
+      minmax(0, 1fr);
+  }
+
+  .reader-surface {
+    grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
+  }
+
+  .topology-panel.is-fullscreen {
+    left: calc(var(--reading-path-width, 246px) + var(--space-2));
+  }
+}
+
+@media (max-width: 1240px) and (min-width: 1101px) {
+  .generation-workbench {
+    grid-template-columns:
+      clamp(248px, 21vw, 272px)
+      minmax(0, 1fr);
+  }
+
+  .generation-basics-grid {
+    grid-template-columns:
+      minmax(0, 1fr)
+      minmax(0, 0.84fr)
+      minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 1100px) {
+  .generation-workbench {
+    grid-template-columns: clamp(248px, 24vw, 272px) minmax(0, 1fr);
+  }
+
+  .generation-type-rail {
+    grid-row: auto;
+  }
+
+  .generation-basics-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .generation-basic-column.is-preview {
+    grid-column: 1 / -1;
+    border-top: var(--rule-thin) solid var(--color-rule);
+    border-left: 0;
+  }
+
+  .generation-basic-column.is-preview .topology-card-preview-stage {
+    max-width: 420px;
+  }
+
+  .generation-request-layout,
+  .generation-protocol-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .model-provider-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .model-provider-rail {
+    overflow: hidden;
+    border-right: 0;
+    border-bottom: var(--rule-thin) solid var(--color-rule);
+  }
+
+  .model-provider-section {
+    margin-top: var(--space-3);
+  }
+
+  .model-provider-list {
+    padding-bottom: var(--space-1);
+    display: flex;
+    overflow-x: auto;
+    contain: inline-size;
+    scrollbar-width: thin;
+  }
+
+  .model-provider-item {
+    min-width: 200px;
+    flex: 0 0 200px;
+  }
+}
+
+@media (max-width: 900px) {
+  .settings-canvas {
+    grid-template-columns: 230px minmax(0, 1fr);
+  }
+
+  .settings-sidebar {
+    padding-right: var(--space-3);
+    padding-left: var(--space-3);
+  }
+
+  .settings-category {
+    grid-template-columns: 18px minmax(0, 1fr);
+  }
+
+  .settings-category-chevron {
+    display: none;
+  }
+
+  .settings-workspace-inner {
+    padding-right: var(--space-8);
+    padding-left: var(--space-8);
+  }
+
+  .settings-section-hero {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .recent-timeline-group {
+    grid-template-columns: 94px 20px minmax(0, 1fr);
+  }
+
+  .save-status {
+    display: none;
+  }
+
+  .markdown-editor-controls {
+    left: var(--space-5);
+  }
+
+  .reader-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .reading-path,
+  .reading-path-resizer {
+    display: none;
+  }
+
+  .topology-panel.is-fullscreen {
+    left: 0;
+  }
+}
+
+@media (max-width: 768px) {
+  .theme-options {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .generation-workspace-inner {
+    width: 100%;
+    padding: var(--space-5) var(--space-5) var(--space-16);
+  }
+
+  .generation-workbench {
+    margin-top: var(--space-4);
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .generation-type-rail {
+    padding: var(--space-4) var(--space-4) var(--space-3);
+    grid-row: auto;
+    border-right: 0;
+    border-bottom: var(--rule-thin) solid var(--color-rule);
+  }
+
+  .generation-rail-head {
+    min-height: 44px;
+    padding-right: 0;
+    padding-bottom: var(--space-3);
+    padding-left: 0;
+  }
+
+  .generation-type-list {
+    padding-bottom: var(--space-1);
+    display: flex;
+    gap: var(--space-2);
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: thin;
+  }
+
+  .generation-type-item {
+    width: 220px;
+    min-width: 220px;
+    flex: 0 0 220px;
+  }
+
+  .generation-type-item.is-active {
+    box-shadow:
+      inset 0 -2px 0 var(--color-accent),
+      0 4px 14px var(--color-shadow-soft);
+  }
+
+  .generation-basics-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .generation-basic-column + .generation-basic-column,
+  .generation-basic-column.is-preview {
+    border-left: 0;
+    border-top: var(--rule-thin) solid var(--color-rule);
+  }
+
+  .generation-prompt-layout,
+  .generation-advanced-layout,
+  .generation-check-messages {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .generation-advanced-matrix,
+  .generation-display-fields,
+  .generation-advanced-layout .generation-node-mode-note {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .generation-content-tabs {
+    padding: 0 var(--space-3);
+  }
+
+  .generation-content-panel {
+    padding: var(--space-4);
+  }
+
+  .generation-action-bar {
+    padding-bottom: var(--space-2);
+  }
+
+  .generation-preview-backdrop {
+    padding: var(--space-3);
+  }
+
+  .generation-preview-dialog {
+    max-height: calc(100svh - var(--titlebar-height) - var(--space-6));
+  }
+
+  html {
+    overflow-y: auto;
+  }
+
+  body,
+  #root {
+    overflow-y: visible;
+  }
+
+  .inline-formatting-toolbar {
+    width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+  }
+
+  .desktop-shell {
+    height: auto;
+    min-height: 100vh;
+    grid-template-rows: var(--titlebar-height) auto;
+    overflow: visible;
+  }
+
+  .desktop-content {
+    min-height: calc(100vh - var(--titlebar-height));
+    overflow: visible;
+  }
+
+  .route-stage {
+    min-height: inherit;
+  }
+
+  .home-app,
+  .reader-app,
+  .settings-app {
+    height: auto;
+    min-height: inherit;
+    overflow: visible;
+  }
+
+  .home-app {
+    height: calc(100svh - var(--titlebar-height));
+    min-height: calc(100svh - var(--titlebar-height));
+    overflow: hidden;
+  }
+
+  .home-app .home-workspace {
+    height: 100%;
+    min-height: 0;
+  }
+
+  .settings-canvas {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    overflow: visible;
+  }
+
+  .model-provider-detail {
+    padding: var(--space-5);
+  }
+
+  .model-provider-form-grid,
+  .model-provider-behavior {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .model-provider-behavior legend {
+    grid-column: auto;
+  }
+
+  .settings-sidebar {
+    min-width: 0;
+    min-height: 0;
+    padding: var(--space-4) var(--space-5) var(--space-3);
+    display: block;
+    overflow: hidden;
+    border-right: 0;
+    border-bottom: var(--rule-thin) solid var(--color-rule);
+  }
+
+  .settings-sidebar-intro {
+    display: none;
+  }
+
+  .settings-category-list {
+    padding-bottom: var(--space-1);
+    flex-direction: row;
+    gap: var(--space-2);
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: none;
+  }
+
+  .settings-category-list::-webkit-scrollbar {
+    display: none;
+  }
+
+  .settings-category {
+    width: max-content;
+    min-width: max-content;
+    min-height: 40px;
+    padding: 0 var(--space-3);
+    display: inline-grid;
+    grid-template-columns: 18px auto;
+    gap: var(--space-2);
+  }
+
+  .settings-category.is-active {
+    box-shadow: inset 0 -2px 0 var(--color-accent);
+  }
+
+  .settings-workspace {
+    overflow: visible;
+  }
+
+  .settings-workspace-inner {
+    padding: var(--space-8) var(--space-5) var(--space-16);
+  }
+
+  .settings-section-hero {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .shortcut-settings-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-3);
+  }
+
+  .shortcut-recorder {
+    width: 100%;
+  }
+
+  .content-style-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .content-style-options {
+    border-right: 0;
+    border-bottom: var(--rule-thin) solid var(--color-rule);
+  }
+
+  .reader-topbar {
+    height: auto;
+    min-height: 62px;
+    flex-wrap: wrap;
+  }
+
+  .global-search-trigger {
+    width: 100%;
+  }
+
+  .home-workspace {
+    height: auto;
+    min-height: calc(100vh - var(--titlebar-height));
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .home-sidebar-shell {
+    display: none;
+  }
+
+  .home-content {
+    height: 100%;
+    min-height: 0;
+    grid-template-rows: minmax(0, 1fr);
+    overflow: hidden;
+  }
+
+  .home-content.has-mobile-nav {
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .home-mobile-nav {
+    min-width: 0;
+    padding: var(--space-2) var(--space-3);
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-1);
+    background: var(--color-paper-solid);
+    border-bottom: var(--rule-thin) solid var(--color-rule);
+  }
+
+  .home-mobile-nav button {
+    min-width: 0;
+    min-height: 42px;
+    padding: var(--space-1) var(--space-2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    color: var(--color-muted);
+    background: transparent;
+    border-radius: var(--radius-sm);
+    font-size: var(--text-xs);
+    cursor: pointer;
+  }
+
+  .home-mobile-nav button.is-active {
+    color: var(--color-ink);
+    background: var(--color-accent-soft);
+    font-weight: 650;
+  }
+
+  .home-mobile-nav button:focus-visible {
+    outline: var(--rule-focus) solid var(--color-focus);
+    outline-offset: -2px;
+  }
+
+  .home-main {
+    padding:
+      var(--space-8)
+      var(--space-5)
+      calc(var(--space-16) + var(--space-10));
+    overflow-y: auto;
+  }
+
+  .home-main.settings-home-main {
+    padding: 0;
+    overflow: visible;
+  }
+
+  .recent-tools,
+  .recent-header {
+    width: 100%;
+  }
+
+  .recent-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .recent-timeline-group {
+    grid-template-columns: 70px 18px minmax(0, 1fr);
+  }
+
+  .recent-timeline-stamp {
+    padding-right: var(--space-2);
+  }
+
+  .inline-filter {
+    width: 100%;
+  }
+
+  .home-overview-tools {
+    margin: var(--space-8) 0;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-4);
+  }
+
+  .home-ledger {
+    width: fit-content;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .home-ledger > div {
+    min-height: 52px;
+    padding: var(--space-2) 0;
+    border-right: 0;
+    border-bottom: var(--rule-thin) solid var(--color-rule);
+  }
+
+  .home-ledger > div:last-child {
+    border-bottom: 0;
+  }
+
+  .home-action-dock {
+    right: var(--space-5);
+    bottom: var(--space-5);
+  }
+
+  .reader-topbar {
+    padding: var(--space-2);
+    gap: var(--space-2);
+  }
+
+  .reader-home-button {
+    padding-right: var(--space-2);
+  }
+
+  .generation-actions {
+    order: 3;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .generation-button {
+    flex: 1 0 auto;
+    max-width: none;
+  }
+
+  .generation-actions.is-icon-only {
+    width: auto;
+    margin-left: auto;
+  }
+
+  .generation-actions.is-icon-only .generation-button {
+    flex: 0 0 34px;
+  }
+
+  .reader-actions {
+    margin-left: auto;
+  }
+
+  .reader-workspace {
+    height: auto;
+  }
+
+  .reader-surface {
+    grid-template-columns: minmax(0, 1fr);
+    overflow: visible;
+  }
+
+  .article-scroll-region {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 0 var(--space-5);
+    overflow: visible;
+  }
+
+  .children-column {
+    height: auto;
+    padding: 0 var(--space-5) var(--space-16);
+    position: static;
+    overflow: visible;
+    border-left: 0;
+  }
+
+  .topology-panel.is-fullscreen {
+    top: calc(var(--titlebar-height) + 106px);
+  }
+
+  .topology-panel.is-fullscreen .topology-viewport {
+    height: 100%;
+  }
+}
+
+@media (max-width: 480px) {
+  .generation-workspace-inner {
+    padding-right: var(--space-4);
+    padding-left: var(--space-4);
+  }
+
+  .generation-node-workspace-header {
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .generation-node-save-state {
+    display: none;
+  }
+
+  .generation-basic-column {
+    padding: var(--space-4);
+  }
+
+  .generation-content-tabs button {
+    min-height: 44px;
+    padding: 0 var(--space-3);
+  }
+
+  .generation-request-summary > div,
+  .generation-advanced-matrix > div,
+  .generation-protocol-fields > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+
+  .generation-advanced-toggle {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .generation-model-parameters,
+  .generation-display-fields > div {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .generation-variable-dock {
+    align-items: flex-start;
+  }
+
+  .generation-variable-dock > div:first-child {
+    width: 100%;
+  }
+
+  .generation-variable-dock > div:last-child {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .generation-prompt-editor,
+  .generation-prompt-editor.is-user,
+  .generation-prompt-editor.is-user-template {
+    min-height: 200px;
+  }
+
+  .generation-action-bar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .generation-action-bar > div,
+  .generation-action-bar button,
+  .generation-live-status {
+    width: 100%;
+    margin-right: 0;
+  }
+
+  .generation-action-bar > div:last-child {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .generation-action-bar button {
+    min-height: 44px;
+  }
+
+  .generation-preview-backdrop {
+    padding: var(--space-2);
+  }
+
+  .generation-preview-dialog {
+    width: 100%;
+    max-height: calc(100svh - var(--titlebar-height) - var(--space-4));
+  }
+
+  .generation-preview-dialog > header,
+  .generation-preview-dialog > footer {
+    padding: var(--space-3) var(--space-4);
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .generation-preview-dialog > footer button {
+    width: 100%;
+  }
+
+  .generation-preview-tabs {
+    padding-right: var(--space-4);
+    padding-left: var(--space-4);
+  }
+
+  .generation-preview-panel {
+    padding: var(--space-4);
+  }
+
+  .shortcut-settings-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .shortcut-settings-toolbar button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .settings-content-style > header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .content-style-preview {
+    padding: var(--space-4);
+  }
+
+  .content-style-preview dl {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .content-style-custom-terms {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .model-provider-detail-header {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .model-provider-test {
+    grid-column: 1 / -1;
+    justify-self: stretch;
+    justify-content: center;
+  }
+
+  .model-provider-danger {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .settings-sidebar {
+    padding-right: var(--space-3);
+    padding-left: var(--space-3);
+  }
+
+  .settings-workspace-inner {
+    padding-right: var(--space-4);
+    padding-left: var(--space-4);
+  }
+
+  .settings-section-hero {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-section-icon {
+    width: 40px;
+    height: 40px;
+  }
+
+  .settings-row {
+    padding: var(--space-4);
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-3);
+  }
+
+  .settings-font-catalog {
+    padding: var(--space-3) var(--space-4);
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .settings-font-catalog > label {
+    width: 100%;
+  }
+
+  .settings-row-copy {
+    align-self: center;
+  }
+
+  .settings-value-slot,
+  .settings-value-slot.is-wide {
+    width: 100%;
+    justify-self: stretch;
+  }
+
+  .settings-value-slot.is-compact {
+    width: 48px;
+    justify-self: end;
+  }
+
+  .settings-font-control,
+  .settings-font-control.is-size {
+    width: 100%;
+    justify-self: stretch;
+  }
+
+  .window-page-title,
+  .window-title-divider {
+    display: none;
+  }
+
+  .global-search-trigger {
+    width: 100%;
+  }
+
+  .global-search-trigger kbd {
+    display: none;
+  }
+
+  .home-mobile-nav button {
+    flex-direction: column;
+    gap: 2px;
+    font-size: 10px;
+  }
+
+  .home-main {
+    padding-right: var(--space-4);
+    padding-left: var(--space-4);
+  }
+
+  .home-recent-preview > header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .recent-tools {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .recent-timeline-group {
+    grid-template-columns: 18px minmax(0, 1fr);
+  }
+
+  .recent-timeline-stamp {
+    padding: 0 0 var(--space-3) var(--space-3);
+    grid-column: 2;
+    align-items: flex-start;
+    text-align: left;
+  }
+
+  .recent-timeline-line {
+    grid-row: 1 / span 2;
+  }
+
+  .recent-timeline-cards {
+    padding-left: var(--space-3);
+    grid-column: 2;
+  }
+
+  .sort-button {
+    justify-content: center;
+  }
+
+  .reader-home-button .brand {
+    display: none;
+  }
+
+  .reader-topbar {
+    align-items: center;
+  }
+
+  .reader-actions .icon-button {
+    width: 40px;
+    height: 40px;
+  }
+
+  .article-column {
+    padding-top: var(--space-8);
+  }
+
+  .article-header h1 {
+    font-size: var(--text-3xl);
+  }
+
+  .article-footer-nav {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .article-footer-nav button {
+    justify-content: center;
+  }
+
+  .reader-shortcut-hint {
+    display: none;
+  }
+
+  .topology-shell {
+    right: var(--space-4);
+    bottom: var(--space-4);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html::view-transition-group(article-topology-panel),
+  html::view-transition-old(article-topology-panel),
+  html::view-transition-new(article-topology-panel) {
+    animation: none;
+  }
+
+  .markdown-editor-controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .markdown-editor-mode {
+    align-self: flex-start;
+  }
+
+  .generation-type-item,
+  .generation-variable-chip,
+  .generation-action-bar button {
+    transition: none !important;
+  }
+
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .topology-trigger,
+  .topology-content {
+    transition-delay: 0ms !important;
+  }
+
+  .topology-node-card,
+  .topology-links path {
+    animation-delay: 0ms !important;
+  }
+
+  .article-column[data-motion] {
+    animation-name: article-reduced-in;
+  }
+}
+
+@keyframes article-reduced-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes home-scroll-cue {
+  0%,
+  100% {
+    transform: translateY(-1px);
+  }
+  50% {
+    transform: translateY(3px);
+  }
+}
+
+/* 节点级配置表单(拓扑节点编辑器) */
+.node-config-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid color-mix(in oklch, var(--text, currentColor) 12%, transparent);
+  border-radius: 10px;
+  background: color-mix(in oklch, var(--surface, transparent) 40%, transparent);
+}
+.node-config-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+.node-config-fields label > span {
+  font-weight: 600;
+  opacity: 0.75;
+}
+.node-config-fields textarea,
+.node-config-fields input[type="number"],
+.node-config-fields select {
+  width: 100%;
+  box-sizing: border-box;
+  border-radius: 8px;
+  border: 1px solid color-mix(in oklch, var(--text, currentColor) 20%, transparent);
+  background: color-mix(in oklch, var(--surface, transparent) 60%, transparent);
+  color: inherit;
+  font: inherit;
+  padding: 6px 8px;
+}
+.node-config-display {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.node-config-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 4px 10px;
+}
+.node-config-field-grid label {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+.node-config-ai {
+  border-top: 1px dashed color-mix(in oklch, var(--text, currentColor) 16%, transparent);
+  padding-top: 8px;
+}
+.node-config-ai > summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 12px;
+  opacity: 0.85;
+}
+.node-config-ai > summary:hover {
+  opacity: 1;
+}
+.node-config-parameters {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.node-config-editor-details {
+  margin: 4px 0 12px;
+  padding: 0 2px;
+}
+.node-config-editor-details > summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 12px;
+  opacity: 0.85;
+}
+.node-config-editor-details > summary:hover {
+  opacity: 1;
+}
+.node-config-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.node-config-actions button {
+  border-radius: 8px;
+  border: 1px solid color-mix(in oklch, var(--text, currentColor) 24%, transparent);
+  background: color-mix(in oklch, var(--text, currentColor) 8%, transparent);
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.node-config-actions button:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--text, currentColor) 14%, transparent);
+}
+.node-config-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.node-config-message {
+  margin: 8px 0 0;
+  font-size: 12px;
+  opacity: 0.85;
+}

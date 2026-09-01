@@ -5,8 +5,11 @@ import {
   GENERATION_TYPES_STORAGE_KEY,
   initialGenerationTypes,
   loadGenerationTypes,
+  mergeNodeLevelConfig,
+  normalizeNodeLevelConfig,
   resolveArticleGenerationType,
   saveGenerationTypes,
+  TYPE_FAMILIES,
   type GenerationTypeConfig
 } from "./generationConfig";
 
@@ -59,7 +62,12 @@ describe("topology node generation configuration", () => {
       "checklist",
       "note",
       "source",
-      "flashcard"
+      "flashcard",
+      "formula",
+      "diagram",
+      "pitfall",
+      "analogy",
+      "task"
     ]);
     expect(initialGenerationTypes.map((type) => type.cardVariant)).toEqual([
       "root",
@@ -74,7 +82,12 @@ describe("topology node generation configuration", () => {
       "checklist",
       "note",
       "source",
-      "flashcard"
+      "flashcard",
+      "formula",
+      "diagram",
+      "pitfall",
+      "analogy",
+      "task"
     ]);
     expect(
       initialGenerationTypes
@@ -84,7 +97,12 @@ describe("topology node generation configuration", () => {
       ["root", "system", false],
       ["highlight", "manual", false],
       ["note", "manual", false],
-      ["source", "manual", false]
+      ["source", "manual", false],
+      ["formula", "manual", false],
+      ["diagram", "manual", false],
+      ["pitfall", "manual", false],
+      ["analogy", "manual", false],
+      ["task", "manual", false]
     ]);
     expect(
       initialGenerationTypes
@@ -98,6 +116,36 @@ describe("topology node generation configuration", () => {
       "source",
       "flashcard"
     ]);
+  });
+
+  it("maps every built-in generation type to a contract family", () => {
+    const expected: Array<[string, string]> = [
+      ["root", "笔记"],
+      ["explain", "笔记"],
+      ["translate", "笔记"],
+      ["summary", "记录"],
+      ["highlight", "记录"],
+      ["socratic", "交互"],
+      ["terms", "记录"],
+      ["compare", "记录"],
+      ["code", "笔记"],
+      ["checklist", "交互"],
+      ["note", "记录"],
+      ["source", "记录"],
+      ["flashcard", "交互"],
+      ["formula", "记录"],
+      ["diagram", "记录"],
+      ["pitfall", "记录"],
+      ["analogy", "记录"],
+      ["task", "交互"]
+    ];
+    for (const [id, family] of expected) {
+      expect(TYPE_FAMILIES[id], `${id} 应归属 ${family}`).toBe(family);
+    }
+    // 全部内置 id 都有家族映射
+    for (const type of initialGenerationTypes) {
+      expect(TYPE_FAMILIES[type.id], `${type.id} 缺少家族映射`).toBeDefined();
+    }
   });
 
   it("migrates legacy prompt types and appends newly introduced built-ins", () => {
@@ -215,5 +263,62 @@ describe("topology node generation configuration", () => {
     window.localStorage.setItem(GENERATION_TYPES_STORAGE_KEY, "not-json");
 
     expect(loadGenerationTypes()).toEqual(initialGenerationTypes);
+  });
+});
+
+describe("node-level config merge", () => {
+  const base = initialGenerationTypes.find((type) => type.id === "explain")!;
+
+  it("inherits type-level config when no node config is given", () => {
+    expect(mergeNodeLevelConfig(null, base)).toEqual(base);
+    expect(mergeNodeLevelConfig(undefined, base)).toEqual(base);
+  });
+
+  it("overrides only configured fields", () => {
+    const merged = mergeNodeLevelConfig(
+      {
+        modelBindingId: "provider-a:gpt-4o",
+        modelParameters: { temperature: 0.9 },
+        displayFields: ["title", "content"]
+      },
+      base
+    );
+    expect(merged.modelBindingId).toBe("provider-a:gpt-4o");
+    expect(merged.modelParameters.temperature).toBe(0.9);
+    expect(merged.modelParameters.topP).toBe(base.modelParameters.topP);
+    expect(merged.modelParameters.maxTokens).toBe(base.modelParameters.maxTokens);
+    expect(merged.displayFields).toEqual(["title", "content"]);
+    expect(merged.systemPrompt).toBe(base.systemPrompt);
+    expect(merged.userPrompt).toBe(base.userPrompt);
+  });
+
+  it("keeps type-level displayFields when node displayFields is empty", () => {
+    const merged = mergeNodeLevelConfig({ displayFields: [] }, base);
+    expect(merged.displayFields).toEqual(base.displayFields);
+  });
+
+  it("normalizes malformed config payloads", () => {
+    expect(normalizeNodeLevelConfig(null)).toBeNull();
+    expect(normalizeNodeLevelConfig("string")).toBeNull();
+    expect(normalizeNodeLevelConfig(42)).toBeNull();
+    expect(normalizeNodeLevelConfig('{"displayFields":["title"]}')).toEqual({
+      displayFields: ["title"]
+    });
+    const normalized = normalizeNodeLevelConfig({
+      modelBindingId: "provider-a:gpt-4o",
+      modelParameters: { temperature: 99, topP: -1, maxTokens: "many" },
+      displayFields: ["title", "not-a-field", "model"],
+      systemPrompt: "只用中文"
+    })!;
+    expect(normalized.modelBindingId).toBe("provider-a:gpt-4o");
+    expect(normalized.modelParameters).toEqual({ temperature: 2, topP: 0 });
+    expect(normalized.displayFields).toEqual(["title", "model"]);
+    expect(normalized.systemPrompt).toBe("只用中文");
+    expect(normalized.userPrompt).toBeUndefined();
+  });
+
+  it("drops to null when no valid field survives normalization", () => {
+    expect(normalizeNodeLevelConfig({ displayFields: [] })).toBeNull();
+    expect(normalizeNodeLevelConfig({ modelParameters: {} })).toBeNull();
   });
 });
