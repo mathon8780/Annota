@@ -6,6 +6,7 @@ import type {
 export type GenerationType = string;
 export type JobStatus = "queued" | "generating" | "failed";
 export type ViewName = "home" | "reader";
+export type NodeFamily = "笔记" | "记录" | "交互";
 export type MarkdownFormatType =
   | "bold"
   | "italic"
@@ -42,18 +43,34 @@ export interface ArticleNode {
     documentStart?: number;
     documentEnd?: number;
   };
+  /** 数据契约字段(拓扑Card节点内容结构化JSON):家族、创建方式、结构化内容、原文锚点、生成信息。 */
+  family?: NodeFamily;
+  creationMethod?: string;
+  contentJson?: unknown;
+  anchorJson?: unknown;
+  generationJson?: unknown;
 }
 
-export interface Notebook {
+export interface Collection {
   id: string;
   rootId: string;
   rootIds?: string[];
+  knowledgePointIds?: string[];
   title: string;
   summary: string;
+  description: string;
+  color: string;
+  icon: string;
   updatedAt: string;
   lastOpenedNodeId: string;
   accent: "cobalt" | "amber" | "green";
 }
+
+/** 一篇主文章及其派生节点构成一个知识点；根 ArticleNode 即知识点记录。 */
+export type KnowledgePoint = ArticleNode;
+
+/** 旧组件名仍在逐步收敛，运行时语义已经是集合。 */
+export type Notebook = Collection;
 
 export interface GenerationJob {
   id: string;

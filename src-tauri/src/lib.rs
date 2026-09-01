@@ -1,15 +1,21 @@
 mod markdown_store;
+mod transaction_journal;
 mod topology_store;
 mod window_size;
+mod workspace;
+mod workspace_runtime;
 
-use markdown_store::{MarkdownDocument, MarkdownStore};
+use markdown_store::MarkdownDocument;
+use std::path::PathBuf;
 use tauri::{LogicalSize, Manager, WindowEvent};
 use topology_store::{
-    SyncMarkdownTopologyRequest, TopologyCollection, TopologyGraph, TopologyInteraction,
-    TopologyNode, TopologyRelation, TopologyStore, UpsertTopologyCollectionRequest,
-    UpsertTopologyInteractionRequest, UpsertTopologyNodeRequest, UpsertTopologyRelationRequest,
+    LibraryLoadResult, LibraryMetadata, SyncMarkdownTopologyRequest, TopologyCollection,
+    TopologyGraph, TopologyInteraction, TopologyNode, TopologyRelation,
+    UpsertTopologyCollectionRequest, UpsertTopologyInteractionRequest, UpsertTopologyNodeRequest,
+    UpsertTopologyRelationRequest,
 };
 use window_size::{WindowDimensions, WindowSizePersistence};
+use workspace_runtime::{WorkspaceCatalog, WorkspaceDiagnosticReport, WorkspaceRuntime};
 
 #[cfg(windows)]
 fn system_font_families() -> Result<Vec<String>, String> {
@@ -96,107 +102,195 @@ fn list_system_fonts() -> Result<Vec<String>, String> {
 
 #[tauri::command]
 fn load_markdown_document(
-    store: tauri::State<'_, MarkdownStore>,
+    runtime: tauri::State<'_, WorkspaceRuntime>,
     document_id: String,
     initial_content: String,
+    knowledge_point_id: Option<String>,
 ) -> Result<MarkdownDocument, String> {
-    store.load_or_create(&document_id, &initial_content)
+    runtime.with_markdown(|store| {
+        store.load_or_create(
+            &document_id,
+            &initial_content,
+            knowledge_point_id.as_deref(),
+        )
+    })
 }
 
 #[tauri::command]
 fn save_markdown_document(
-    store: tauri::State<'_, MarkdownStore>,
+    runtime: tauri::State<'_, WorkspaceRuntime>,
     document_id: String,
     content: String,
+    knowledge_point_id: Option<String>,
 ) -> Result<MarkdownDocument, String> {
-    store.save(&document_id, &content)
+    runtime.with_markdown(|store| {
+        store.save(&document_id, &content, knowledge_point_id.as_deref())
+    })
+}
+
+#[tauri::command]
+fn load_library_metadata(
+    runtime: tauri::State<'_, WorkspaceRuntime>,
+    legacy_metadata: Option<LibraryMetadata>,
+) -> Result<LibraryLoadResult, String> {
+    runtime.with_topology(|store| store.load_library_metadata(legacy_metadata))
+}
+
+#[tauri::command]
+fn replace_library_metadata(
+    runtime: tauri::State<'_, WorkspaceRuntime>,
+    metadata: LibraryMetadata,
+) -> Result<(), String> {
+    runtime.with_topology(|store| store.replace_library_metadata(metadata))
+}
+
+#[tauri::command]
+fn load_node_type_definitions(
+    runtime: tauri::State<'_, WorkspaceRuntime>,
+) -> Result<Vec<serde_json::Value>, String> {
+    runtime.with_topology(|store| store.load_node_type_definitions())
+}
+
+#[tauri::command]
+fn replace_node_type_definitions(
+    runtime: tauri::State<'_, WorkspaceRuntime>,
+    definitions: Vec<serde_json::Value>,
+) -> Result<(), String> {
+    runtime.with_topology(|store| store.replace_node_type_definitions(definitions))
+}
+
+#[tauri::command]
+fn list_workspaces(
+    runtime: tauri::State<'_, WorkspaceRuntime>,
+) -> Result<WorkspaceCatalog, String> {
+    runtime.catalog()
+}
+
+#[tauri::command]
+fn create_workspace(
+    runtime: tauri::State<'_, WorkspaceRuntime>,
+    path: String,
+    display_name: String,
+) -> Result<WorkspaceCatalog, String> {
+    runtime.create_workspace(PathBuf::from(path), display_name)
+}
+
+#[tauri::command]
+fn add_existing_workspace(
+    runtime: tauri::State<'_, WorkspaceRuntime>,
+    path: String,
+) -> Result<WorkspaceCatalog, String> {
+    runtime.add_existing_workspace(PathBuf::from(path))
+}
+
+#[tauri::command]
+fn switch_workspace(
+    runtime: tauri::State<'_, WorkspaceRuntime>,
+    workspace_id: String,
+) -> Result<WorkspaceCatalog, String> {
+    runtime.switch_workspace(&workspace_id)
+}
+
+#[tauri::command]
+fn remove_workspace(
+    runtime: tauri::State<'_, WorkspaceRuntime>,
+    workspace_id: String,
+) -> Result<WorkspaceCatalog, String> {
+    runtime.remove_workspace(&workspace_id)
+}
+
+#[tauri::command]
+fn diagnose_workspace(
+    runtime: tauri::State<'_, WorkspaceRuntime>,
+) -> Result<WorkspaceDiagnosticReport, String> {
+    runtime.diagnose_active()
 }
 
 #[tauri::command]
 fn list_topology_collections(
-    store: tauri::State<'_, TopologyStore>,
+    runtime: tauri::State<'_, WorkspaceRuntime>,
 ) -> Result<Vec<TopologyCollection>, String> {
-    store.list_collections()
+    runtime.with_topology(|store| store.list_collections())
 }
 
 #[tauri::command]
 fn upsert_topology_collection(
-    store: tauri::State<'_, TopologyStore>,
+    runtime: tauri::State<'_, WorkspaceRuntime>,
     request: UpsertTopologyCollectionRequest,
 ) -> Result<TopologyCollection, String> {
-    store.upsert_collection(request)
+    runtime.with_topology(|store| store.upsert_collection(request))
 }
 
 #[tauri::command]
 fn sync_markdown_topology(
-    store: tauri::State<'_, TopologyStore>,
+    runtime: tauri::State<'_, WorkspaceRuntime>,
     request: SyncMarkdownTopologyRequest,
 ) -> Result<TopologyGraph, String> {
-    store.sync_markdown_topology(request)
+    runtime.with_topology(|store| store.sync_markdown_topology(request))
 }
 
 #[tauri::command]
 fn load_topology_graph(
-    store: tauri::State<'_, TopologyStore>,
+    runtime: tauri::State<'_, WorkspaceRuntime>,
     collection_id: String,
 ) -> Result<TopologyGraph, String> {
-    store.load_graph(&collection_id)
+    runtime.with_topology(|store| store.load_graph(&collection_id))
 }
 
 #[tauri::command]
 fn delete_topology_collection(
-    store: tauri::State<'_, TopologyStore>,
+    runtime: tauri::State<'_, WorkspaceRuntime>,
     collection_id: String,
 ) -> Result<bool, String> {
-    store.delete_collection(&collection_id)
+    runtime.with_topology(|store| store.delete_collection(&collection_id))
 }
 
 #[tauri::command]
 fn upsert_topology_node(
-    store: tauri::State<'_, TopologyStore>,
+    runtime: tauri::State<'_, WorkspaceRuntime>,
     request: UpsertTopologyNodeRequest,
 ) -> Result<TopologyNode, String> {
-    store.upsert_node(request)
+    runtime.with_topology(|store| store.upsert_node(request))
 }
 
 #[tauri::command]
 fn delete_topology_node(
-    store: tauri::State<'_, TopologyStore>,
+    runtime: tauri::State<'_, WorkspaceRuntime>,
     node_id: String,
 ) -> Result<bool, String> {
-    store.delete_node(&node_id)
+    runtime.with_topology(|store| store.delete_node(&node_id))
 }
 
 #[tauri::command]
 fn upsert_topology_relation(
-    store: tauri::State<'_, TopologyStore>,
+    runtime: tauri::State<'_, WorkspaceRuntime>,
     request: UpsertTopologyRelationRequest,
 ) -> Result<TopologyRelation, String> {
-    store.upsert_relation(request)
+    runtime.with_topology(|store| store.upsert_relation(request))
 }
 
 #[tauri::command]
 fn delete_topology_relation(
-    store: tauri::State<'_, TopologyStore>,
+    runtime: tauri::State<'_, WorkspaceRuntime>,
     relation_id: String,
 ) -> Result<bool, String> {
-    store.delete_relation(&relation_id)
+    runtime.with_topology(|store| store.delete_relation(&relation_id))
 }
 
 #[tauri::command]
 fn upsert_topology_interaction(
-    store: tauri::State<'_, TopologyStore>,
+    runtime: tauri::State<'_, WorkspaceRuntime>,
     request: UpsertTopologyInteractionRequest,
 ) -> Result<TopologyInteraction, String> {
-    store.upsert_interaction(request)
+    runtime.with_topology(|store| store.upsert_interaction(request))
 }
 
 #[tauri::command]
 fn delete_topology_interaction(
-    store: tauri::State<'_, TopologyStore>,
+    runtime: tauri::State<'_, WorkspaceRuntime>,
     interaction_id: String,
 ) -> Result<bool, String> {
-    store.delete_interaction(&interaction_id)
+    runtime.with_topology(|store| store.delete_interaction(&interaction_id))
 }
 
 #[derive(serde::Deserialize)]
@@ -343,6 +437,9 @@ struct ModelGenerationRequest {
     model: String,
     system_prompt: String,
     user_prompt: String,
+    temperature: f64,
+    top_p: f64,
+    max_tokens: u32,
 }
 
 fn model_endpoint_url(base_url: &str, endpoint_path: &str) -> Result<reqwest::Url, String> {
@@ -400,6 +497,15 @@ async fn generate_text(request: ModelGenerationRequest) -> Result<String, String
     if request.model.trim().is_empty() {
         return Err("生成类型没有选择可用模型".to_string());
     }
+    if !(0.0..=2.0).contains(&request.temperature) {
+        return Err("temperature 必须在 0 到 2 之间".to_string());
+    }
+    if !(0.0..=1.0).contains(&request.top_p) {
+        return Err("topP 必须在 0 到 1 之间".to_string());
+    }
+    if !(1..=128_000).contains(&request.max_tokens) {
+        return Err("maxTokens 必须在 1 到 128000 之间".to_string());
+    }
 
     let url = model_endpoint_url(&request.base_url, &request.endpoint_path)?;
     let client = reqwest::Client::builder()
@@ -414,7 +520,9 @@ async fn generate_text(request: ModelGenerationRequest) -> Result<String, String
             .header("anthropic-version", "2023-06-01");
         serde_json::json!({
             "model": request.model,
-            "max_tokens": 2400,
+            "max_tokens": request.max_tokens,
+            "temperature": request.temperature,
+            "top_p": request.top_p,
             "system": request.system_prompt,
             "messages": [{ "role": "user", "content": request.user_prompt }]
         })
@@ -422,6 +530,9 @@ async fn generate_text(request: ModelGenerationRequest) -> Result<String, String
         builder = builder.bearer_auth(request.api_key.trim());
         serde_json::json!({
             "model": request.model,
+            "temperature": request.temperature,
+            "top_p": request.top_p,
+            "max_tokens": request.max_tokens,
             "messages": [
                 { "role": "system", "content": request.system_prompt },
                 { "role": "user", "content": request.user_prompt }
@@ -482,35 +593,38 @@ mod tests {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            let app_data_directory = app.path().app_data_dir();
-            let persistence = match &app_data_directory {
-                Ok(directory) => Some(WindowSizePersistence::new(directory.clone())),
-                Err(error) => {
-                    eprintln!("failed to resolve window state directory: {error}");
-                    None
-                }
-            };
-            let dimensions = persistence
-                .as_ref()
-                .map(WindowSizePersistence::begin_session)
-                .unwrap_or(WindowDimensions::DEFAULT);
-
-            if let Some(persistence) = persistence {
-                app.manage(persistence);
-            }
-            if let Ok(directory) = app_data_directory {
-                let topology_store =
-                    TopologyStore::open(directory.clone()).map_err(std::io::Error::other)?;
-                app.manage(topology_store);
-                let markdown_store = MarkdownStore::new(directory);
-                markdown_store
-                    .apply_content_reset()
-                    .map_err(std::io::Error::other)?;
-                app.manage(markdown_store);
-            }
+            let app_data_directory = app.path().app_data_dir().map_err(std::io::Error::other)?;
+            let app_config_directory =
+                app.path().app_config_dir().map_err(std::io::Error::other)?;
+            let persistence = WindowSizePersistence::new(app_data_directory.clone());
+            let dimensions = persistence.begin_session();
+            app.manage(persistence);
+            let runtime = WorkspaceRuntime::initialize(app_data_directory, app_config_directory)
+                .map_err(std::io::Error::other)?;
+            app.manage(runtime);
 
             if let Some(window) = app.get_webview_window("main") {
+                let dimensions = window
+                    .current_monitor()
+                    .ok()
+                    .flatten()
+                    .map(|monitor| {
+                        const WINDOW_MARGIN: f64 = 48.0;
+                        let work_area = monitor.work_area();
+                        let scale_factor = monitor.scale_factor();
+                        dimensions.fit_for_open(
+                            work_area.size.width as f64 / scale_factor - WINDOW_MARGIN,
+                            work_area.size.height as f64 / scale_factor - WINDOW_MARGIN,
+                        )
+                    })
+                    .unwrap_or_else(|| {
+                        dimensions.fit_for_open(
+                            WindowDimensions::DEFAULT.width,
+                            WindowDimensions::DEFAULT.height,
+                        )
+                    });
                 if let Err(error) =
                     window.set_size(LogicalSize::new(dimensions.width, dimensions.height))
                 {
@@ -551,6 +665,16 @@ pub fn run() {
             list_system_fonts,
             load_markdown_document,
             save_markdown_document,
+            load_library_metadata,
+            replace_library_metadata,
+            load_node_type_definitions,
+            replace_node_type_definitions,
+            list_workspaces,
+            create_workspace,
+            add_existing_workspace,
+            switch_workspace,
+            remove_workspace,
+            diagnose_workspace,
             list_topology_collections,
             upsert_topology_collection,
             sync_markdown_topology,

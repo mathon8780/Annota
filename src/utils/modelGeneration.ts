@@ -9,6 +9,9 @@ export interface ModelGenerationRequest {
   model: string;
   systemPrompt: string;
   userPrompt: string;
+  temperature: number;
+  topP: number;
+  maxTokens: number;
 }
 
 function resolveEndpointUrl(baseUrl: string, endpointPath: string) {
@@ -86,7 +89,9 @@ async function generateInBrowser(request: ModelGenerationRequest) {
     headers.set("anthropic-version", "2023-06-01");
     body = {
       model: request.model,
-      max_tokens: 2400,
+      max_tokens: request.maxTokens,
+      temperature: request.temperature,
+      top_p: request.topP,
       system: request.systemPrompt,
       messages: [{ role: "user", content: request.userPrompt }]
     };
@@ -94,6 +99,9 @@ async function generateInBrowser(request: ModelGenerationRequest) {
     headers.set("Authorization", `Bearer ${request.apiKey.trim()}`);
     body = {
       model: request.model,
+      temperature: request.temperature,
+      top_p: request.topP,
+      max_tokens: request.maxTokens,
       messages: [
         { role: "system", content: request.systemPrompt },
         { role: "user", content: request.userPrompt }

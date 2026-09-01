@@ -13,7 +13,9 @@ import {
   Highlighter,
   Info,
   Languages,
+  Lightbulb,
   ListChecks,
+  LoaderCircle,
   LockKeyhole,
   MessageSquareText,
   Network,
@@ -21,9 +23,12 @@ import {
   Plus,
   Quote,
   RotateCcw,
+  Sigma,
   SlidersHorizontal,
   Tag,
   Trash2,
+  TriangleAlert,
+  Workflow,
   X,
   type LucideIcon
 } from "lucide-react";
@@ -40,11 +45,14 @@ import {
   initialGenerationTypes,
   loadGenerationTypes,
   saveGenerationTypes,
+  subscribeGenerationTypeHydration,
   type ContextScope,
   type GenerationTypeConfig,
   type GenerationTypeIconId,
+  type NodeDisplayField,
   type TopologyCardVariant
 } from "../utils/generationConfig";
+import type { NodeFamily } from "../types";
 import {
   configuredModels,
   loadModelProviders,
@@ -153,12 +161,31 @@ const contextOptions: Array<{
   }
 ];
 
+const familyOptions: Array<{ value: NodeFamily; detail: string }> = [
+  { value: "笔记", detail: "使用 Markdown 保存可继续阅读和延伸的文章内容。" },
+  { value: "记录", detail: "使用 SQLite 保存摘录、标记和结构化信息。" },
+  { value: "交互", detail: "在拓扑卡片中承载问答、勾选、编辑或翻转。" }
+];
+
+const displayFieldOptions: Array<{
+  value: NodeDisplayField;
+  label: string;
+  detail: string;
+}> = [
+  { value: "type", label: "节点类型", detail: "显示图标和节点类型名称" },
+  { value: "title", label: "标题", detail: "显示卡片主标题" },
+  { value: "summary", label: "描述", detail: "显示节点类型说明" },
+  { value: "content", label: "正文", detail: "显示生成或记录内容" },
+  { value: "source", label: "来源", detail: "显示原文定位和关系信息" },
+  { value: "model", label: "模型", detail: "显示节点调用的模型绑定" }
+];
+
 const typeIconOptions: Array<{
   id: GenerationTypeIconId;
   label: string;
   Icon: LucideIcon;
 }> = [
-  { id: "root", label: "根节点", Icon: BookOpenText },
+  { id: "root", label: "知识点", Icon: BookOpenText },
   { id: "explain", label: "对话解释", Icon: MessageSquareText },
   { id: "translate", label: "语言翻译", Icon: Languages },
   { id: "summary", label: "内容总结", Icon: AlignLeft },
@@ -170,7 +197,12 @@ const typeIconOptions: Array<{
   { id: "checklist", label: "实践清单", Icon: ListChecks },
   { id: "note", label: "个人笔记", Icon: NotebookPen },
   { id: "source", label: "原文来源", Icon: Quote },
-  { id: "flashcard", label: "复习闪卡", Icon: GalleryHorizontalEnd }
+  { id: "flashcard", label: "复习闪卡", Icon: GalleryHorizontalEnd },
+  { id: "formula", label: "公式推导", Icon: Sigma },
+  { id: "diagram", label: "架构图表", Icon: Workflow },
+  { id: "pitfall", label: "避坑辨析", Icon: TriangleAlert },
+  { id: "analogy", label: "概念类比", Icon: Lightbulb },
+  { id: "task", label: "任务状态", Icon: LoaderCircle }
 ];
 
 const cardVariantOptions = typeIconOptions.map(({ id, label }) => ({
@@ -244,14 +276,19 @@ const cardPreviewTitles: Record<TopologyCardVariant, string> = {
   checklist: "实现一个最小注意力模块",
   note: "我的理解：多个观察角度",
   source: "Attention 原文来源",
-  flashcard: "多头注意力复习卡"
+  flashcard: "多头注意力复习卡",
+  formula: "Scaled Dot-Product 推导",
+  diagram: "Encoder-Decoder 数据流",
+  pitfall: "Causal Mask 填充陷阱",
+  analogy: "Q/K/V 与图书馆检索",
+  task: "RoPE 相对位置编码对比"
 };
 
 const cardPreviewMeta: Record<
   TopologyCardVariant,
   { origin: string; footerLeft: string; footerRight: string }
 > = {
-  root: { origin: "集合根节点", footerLeft: "12 个章节", footerRight: "68% 已阅读" },
+  root: { origin: "知识点主文章", footerLeft: "12 个章节", footerRight: "68% 已阅读" },
   explain: { origin: "AI 生成", footerLeft: "来源：第 2 节", footerRight: "2 个子节点" },
   translate: { origin: "AI 翻译", footerLeft: "EN → 中文", footerRight: "可回溯原文" },
   summary: { origin: "AI 总结", footerLeft: "覆盖当前章节", footerRight: "5 条结论" },
@@ -263,7 +300,12 @@ const cardPreviewMeta: Record<
   checklist: { origin: "AI 清单", footerLeft: "3 个步骤", footerRight: "2 / 3 完成" },
   note: { origin: "个人记录", footerLeft: "刚刚编辑", footerRight: "未调用模型" },
   source: { origin: "来源保存", footerLeft: "Vaswani et al.", footerRight: "可回溯" },
-  flashcard: { origin: "AI 闪卡", footerLeft: "待复习", footerRight: "点击翻面" }
+  flashcard: { origin: "AI 闪卡", footerLeft: "待复习", footerRight: "点击翻面" },
+  formula: { origin: "AI 生成", footerLeft: "来源：解释", footerRight: "数学证明" },
+  diagram: { origin: "Mermaid", footerLeft: "渲染：flowchart LR", footerRight: "来源：结构章节" },
+  pitfall: { origin: "经验沉淀", footerLeft: "来源：代码实现", footerRight: "高频 Bug" },
+  analogy: { origin: "心智模型", footerLeft: "来源：术语解析", footerRight: "认知辅助" },
+  task: { origin: "异步调用", footerLeft: "Tokens: ~410", footerRight: "流式接收中" }
 };
 
 function CardPreviewBody({ variant }: { variant: TopologyCardVariant }) {
@@ -340,7 +382,7 @@ function CardPreviewBody({ variant }: { variant: TopologyCardVariant }) {
     case "root":
       return (
         <>
-          <p>从一个主题入口展开内容；同一内容集合可以并列存在多个根节点。</p>
+          <p>从一篇主文章展开内容；同一集合可以并列归类多个知识点。</p>
           <div className="topology-card-preview-facts">
             <span>6 个核心概念</span>
             <span>14 个派生节点</span>
@@ -349,6 +391,51 @@ function CardPreviewBody({ variant }: { variant: TopologyCardVariant }) {
             <i aria-hidden="true" />
           </div>
         </>
+      );
+    case "formula":
+      return (
+        <>
+          <div className="topology-card-preview-formula">
+            Attn(Q,K,V) = softmax(QKᵀ / √dₖ) V
+          </div>
+          <span className="topology-card-preview-formula-meta">
+            √dₖ 防止点积过大导致 Softmax 梯度饱和
+          </span>
+        </>
+      );
+    case "diagram":
+      return (
+        <div className="topology-card-preview-diagram">
+          <span className="topology-card-preview-diagram-node">Input</span>
+          <span className="topology-card-preview-diagram-arrow" aria-hidden="true">→</span>
+          <span className="topology-card-preview-diagram-node">Encoder</span>
+          <span className="topology-card-preview-diagram-arrow" aria-hidden="true">→</span>
+          <span className="topology-card-preview-diagram-node">Output</span>
+        </div>
+      );
+    case "pitfall":
+      return (
+        <div className="topology-card-preview-pitfall">
+          <span className="topology-card-preview-pitfall-bad">
+            <strong>误区：</strong>Mask 位置填充 0，仍参与 Softmax
+          </span>
+          <span className="topology-card-preview-pitfall-good">
+            <strong>正解：</strong>Softmax 前填充 −1e9 或 −∞
+          </span>
+        </div>
+      );
+    case "analogy":
+      return (
+        <p className="topology-card-preview-analogy">
+          Query 是借书条上的检索词，Key 是卡片目录的索引标签，Value 是书架上真正包含知识的内容本尊。
+        </p>
+      );
+    case "task":
+      return (
+        <div className="topology-card-preview-task">
+          <i className="topology-card-preview-task-spinner" aria-hidden="true" />
+          <span>生成中... 3.8s</span>
+        </div>
       );
     case "explain":
     default:
@@ -359,28 +446,40 @@ function CardPreviewBody({ variant }: { variant: TopologyCardVariant }) {
 function TopologyCardPreview({ type }: { type: GenerationTypeConfig }) {
   const TypeIcon = typeIcons[type.icon];
   const meta = cardPreviewMeta[type.cardVariant];
+  const shows = (field: NodeDisplayField) => type.displayFields.includes(field);
   return (
     <article
       className={`topology-card-preview is-${type.cardVariant}`}
       style={{ "--topology-card-color": type.color } as CSSProperties}
       aria-label={`节点样式预览：${type.name}`}
     >
-      <header>
-        <span className="topology-card-preview-kind">
-          <i aria-hidden="true"><TypeIcon size={15} /></i>
-          <strong>{type.name}</strong>
-        </span>
-        <small>{meta.origin}</small>
-      </header>
-      <h4>{cardPreviewTitles[type.cardVariant]}</h4>
-      <div className="topology-card-preview-body">
-        <CardPreviewBody variant={type.cardVariant} />
-      </div>
-      <footer>
-        <span>{meta.footerLeft}</span>
-        <span>{meta.footerRight}</span>
-      </footer>
-      {type.cardVariant === "root" && <em>根节点</em>}
+      {(shows("type") || shows("model")) && (
+        <header>
+          {shows("type") ? (
+            <span className="topology-card-preview-kind">
+              <i aria-hidden="true"><TypeIcon size={15} /></i>
+              <strong>{type.name}</strong>
+            </span>
+          ) : <span />}
+          {shows("model") && <small>{type.modelBindingId}</small>}
+        </header>
+      )}
+      {shows("title") && <h4>{cardPreviewTitles[type.cardVariant]}</h4>}
+      {shows("summary") && type.description && (
+        <p className="topology-card-preview-description">{type.description}</p>
+      )}
+      {shows("content") && (
+        <div className="topology-card-preview-body">
+          <CardPreviewBody variant={type.cardVariant} />
+        </div>
+      )}
+      {shows("source") && (
+        <footer>
+          <span>{meta.footerLeft}</span>
+          <span>{meta.footerRight}</span>
+        </footer>
+      )}
+      {type.cardVariant === "root" && <em>知识点</em>}
     </article>
   );
 }
@@ -410,6 +509,11 @@ export function GenerationPage() {
   useEffect(() => {
     saveGenerationTypes(types);
   }, [types]);
+
+  useEffect(
+    () => subscribeGenerationTypeHydration(() => setTypes(loadGenerationTypes())),
+    []
+  );
 
   useEffect(() => {
     saveReaderToolbarPreferences(readerToolbarPreferences);
@@ -768,6 +872,44 @@ export function GenerationPage() {
                       }
                     />
                   </label>
+                  <label className="generation-field generation-description-field">
+                    <span>节点描述</span>
+                    <textarea
+                      aria-label="节点描述"
+                      value={activeType.description}
+                      maxLength={160}
+                      rows={3}
+                      onChange={(event) =>
+                        updateActiveType((type) => ({
+                          ...type,
+                          description: event.target.value
+                        }))
+                      }
+                    />
+                    <small>说明该节点何时创建，以及用户会在卡片中看到什么。</small>
+                  </label>
+                  <label className="generation-field">
+                    <span>节点家族</span>
+                    <select
+                      aria-label="节点家族"
+                      value={activeType.family}
+                      onChange={(event) =>
+                        updateActiveType((type) => ({
+                          ...type,
+                          family: event.target.value as NodeFamily
+                        }))
+                      }
+                    >
+                      {familyOptions.map((option) => (
+                        <option value={option.value} key={option.value}>
+                          {option.value}
+                        </option>
+                      ))}
+                    </select>
+                    <small>
+                      {familyOptions.find((option) => option.value === activeType.family)?.detail}
+                    </small>
+                  </label>
                   <label
                     className={`generation-field generation-model-field${
                       isAiNode ? "" : " is-disabled"
@@ -827,6 +969,81 @@ export function GenerationPage() {
                       </small>
                     )}
                   </label>
+                  <fieldset
+                    className={`generation-model-parameters${isAiNode ? "" : " is-disabled"}`}
+                    disabled={!isAiNode}
+                  >
+                    <legend>模型调用参数</legend>
+                    <label>
+                      <span>Temperature</span>
+                      <input
+                        aria-label="Temperature"
+                        type="number"
+                        min="0"
+                        max="2"
+                        step="0.1"
+                        value={activeType.modelParameters.temperature}
+                        onChange={(event) =>
+                          updateActiveType((type) => ({
+                            ...type,
+                            modelParameters: {
+                              ...type.modelParameters,
+                              temperature: Math.min(
+                                2,
+                                Math.max(0, Number(event.target.value) || 0)
+                              )
+                            }
+                          }))
+                        }
+                      />
+                    </label>
+                    <label>
+                      <span>Top P</span>
+                      <input
+                        aria-label="Top P"
+                        type="number"
+                        min="0"
+                        max="1"
+                        step="0.05"
+                        value={activeType.modelParameters.topP}
+                        onChange={(event) =>
+                          updateActiveType((type) => ({
+                            ...type,
+                            modelParameters: {
+                              ...type.modelParameters,
+                              topP: Math.min(
+                                1,
+                                Math.max(0, Number(event.target.value) || 0)
+                              )
+                            }
+                          }))
+                        }
+                      />
+                    </label>
+                    <label>
+                      <span>最大 Tokens</span>
+                      <input
+                        aria-label="最大 Tokens"
+                        type="number"
+                        min="1"
+                        max="128000"
+                        step="128"
+                        value={activeType.modelParameters.maxTokens}
+                        onChange={(event) =>
+                          updateActiveType((type) => ({
+                            ...type,
+                            modelParameters: {
+                              ...type.modelParameters,
+                              maxTokens: Math.min(
+                                128_000,
+                                Math.max(1, Math.round(Number(event.target.value) || 1))
+                              )
+                            }
+                          }))
+                        }
+                      />
+                    </label>
+                  </fieldset>
                   <label
                     className={`generation-field generation-context-select${
                       isAiNode ? "" : " is-disabled"
@@ -1199,6 +1416,32 @@ export function GenerationPage() {
                           ))}
                         </select>
                       </label>
+                      <fieldset className="generation-display-fields">
+                        <legend>卡片显示内容</legend>
+                        <p>仅勾选需要在拓扑卡片中直接呈现的字段。</p>
+                        <div>
+                          {displayFieldOptions.map((option) => (
+                            <label key={option.value}>
+                              <input
+                                type="checkbox"
+                                checked={activeType.displayFields.includes(option.value)}
+                                onChange={(event) =>
+                                  updateActiveType((type) => ({
+                                    ...type,
+                                    displayFields: event.target.checked
+                                      ? Array.from(new Set([...type.displayFields, option.value]))
+                                      : type.displayFields.filter((field) => field !== option.value)
+                                  }))
+                                }
+                              />
+                              <span>
+                                <strong>{option.label}</strong>
+                                <small>{option.detail}</small>
+                              </span>
+                            </label>
+                          ))}
+                        </div>
+                      </fieldset>
                       <label className="generation-advanced-toggle">
                         <span>
                           <strong>拓扑互动</strong>
@@ -1259,7 +1502,7 @@ export function GenerationPage() {
                           <span>
                             {activeType.executionMode === "manual"
                               ? "手动节点由用户填写标题、内容与互动信息；不会生成 Markdown，也不会配置或调用 AI。"
-                              : "系统节点用于组织内容集合；同一集合可以包含多个根节点。"}
+                              : "系统节点用于组织集合；同一集合可以包含多个知识点。"}
                           </span>
                         </div>
                       )}

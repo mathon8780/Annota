@@ -17,6 +17,7 @@ import { APP_THEME_STORAGE_KEY } from "./utils/themePreferences";
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 function seedStoredAppData(data = seedData) {
@@ -38,18 +39,10 @@ function renderApp(clearStorage = true) {
   );
 }
 
-function showRecentBrowsing() {
-  const viewport = screen.getByRole("region", { name: "主页分页内容" });
-  if (viewport.getAttribute("data-active-page") === "overview") {
-    fireEvent.wheel(viewport, { deltaY: 96 });
-  }
-}
-
 async function openFirstNotebook(user: ReturnType<typeof userEvent.setup>) {
   const notebook = seedData.notebooks[0];
-  showRecentBrowsing();
   await user.click(
-    screen.getByRole("button", { name: `打开笔记：${notebook.title}` })
+    screen.getByRole("button", { name: `打开文章：${seedData.articles[notebook.rootId].title}` })
   );
   return seedData.articles[notebook.rootId];
 }
@@ -163,7 +156,7 @@ describe("Annota core flow", () => {
       "0"
     );
     expect(screen.getByText("知识库还是空的")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /打开笔记：/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /打开集合：/ })).toBeNull();
   });
 
   it("removes bundled notes from legacy storage", () => {
@@ -179,7 +172,7 @@ describe("Annota core flow", () => {
       "0"
     );
     expect(screen.getByText("知识库还是空的")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /打开笔记：/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /打开集合：/ })).toBeNull();
   });
 
   it("clears retired article metadata and browser Markdown content on upgrade", () => {
@@ -195,17 +188,17 @@ describe("Annota core flow", () => {
     expect(window.localStorage.getItem("annota:content-reset.single-markdown-v1")).toBe("done");
   });
 
-  it("only exposes home and generation in the home navigation", () => {
+  it("exposes collections, home and generation in the home navigation", () => {
     renderApp();
     const sidebar = screen.getByRole("complementary", { name: "主页导航" });
     const navigation = within(sidebar).getByRole("navigation");
 
-    expect(within(navigation).getAllByRole("button")).toHaveLength(2);
+    expect(within(navigation).getAllByRole("button")).toHaveLength(3);
+    expect(within(navigation).getByRole("button", { name: "集合" })).toBeInTheDocument();
     expect(within(navigation).getByRole("button", { name: "主页" })).toBeInTheDocument();
     expect(
       within(navigation).getByRole("button", { name: "拓扑节点" })
     ).toBeInTheDocument();
-    expect(within(navigation).queryByRole("button", { name: "文件夹" })).toBeNull();
     expect(within(navigation).queryByRole("button", { name: "标签" })).toBeNull();
     expect(within(navigation).queryByRole("button", { name: "收藏" })).toBeNull();
   });
@@ -408,7 +401,7 @@ describe("Annota core flow", () => {
     const user = userEvent.setup();
     const generationPage = await openGenerationPage(user);
     const nodeNames = [
-      "根节点",
+      "知识点",
       "解释",
       "翻译",
       "总结",
@@ -420,7 +413,12 @@ describe("Annota core flow", () => {
       "实践清单",
       "个人笔记",
       "原文来源",
-      "复习闪卡"
+      "复习闪卡",
+      "公式",
+      "架构图",
+      "避坑",
+      "类比",
+      "任务"
     ];
 
     nodeNames.forEach((name) => {
@@ -583,7 +581,7 @@ describe("Annota core flow", () => {
     );
     expect(
       within(appearance).getAllByRole("button", { name: /使用图标：/ })
-    ).toHaveLength(13);
+    ).toHaveLength(18);
     expect(
       within(generationPage).queryByRole("textbox", { name: "关系标签" })
     ).not.toBeInTheDocument();
@@ -594,7 +592,7 @@ describe("Annota core flow", () => {
       within(generationPage).getAllByRole("button", {
         name: /使用图标：/
       })
-    ).toHaveLength(13);
+    ).toHaveLength(18);
     expect(
       within(generationPage).queryByText(
         "指定执行此行为时使用的模型；Demo 不会发起真实请求。"
@@ -770,48 +768,30 @@ describe("Annota core flow", () => {
     );
   });
 
-  it("slides from the overview to recent browsing and only returns from its top edge", () => {
+  it("shows knowledge point articles as a single home page without pagination", () => {
     const { container } = renderApp();
-    const viewport = screen.getByRole("region", { name: "主页分页内容" });
-    const recentPage = container.querySelector(
-      ".home-recent-page"
-    ) as HTMLElement;
-
-    expect(viewport).toHaveAttribute("data-active-page", "overview");
-    fireEvent.wheel(viewport, { deltaY: 96 });
-    expect(viewport).toHaveAttribute("data-active-page", "recent");
-
-    Object.defineProperty(recentPage, "scrollTop", {
-      configurable: true,
-      writable: true,
-      value: 80
-    });
-    fireEvent.wheel(recentPage, { deltaY: -96 });
-    expect(viewport).toHaveAttribute("data-active-page", "recent");
-
-    recentPage.scrollTop = 0;
-    fireEvent.wheel(recentPage, { deltaY: -96 });
-    expect(viewport).toHaveAttribute("data-active-page", "overview");
+    expect(screen.queryByRole("region", { name: "主页分页内容" })).toBeNull();
+    expect(container.querySelector(".home-knowledge-points-page")).toBeInTheDocument();
+    expect(container.querySelector(".home-recent-page")).toBeNull();
+    expect(container.querySelector(".home-scroll-cue")).toBeNull();
   });
 
-  it("renders C++ demo notes in a descending recent-browsing timeline", () => {
-    const { container } = renderApp();
-    const viewport = screen.getByRole("region", { name: "主页分页内容" });
-    fireEvent.wheel(viewport, { deltaY: 96 });
-
-    const timeline = screen.getByRole("list", { name: "最近浏览时间线" });
+  it("lists knowledge point articles in descending update order", () => {
+    renderApp();
     const timestamps = Array.from(
-      timeline.querySelectorAll<HTMLTimeElement>("time[data-timestamp]")
-    ).map((item) => Number(item.dataset.timestamp));
+      document.querySelectorAll<HTMLTimeElement>(
+        ".knowledge-point-card time"
+      )
+    ).map((item) => Number(item.dataset.timestamp ?? item.getAttribute("datetime") ? new Date(item.getAttribute("datetime") ?? "").getTime() : 0));
 
+    expect(timestamps.length).toBeGreaterThan(1);
     expect(timestamps).toEqual([...timestamps].sort((left, right) => right - left));
     expect(
-      screen.getByRole("button", { name: "打开笔记：虚函数与动态多态" })
+      screen.getByRole("button", { name: "打开文章：ECS 架构：从数据布局到系统调度" })
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "打开笔记：模板基础与函数模板" })
+      screen.getByRole("button", { name: "打开文章：虚函数与动态多态" })
     ).toBeInTheDocument();
-    expect(container.querySelector(".recent-timeline-line")).toBeInTheDocument();
   });
 
   it("opens a recent notebook in the reader and returns home", async () => {
@@ -829,7 +809,7 @@ describe("Annota core flow", () => {
     );
     expect(
       homeContent?.querySelector(
-        ".home-mobile-nav + .home-page-viewport"
+        ".home-mobile-nav + .home-knowledge-points-page"
       )
     ).toBeInTheDocument();
     expect(container.querySelector(".home-workspace > .home-topbar")).not.toBeInTheDocument();
@@ -867,11 +847,12 @@ describe("Annota core flow", () => {
 
     await user.click(screen.getByRole("button", { name: "返回主页" }));
     expect(screen.getByRole("heading", { name: "继续生长你的知识树" })).toBeInTheDocument();
-    expect(container.querySelector("#recent-title")).toHaveTextContent("最近浏览");
+    expect(container.querySelector(".home-knowledge-points-page")).toBeInTheDocument();
     expect(container.querySelector(".route-stage")).not.toHaveAttribute("data-motion");
   });
 
   it("follows visible Markdown blocks in the child card rail", async () => {
+    vi.stubGlobal("IntersectionObserver", undefined);
     const user = userEvent.setup();
     const viewportData = JSON.parse(JSON.stringify(seedData)) as typeof seedData;
     viewportData.articles["ecs-component"].source = {
@@ -903,7 +884,7 @@ describe("Annota core flow", () => {
     await waitFor(() => {
       expect(surface.querySelectorAll("[data-markdown-block-id]").length).toBeGreaterThan(0);
     });
-    let visible = new Set(["ecs-root-b2", "ecs-root-b4"]);
+    let visible = new Set(["ecs-root-b2"]);
     surface.querySelectorAll<HTMLElement>("[data-markdown-block-id]").forEach((line) => {
       vi.spyOn(line, "getBoundingClientRect").mockImplementation(() =>
         visible.has(line.dataset.markdownBlockId ?? "") ? rect(100, 124) : rect(700, 724)
@@ -917,7 +898,6 @@ describe("Annota core flow", () => {
         .map((title) => title.textContent);
       expect(titles).toEqual([
         seedData.articles["ecs-component"].title,
-        seedData.articles["ecs-system"].title,
         seedData.articles["ecs-entity"].title
       ]);
     });
@@ -1232,10 +1212,15 @@ describe("Annota core flow", () => {
       ".topology-node-card[aria-current='page']"
     )!;
     const expectedCurrentX =
-      420 / 2 - (Number.parseFloat(currentNode.style.left) + 214 / 2) * 0.9;
+      420 / 2 -
+      (Number.parseFloat(currentNode.style.left) +
+        Number.parseFloat(currentNode.style.width) / 2) *
+        0.9;
     const expectedCurrentY =
       322 / 2 -
-      (Number.parseFloat(currentNode.style.top) + 118 / 2) * 0.9;
+      // 卡片高度不再写入内联样式(自适应内容),jsdom 无测量 → 布局用根卡固定表高度 152
+      (Number.parseFloat(currentNode.style.top) + 152 / 2) *
+        0.9;
     expect(scene.style.transform).toBe(
       `translate(${expectedCurrentX}px, ${expectedCurrentY}px) scale(0.9)`
     );
@@ -1328,18 +1313,66 @@ describe("Annota core flow", () => {
     expect(screen.getByRole("heading", { level: 1, name: secondTitle })).toBeInTheDocument();
   });
 
-  it("filters recent notebook cards", async () => {
+  it("filters knowledge point articles on the home page", async () => {
     const user = userEvent.setup();
     renderApp();
 
-    fireEvent.wheel(screen.getByRole("region", { name: "主页分页内容" }), {
-      deltaY: 96
-    });
-    const input = screen.getByPlaceholderText("筛选当前卡片");
+    const input = screen.getByPlaceholderText("筛选文章");
     await user.type(input, "Neo4j");
 
-    expect(screen.getByRole("button", { name: /打开笔记：图数据库 Neo4j/ })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /打开笔记：ECS 架构/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /打开文章：图数据库 Neo4j/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /打开文章：ECS 架构/ })).not.toBeInTheDocument();
+  });
+
+  it("collects articles into a collection from the collections view", async () => {
+    const user = userEvent.setup();
+    renderApp();
+    const sidebar = screen.getByRole("complementary", { name: "主页导航" });
+    await user.click(within(sidebar).getByRole("button", { name: "集合" }));
+
+    expect(screen.getByRole("heading", { name: "集合" })).toBeInTheDocument();
+    const collectButtons = screen.getAllByRole("button", { name: "收集文章" });
+    expect(collectButtons.length).toBeGreaterThan(0);
+    await user.click(collectButtons[0]);
+    const dialog = screen.getByRole("dialog", { name: "收集文章" });
+    const option = within(dialog)
+      .getAllByRole("checkbox")
+      .find((box) => !(box as HTMLInputElement).disabled);
+    expect(option).toBeTruthy();
+    await user.click(option!);
+    await user.click(within(dialog).getByRole("button", { name: "加入集合" }));
+
+    expect(screen.queryByRole("dialog", { name: "收集文章" })).toBeNull();
+  });
+
+  it("auto-creates a collection when opening an uncategorized article", async () => {
+    const user = userEvent.setup();
+    const data = JSON.parse(JSON.stringify(seedData)) as typeof seedData;
+    const orphanId = "orphan-root";
+    data.articles[orphanId] = {
+      id: orphanId,
+      rootId: orphanId,
+      parentId: null,
+      title: "未归类文章",
+      summary: "独立知识点",
+      type: "根节点",
+      childIds: [],
+      createdAt: "2026-09-01T00:00:00.000Z",
+      updatedAt: "2026-09-01T01:00:00.000Z"
+    };
+    seedStoredAppData(data);
+    renderApp(false);
+
+    expect(
+      screen.getByRole("button", { name: "打开文章：未归类文章" })
+    ).toBeInTheDocument();
+    expect(screen.getByText("未归类")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "打开文章：未归类文章" }));
+
+    expect(screen.getByRole("heading", { name: "未归类文章" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "文章阅读区域" })
+    ).toBeInTheDocument();
   });
 
   it("does not create generated content when no generation service is configured", async () => {
@@ -1902,7 +1935,7 @@ describe("Annota core flow", () => {
       name: "自定义最近浏览表述"
     });
     const customNewNoteInput = within(settingsCanvas).getByRole("textbox", {
-      name: "自定义新建文章表述"
+      name: "自定义新建集合表述"
     });
     await user.clear(customNameInput);
     await user.type(customNameInput, "专注模式");
@@ -2116,7 +2149,7 @@ describe("Annota core flow", () => {
     expect(container.querySelector(".home-app")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "工作台" }));
-    expect(container.querySelector("#recent-title")).toHaveTextContent("最近记录");
+    expect(container.querySelector(".home-knowledge-points-page")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "写新内容" })).toBeInTheDocument();
     await openFirstNotebook(user);
     const topologyPanel = screen.getByRole("complementary", {

@@ -3,14 +3,13 @@ import {
   useMemo,
   useRef,
   useState,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type TouchEvent as ReactTouchEvent
+  type CSSProperties
 } from "react";
 import {
   BookOpenText,
-  ChevronDown,
   ChevronLeft,
   FileInput,
+  Folder,
   Import,
   LibraryBig,
   Network,
@@ -75,22 +74,8 @@ function countDescendants(rootIds: string | readonly string[], articles: ReturnT
   return seen.size;
 }
 
-function formatTimelineDay(value: string) {
-  const date = new Date(value);
-  const today = new Date();
-  const sameDay = (left: Date, right: Date) =>
-    left.getFullYear() === right.getFullYear() &&
-    left.getMonth() === right.getMonth() &&
-    left.getDate() === right.getDate();
-  const yesterday = new Date(today);
-  yesterday.setDate(today.getDate() - 1);
-  if (sameDay(date, today)) return "今天";
-  if (sameDay(date, yesterday)) return "昨天";
-  return date.toLocaleDateString("zh-CN", {
-    month: "long",
-    day: "numeric",
-    weekday: "short"
-  });
+function collectionKnowledgePointIds(notebook: Notebook) {
+  return notebook.knowledgePointIds ?? notebook.rootIds ?? [notebook.rootId];
 }
 
 function formatClock(value: string) {
@@ -99,11 +84,6 @@ function formatClock(value: string) {
     minute: "2-digit",
     hour12: false
   });
-}
-
-function timelineDateKey(value: string) {
-  const date = new Date(value);
-  return [date.getFullYear(), date.getMonth() + 1, date.getDate()].join("-");
 }
 
 export function HomePage({
@@ -128,25 +108,37 @@ export function HomePage({
     data,
     openNotebook,
     createNotebook,
+    createKnowledgePoint,
+    ensureCollectionForArticle,
+    collectArticle,
     importPackage
   } = useAppStore();
-  const [activeHomeView, setActiveHomeView] = useState<"home" | "generation">("home");
-  const [activePage, setActivePage] = useState<"overview" | "recent">("overview");
+  const [activeHomeView, setActiveHomeView] = useState<"home" | "collections" | "generation">("home");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [filter, setFilter] = useState("");
   const [newTitle, setNewTitle] = useState("");
+  const [newDescription, setNewDescription] = useState("");
+  const [newColor, setNewColor] = useState("#315fdb");
+  const [newIcon, setNewIcon] = useState("library");
+  const [targetCollectionId, setTargetCollectionId] = useState<string | null>(null);
+  const [collectTargetId, setCollectTargetId] = useState<string | null>(null);
+  const [collectSelection, setCollectSelection] = useState<string[]>([]);
   const [actionMenuOpen, setActionMenuOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const newDialogRef = useRef<HTMLDialogElement>(null);
-  const overviewScrollRef = useRef<HTMLElement>(null);
-  const recentScrollRef = useRef<HTMLElement>(null);
-  const pageViewportRef = useRef<HTMLDivElement>(null);
-  const touchStartYRef = useRef<number | null>(null);
+  const collectDialogRef = useRef<HTMLDialogElement>(null);
 
   const notebooks = useMemo(() => {
     const query = filter.trim().toLocaleLowerCase("zh-CN");
     const filtered = data.notebooks.filter((notebook) =>
-      [notebook.title, notebook.summary]
+      [
+        notebook.title,
+        notebook.description,
+        notebook.summary,
+        ...collectionKnowledgePointIds(notebook).map(
+          (id) => data.articles[id]?.title ?? ""
+        )
+      ]
         .join(" ")
         .toLocaleLowerCase("zh-CN")
         .includes(query)
@@ -155,62 +147,89 @@ export function HomePage({
       (left, right) =>
         new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
     );
-  }, [data.notebooks, filter]);
+  }, [data.articles, data.notebooks, filter]);
 
-  const recentPreview = useMemo(
-    () =>
-      [...data.notebooks]
-        .sort(
-          (left, right) =>
-            new Date(right.updatedAt).getTime() -
-            new Date(left.updatedAt).getTime()
-        )
-        .slice(0, 3),
-    [data.notebooks]
-  );
   const todayLabel = new Intl.DateTimeFormat("zh-CN", {
     month: "long",
     day: "numeric",
     weekday: "long"
   }).format(new Date());
 
-  const timelineGroups = useMemo(() => {
-    return notebooks.reduce<
-      Array<{ key: string; label: string; notebooks: Notebook[] }>
-    >((groups, notebook) => {
-      const key = timelineDateKey(notebook.updatedAt);
-      const current = groups.at(-1);
-      if (current?.key === key) {
-        current.notebooks.push(notebook);
-      } else {
-        groups.push({
-          key,
-          label: formatTimelineDay(notebook.updatedAt),
-          notebooks: [notebook]
-        });
-      }
-      return groups;
-    }, []);
-  }, [notebooks]);
+  /** 主页展示的知识点(根文章)列表,按最近更新排序。 */
+  const knowledgePoints = useMemo(() => {
+    const query = filter.trim().toLocaleLowerCase("zh-CN");
+    return Object.values(data.articles)
+      .filter((article) => article.parentId === null)
+      .filter((article) =>
+        [article.title, article.summary, article.type]
+          .join(" ")
+          .toLocaleLowerCase("zh-CN")
+          .includes(query)
+      )
+      .sort(
+        (left, right) =>
+          new Date(right.updatedAt).getTime() -
+          new Date(left.updatedAt).getTime()
+      );
+  }, [data.articles, filter]);
+
+  const collectionsOfArticle = (articleId: string) =>
+    data.notebooks.filter((notebook) =>
+      (notebook.knowledgePointIds ?? notebook.rootIds ?? [notebook.rootId]).includes(
+        articleId
+      )
+    );
 
   const totalNodes = Object.keys(data.articles).length;
 
-  useEffect(() => {
-    const overview = overviewScrollRef.current as
-      | (HTMLElement & { inert: boolean })
-      | null;
-    const recent = recentScrollRef.current as
-      | (HTMLElement & { inert: boolean })
-      | null;
-    if (overview) overview.inert = activePage !== "overview";
-    if (recent) recent.inert = activePage !== "recent";
-  }, [activePage]);
+  const openKnowledgePoint = async (articleId: string) => {
+    const collections = collectionsOfArticle(articleId);
+    if (collections.length) {
+      openNotebook(collections[0].id);
+      return;
+    }
+    const notebookId = await ensureCollectionForArticle(articleId);
+    if (notebookId) openNotebook(notebookId);
+  };
+
+  const openCollectDialog = (notebookId: string) => {
+    setCollectTargetId(notebookId);
+    setCollectSelection([]);
+    collectDialogRef.current?.showModal();
+  };
+
+  const confirmCollect = async () => {
+    if (!collectTargetId || !collectSelection.length) return;
+    await collectArticle(collectTargetId, collectSelection);
+    setCollectSelection([]);
+    setCollectTargetId(null);
+    collectDialogRef.current?.close();
+  };
 
   const handleCreate = async () => {
-    const title = newTitle.trim() || "未命名笔记";
-    await createNotebook(title);
+    const title = newTitle.trim() || (targetCollectionId ? "未命名知识点" : "未命名集合");
+    if (targetCollectionId) {
+      await createKnowledgePoint(targetCollectionId, title);
+    } else {
+      await createNotebook(title, "", {
+        description: newDescription,
+        color: newColor,
+        icon: newIcon
+      });
+    }
     setNewTitle("");
+    setNewDescription("");
+    setNewColor("#315fdb");
+    setNewIcon("library");
+    setTargetCollectionId(null);
     newDialogRef.current?.close();
+  };
+
+  const openCreateDialog = (collectionId: string | null = null) => {
+    setTargetCollectionId(collectionId);
+    setNewTitle("");
+    setNewDescription("");
+    newDialogRef.current?.showModal();
   };
 
   const handleFile = async (file?: File) => {
@@ -218,87 +237,6 @@ export function HomePage({
     const text = await file.text();
     await importPackage(text, file.name);
     if (fileRef.current) fileRef.current.value = "";
-  };
-
-  const overviewIsAtBottom = () => {
-    const overview = overviewScrollRef.current;
-    if (!overview) return true;
-    return overview.scrollHeight - overview.scrollTop - overview.clientHeight <= 2;
-  };
-
-  const showOverview = () => {
-    setActivePage("overview");
-    overviewScrollRef.current?.focus({ preventScroll: true });
-  };
-
-  const showRecent = () => {
-    if (!overviewIsAtBottom()) return;
-    setActivePage("recent");
-    recentScrollRef.current?.focus({ preventScroll: true });
-  };
-
-  useEffect(() => {
-    const viewport = pageViewportRef.current;
-    if (!viewport) return;
-    const handlePageWheel = (event: globalThis.WheelEvent) => {
-      if (Math.abs(event.deltaY) < 8) return;
-      if (activePage === "overview" && event.deltaY > 0 && overviewIsAtBottom()) {
-        event.preventDefault();
-        showRecent();
-        return;
-      }
-      if (
-        activePage === "recent" &&
-        event.deltaY < 0 &&
-        (recentScrollRef.current?.scrollTop ?? 0) <= 1
-      ) {
-        event.preventDefault();
-        showOverview();
-      }
-    };
-    viewport.addEventListener("wheel", handlePageWheel, { passive: false });
-    return () => viewport.removeEventListener("wheel", handlePageWheel);
-  }, [activeHomeView, activePage, settingsOpen]);
-
-  const handlePageKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (
-      activePage === "overview" &&
-      (event.key === "PageDown" || event.key === "ArrowDown") &&
-      overviewIsAtBottom()
-    ) {
-      event.preventDefault();
-      showRecent();
-      return;
-    }
-    if (
-      activePage === "recent" &&
-      (event.key === "PageUp" || event.key === "ArrowUp") &&
-      (recentScrollRef.current?.scrollTop ?? 0) <= 1
-    ) {
-      event.preventDefault();
-      showOverview();
-    }
-  };
-
-  const handleTouchStart = (event: ReactTouchEvent<HTMLDivElement>) => {
-    touchStartYRef.current = event.touches[0]?.clientY ?? null;
-  };
-
-  const handleTouchEnd = (event: ReactTouchEvent<HTMLDivElement>) => {
-    const startY = touchStartYRef.current;
-    const endY = event.changedTouches[0]?.clientY;
-    touchStartYRef.current = null;
-    if (startY === null || endY === undefined) return;
-    const distance = startY - endY;
-    if (activePage === "overview" && distance > 48 && overviewIsAtBottom()) {
-      showRecent();
-    } else if (
-      activePage === "recent" &&
-      distance < -48 &&
-      (recentScrollRef.current?.scrollTop ?? 0) <= 1
-    ) {
-      showOverview();
-    }
   };
 
   return (
@@ -332,6 +270,29 @@ export function HomePage({
             <nav>
               <button
                 className={`home-nav-item${
+                  !settingsOpen && activeHomeView === "collections"
+                    ? " is-active"
+                    : ""
+                }`}
+                type="button"
+                aria-label="集合"
+                title={sidebarCollapsed ? "集合" : undefined}
+                aria-current={
+                  !settingsOpen && activeHomeView === "collections"
+                    ? "page"
+                    : undefined
+                }
+                onClick={() => {
+                  onCloseSettings();
+                  setActionMenuOpen(false);
+                  setActiveHomeView("collections");
+                }}
+              >
+                <Folder aria-hidden="true" size={17} />
+                <span>集合</span>
+              </button>
+              <button
+                className={`home-nav-item${
                   !settingsOpen && activeHomeView === "home" ? " is-active" : ""
                 }`}
                 type="button"
@@ -343,7 +304,6 @@ export function HomePage({
                 onClick={() => {
                   onCloseSettings();
                   setActiveHomeView("home");
-                  setActivePage("overview");
                 }}
               >
                 <LibraryBig aria-hidden="true" size={17} />
@@ -423,6 +383,7 @@ export function HomePage({
               <nav className="home-mobile-nav" aria-label="主导航">
                 {(
                   [
+                    ["collections", Folder, "集合"],
                     ["home", LibraryBig, terms.home],
                     ["generation", Network, "拓扑节点"]
                   ] as const
@@ -437,7 +398,6 @@ export function HomePage({
                     onClick={() => {
                       setActionMenuOpen(false);
                       setActiveHomeView(section);
-                      if (section === "home") setActivePage("overview");
                     }}
                   >
                     <Icon aria-hidden="true" size={16} />
@@ -447,229 +407,168 @@ export function HomePage({
               </nav>
 
               {activeHomeView === "home" ? (
-                <div
-                  ref={pageViewportRef}
-                  className="home-page-viewport"
-                  data-active-page={activePage}
-                  role="region"
-                  aria-label="主页分页内容"
-                  tabIndex={0}
-                  onKeyDown={handlePageKeyDown}
-                  onTouchStart={handleTouchStart}
-                  onTouchEnd={handleTouchEnd}
+                <section
+                  className="home-main home-knowledge-points-page"
+                  aria-labelledby="home-overview-title"
+                  tabIndex={-1}
                 >
-                  <div className="home-page-track">
-                  <section
-                    ref={overviewScrollRef}
-                    className="home-main home-page-panel home-overview-page"
-                    aria-labelledby="home-overview-title"
-                    aria-hidden={activePage !== "overview"}
-                    tabIndex={-1}
-                  >
-                    <div className="home-intro">
-                      <div>
-                        <p className="context-line">{todayLabel}</p>
-                        <h1 id="home-overview-title">继续生长你的知识树</h1>
-                        <p>
-                          从最近阅读处继续，或新建、导入一份材料开始新的学习路径。内容保存在当前设备。
-                        </p>
-                      </div>
+                  <div className="home-intro">
+                    <div>
+                      <p className="context-line">{todayLabel}</p>
+                      <h1 id="home-overview-title">继续生长你的知识树</h1>
+                      <p>
+                        从最近阅读处继续，或新建、导入一份材料开始新的学习路径。内容保存在当前设备。
+                      </p>
                     </div>
-
-                    <div className="home-overview-tools">
-                      <div className="home-ledger" aria-label="知识库概况">
-                        <div>
-                          <BookOpenText aria-hidden="true" size={17} />
-                          <span>
-                            <strong>{data.notebooks.length}</strong>
-                            内容集合
-                          </span>
-                        </div>
-                        <div>
-                          <BookOpenText aria-hidden="true" size={17} />
-                          <span>
-                            <strong>{totalNodes}</strong>
-                            全部节点
-                          </span>
-                        </div>
-                      </div>
-
-                      <button
-                        className="global-search-trigger home-search-trigger"
-                        type="button"
-                        onClick={onOpenSearch}
-                      >
-                        <Search aria-hidden="true" size={17} />
-                        <span>搜索标题与正文</span>
-                        <kbd>{formatShortcut(shortcuts["open-search"])}</kbd>
-                      </button>
-                    </div>
-
-                    <section
-                      className="home-recent-preview"
-                      aria-labelledby="home-recent-preview-title"
-                    >
-                      <header>
-                        <div>
-                          <p>READING TRAIL</p>
-                          <h2 id="home-recent-preview-title">{terms.recent}</h2>
-                        </div>
-                        <span>按最近打开或修改时间排列</span>
-                      </header>
-                      {recentPreview.length ? (
-                        <div className="notebook-grid home-recent-preview-grid">
-                          {recentPreview.map((notebook) => (
-                            <NotebookCard
-                              key={notebook.id}
-                              notebook={notebook}
-                              descendants={countDescendants(
-                                notebook.rootIds ?? [notebook.rootId],
-                                data.articles
-                              )}
-                              subNotesLabel={terms.subNotes}
-                              onOpen={() => openNotebook(notebook.id)}
-                            />
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="home-empty home-first-run">
-                          <BookOpenText aria-hidden="true" size={24} />
-                          <strong>知识库还是空的</strong>
-                          <span>
-                            创建第一篇笔记，或导入 Markdown、TXT 与 Annota 关系包。
-                          </span>
-                          <div>
-                            <button
-                              className="button primary"
-                              type="button"
-                              onClick={() => newDialogRef.current?.showModal()}
-                            >
-                              <Plus aria-hidden="true" size={16} />
-                              {terms.newNote}
-                            </button>
-                            <button
-                              className="button secondary"
-                              type="button"
-                              onClick={() => fileRef.current?.click()}
-                            >
-                              <FileInput aria-hidden="true" size={16} />
-                              导入材料
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </section>
-
-                    {recentPreview.length > 0 && (
-                      <button
-                        className="home-scroll-cue"
-                        type="button"
-                        onClick={showRecent}
-                      >
-                        <span>下滑查看{terms.recent}</span>
-                        <ChevronDown aria-hidden="true" size={17} />
-                      </button>
-                    )}
-                  </section>
-
-                  <section
-                    ref={recentScrollRef}
-                    className="home-main home-page-panel home-recent-page"
-                    aria-label="最近浏览时间线"
-                    aria-hidden={activePage !== "recent"}
-                    tabIndex={-1}
-                  >
-                    <header className="recent-header">
-                      <div>
-                        <p className="recent-eyebrow">READING TRAIL</p>
-                        <h2 id="recent-title">{terms.recent}</h2>
-                        <span>按最近打开或修改时间倒序排列</span>
-                      </div>
-                      <div className="recent-tools">
-                        <label className="inline-filter">
-                          <Search aria-hidden="true" size={15} />
-                          <span className="sr-only">筛选{terms.recent}</span>
-                          <input
-                            value={filter}
-                            onChange={(event) => setFilter(event.target.value)}
-                            placeholder="筛选当前卡片"
-                          />
-                          {filter && (
-                            <button
-                              type="button"
-                              onClick={() => setFilter("")}
-                              aria-label="清除筛选"
-                            >
-                              <X aria-hidden="true" size={14} />
-                            </button>
-                          )}
-                        </label>
-                      </div>
-                    </header>
-
-                    {timelineGroups.length ? (
-                      <div
-                        className="recent-timeline"
-                        role="list"
-                        aria-label="最近浏览时间线"
-                      >
-                        {timelineGroups.map((group) => (
-                          <section
-                            className="recent-timeline-group"
-                            role="listitem"
-                            key={group.key}
-                          >
-                            <div className="recent-timeline-stamp">
-                              <strong>{group.label}</strong>
-                              <small>{group.notebooks.length} 次浏览</small>
-                            </div>
-                            <div className="recent-timeline-line" aria-hidden="true">
-                              <span></span>
-                            </div>
-                            <div className="notebook-grid recent-timeline-cards">
-                              {group.notebooks.map((notebook) => (
-                                <NotebookCard
-                                  key={notebook.id}
-                                  notebook={notebook}
-                                  descendants={countDescendants(
-                                    notebook.rootIds ?? [notebook.rootId],
-                                    data.articles
-                                  )}
-                                  subNotesLabel={terms.subNotes}
-                                  onOpen={() => openNotebook(notebook.id)}
-                                />
-                              ))}
-                            </div>
-                          </section>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="home-empty">
-                        <Search aria-hidden="true" size={22} />
-                        <strong>
-                          {filter
-                            ? "没有符合筛选条件的内容集合"
-                            : "还没有最近浏览记录"}
-                        </strong>
-                        <span>
-                          {filter
-                            ? "清除筛选，或导入一份新的 Markdown / TXT 材料。"
-                            : "新建或导入内容后，会在这里按最近打开时间排列。"}
-                        </span>
-                        {filter && (
-                          <button
-                            className="button secondary"
-                            type="button"
-                            onClick={() => setFilter("")}
-                          >
-                            清除筛选
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </section>
                   </div>
-                </div>
+
+                  <div className="home-overview-tools">
+                    <div className="home-ledger" aria-label="知识库概况">
+                      <div>
+                        <BookOpenText aria-hidden="true" size={17} />
+                        <span>
+                          <strong>{data.notebooks.length}</strong>
+                          集合
+                        </span>
+                      </div>
+                      <div>
+                        <BookOpenText aria-hidden="true" size={17} />
+                        <span>
+                          <strong>{totalNodes}</strong>
+                          全部节点
+                        </span>
+                      </div>
+                    </div>
+
+                    <button
+                      className="global-search-trigger home-search-trigger"
+                      type="button"
+                      onClick={onOpenSearch}
+                    >
+                      <Search aria-hidden="true" size={17} />
+                      <span>搜索标题与正文</span>
+                      <kbd>{formatShortcut(shortcuts["open-search"])}</kbd>
+                    </button>
+                    <label className="inline-filter home-inline-filter">
+                      <Search aria-hidden="true" size={15} />
+                      <span className="sr-only">筛选文章</span>
+                      <input
+                        value={filter}
+                        onChange={(event) => setFilter(event.target.value)}
+                        placeholder="筛选文章"
+                      />
+                      {filter && (
+                        <button
+                          type="button"
+                          onClick={() => setFilter("")}
+                          aria-label="清除筛选"
+                        >
+                          <X aria-hidden="true" size={14} />
+                        </button>
+                      )}
+                    </label>
+                  </div>
+
+                  {knowledgePoints.length ? (
+                    <div className="knowledge-point-grid">
+                      {knowledgePoints.map((article) => (
+                        <KnowledgePointCard
+                          key={article.id}
+                          article={article}
+                          descendants={countDescendants(article.id, data.articles)}
+                          collections={collectionsOfArticle(article.id).map(
+                            (notebook) => notebook.title
+                          )}
+                          onOpen={() => void openKnowledgePoint(article.id)}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="home-empty home-first-run">
+                      <BookOpenText aria-hidden="true" size={24} />
+                      <strong>知识库还是空的</strong>
+                      <span>
+                        创建第一篇笔记，或导入 Markdown、TXT 与 Annota 关系包。
+                      </span>
+                      <div>
+                        <button
+                          className="button primary"
+                          type="button"
+                          onClick={() => openCreateDialog()}
+                        >
+                          <Plus aria-hidden="true" size={16} />
+                          {terms.newNote}
+                        </button>
+                        <button
+                          className="button secondary"
+                          type="button"
+                          onClick={() => fileRef.current?.click()}
+                        >
+                          <FileInput aria-hidden="true" size={16} />
+                          导入材料
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </section>
+              ) : activeHomeView === "collections" ? (
+                <section
+                  className="home-main home-collections-page"
+                  aria-labelledby="collections-page-title"
+                >
+                  <header className="recent-header">
+                    <div>
+                      <p className="recent-eyebrow">COLLECTIONS</p>
+                      <h2 id="collections-page-title">集合</h2>
+                      <span>归类与整理知识点；每个集合可收纳多篇文章。</span>
+                    </div>
+                    <div className="recent-tools">
+                      <button
+                        className="button primary"
+                        type="button"
+                        onClick={() => openCreateDialog()}
+                      >
+                        <Plus aria-hidden="true" size={15} />
+                        新建集合
+                      </button>
+                    </div>
+                  </header>
+
+                  {notebooks.length ? (
+                    <div className="notebook-grid collections-grid">
+                      {notebooks.map((notebook) => (
+                        <NotebookCard
+                          key={notebook.id}
+                          notebook={notebook}
+                          descendants={countDescendants(
+                            notebook.rootIds ?? [notebook.rootId],
+                            data.articles
+                          )}
+                          subNotesLabel={terms.subNotes}
+                          knowledgePointTitles={collectionKnowledgePointIds(notebook).map(
+                            (id) => data.articles[id]?.title ?? "未命名知识点"
+                          )}
+                          onOpen={() => openNotebook(notebook.id)}
+                          onCollectArticle={() => openCollectDialog(notebook.id)}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="home-empty">
+                      <Folder aria-hidden="true" size={22} />
+                      <strong>还没有集合</strong>
+                      <span>创建集合以归类知识点，或从主页文章列表中收集文章。</span>
+                      <button
+                        className="button primary"
+                        type="button"
+                        onClick={() => openCreateDialog()}
+                      >
+                        <Plus aria-hidden="true" size={15} />
+                        新建集合
+                      </button>
+                    </div>
+                  )}
+                </section>
               ) : (
                 <GenerationPage />
               )}
@@ -709,7 +608,7 @@ export function HomePage({
                       type="button"
                       onClick={() => {
                         setActionMenuOpen(false);
-                        newDialogRef.current?.showModal();
+                        openCreateDialog();
                       }}
                     >
                       <Plus aria-hidden="true" size={17} />
@@ -758,29 +657,149 @@ export function HomePage({
         >
           <header>
             <div>
-              <h2 id="new-note-title">{terms.newNote}</h2>
-              <p>创建一棵新的知识树，稍后可在正文中继续编辑。</p>
+              <h2 id="new-note-title">
+                {targetCollectionId ? "添加知识点" : "新建集合"}
+              </h2>
+              <p>
+                {targetCollectionId
+                  ? `添加到“${data.notebooks.find((item) => item.id === targetCollectionId)?.title ?? "当前集合"}”，创建后直接进入正文。`
+                  : "集合用于归类多个知识点；创建时会同时生成第一篇主文章。"}
+              </p>
             </div>
             <button className="icon-button" type="button" onClick={() => newDialogRef.current?.close()}>
               <X aria-hidden="true" size={17} />
               <span className="sr-only">关闭</span>
             </button>
           </header>
-          <label htmlFor="new-note-name">笔记标题</label>
+          <label htmlFor="new-note-name">
+            {targetCollectionId ? "知识点标题" : "集合名称"}
+          </label>
           <input
             id="new-note-name"
             value={newTitle}
             onChange={(event) => setNewTitle(event.target.value)}
-            placeholder="例如：项目研究笔记"
+            placeholder={targetCollectionId ? "例如：注意力机制" : "例如：深度学习"}
             autoFocus
           />
-          <small>标题可稍后修改；正文会自动保存在本机。</small>
+          <small>
+            {targetCollectionId
+              ? "知识点主文章和延伸 Markdown 会保存在同一个随机目录中。"
+              : "集合名称独立于知识点标题，可用于长期归类和总结。"}
+          </small>
+          {!targetCollectionId && (
+            <div className="collection-metadata-fields">
+              <label htmlFor="new-collection-description">集合描述</label>
+              <textarea
+                id="new-collection-description"
+                value={newDescription}
+                rows={3}
+                maxLength={240}
+                onChange={(event) => setNewDescription(event.target.value)}
+                placeholder="这个集合用于整理什么内容？"
+              />
+              <div>
+                <label>
+                  <span>颜色</span>
+                  <input
+                    type="color"
+                    value={newColor}
+                    onChange={(event) => setNewColor(event.target.value)}
+                  />
+                </label>
+                <label>
+                  <span>图标</span>
+                  <select value={newIcon} onChange={(event) => setNewIcon(event.target.value)}>
+                    <option value="library">资料库</option>
+                    <option value="book-open">阅读</option>
+                    <option value="folder">文件夹</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+          )}
           <footer>
             <button className="button secondary" type="button" onClick={() => newDialogRef.current?.close()}>
               取消
             </button>
             <button className="button primary" type="submit" disabled={!newTitle.trim()}>
-              创建并打开
+              {targetCollectionId ? "创建知识点" : "创建集合"}
+            </button>
+          </footer>
+        </form>
+      </dialog>
+
+      <dialog
+        ref={collectDialogRef}
+        className="form-dialog"
+        aria-labelledby="collect-title"
+        onClick={(event) => {
+          if (event.target === collectDialogRef.current) collectDialogRef.current?.close();
+        }}
+      >
+        <form
+          method="dialog"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void confirmCollect();
+          }}
+        >
+          <header>
+            <div>
+              <h2 id="collect-title">收集文章</h2>
+              <p>
+                {`把主页上的知识点加入“${
+                  data.notebooks.find((item) => item.id === collectTargetId)?.title ?? "当前集合"
+                }”。`}
+              </p>
+            </div>
+            <button className="icon-button" type="button" onClick={() => collectDialogRef.current?.close()}>
+              <X aria-hidden="true" size={17} />
+              <span className="sr-only">关闭</span>
+            </button>
+          </header>
+          <div className="collect-article-list">
+            {Object.values(data.articles)
+              .filter((article) => article.parentId === null)
+              .map((article) => {
+                const included = Boolean(
+                  collectTargetId &&
+                    data.notebooks
+                      .find((item) => item.id === collectTargetId)
+                      ?.knowledgePointIds?.includes(article.id)
+                );
+                return (
+                  <label
+                    key={article.id}
+                    className={`collect-article-item${included ? " is-included" : ""}`}
+                  >
+                    <input
+                      type="checkbox"
+                      disabled={included}
+                      checked={included || collectSelection.includes(article.id)}
+                      onChange={(event) => {
+                        if (included) return;
+                        setCollectSelection((current) =>
+                          event.target.checked
+                            ? [...current, article.id]
+                            : current.filter((id) => id !== article.id)
+                        );
+                      }}
+                    />
+                    <span>
+                      <strong>{article.title}</strong>
+                      <small>{article.summary || article.type}</small>
+                    </span>
+                    {included && <em>已收录</em>}
+                  </label>
+                );
+              })}
+          </div>
+          <footer>
+            <button className="button secondary" type="button" onClick={() => collectDialogRef.current?.close()}>
+              取消
+            </button>
+            <button className="button primary" type="submit" disabled={!collectSelection.length}>
+              加入集合
             </button>
           </footer>
         </form>
@@ -793,32 +812,59 @@ function NotebookCard({
   notebook,
   descendants,
   subNotesLabel,
-  onOpen
+  knowledgePointTitles,
+  onOpen,
+  onCollectArticle
 }: {
   notebook: Notebook;
   descendants: number;
   subNotesLabel: string;
+  knowledgePointTitles: string[];
   onOpen: () => void;
+  onCollectArticle: () => void;
 }) {
+  const CollectionIcon =
+    notebook.icon === "book-open"
+      ? BookOpenText
+      : notebook.icon === "folder"
+        ? Folder
+        : LibraryBig;
   return (
-    <button
+    <article
       className="notebook-card"
       data-accent={notebook.accent}
-      type="button"
-      onClick={onOpen}
-      aria-label={`打开笔记：${notebook.title}`}
+      style={{ "--collection-color": notebook.color } as CSSProperties}
     >
       <span className="card-rail" aria-hidden="true"></span>
-      <span className="notebook-meta">
-        <time
-          dateTime={notebook.updatedAt}
-          data-timestamp={new Date(notebook.updatedAt).getTime()}
-        >
-          {formatClock(notebook.updatedAt)}
-        </time>
-      </span>
-      <strong>{notebook.title}</strong>
-      <span className="notebook-summary">{notebook.summary}</span>
+      <button
+        className="notebook-card-open"
+        type="button"
+        onClick={onOpen}
+        aria-label={`打开集合：${notebook.title}`}
+      >
+        <span className="notebook-meta">
+          <time
+            dateTime={notebook.updatedAt}
+            data-timestamp={new Date(notebook.updatedAt).getTime()}
+          >
+            {formatClock(notebook.updatedAt)}
+          </time>
+          <span>{knowledgePointTitles.length} 个知识点</span>
+        </span>
+        <span className="notebook-card-title">
+          <CollectionIcon aria-hidden="true" size={18} />
+          <strong>{notebook.title}</strong>
+        </span>
+        <span className="notebook-summary">{notebook.description || notebook.summary}</span>
+        <span className="collection-knowledge-preview" aria-label="集合中的知识点">
+          {knowledgePointTitles.slice(0, 2).map((title, index) => (
+            <span key={`${title}-${index}`}>{title}</span>
+          ))}
+          {knowledgePointTitles.length > 2 && (
+            <small>另有 {knowledgePointTitles.length - 2} 个</small>
+          )}
+        </span>
+      </button>
       <span className="notebook-footer">
         <span className="connection-count">
           <BookOpenText aria-hidden="true" size={14} />
@@ -826,7 +872,60 @@ function NotebookCard({
             ? `${descendants} 个${subNotesLabel}`
             : `尚无${subNotesLabel}`}
         </span>
+        <button type="button" onClick={onCollectArticle}>
+          <Plus aria-hidden="true" size={14} />
+          收集文章
+        </button>
       </span>
-    </button>
+    </article>
+  );
+}
+
+function KnowledgePointCard({
+  article,
+  descendants,
+  collections,
+  onOpen
+}: {
+  article: { id: string; title: string; summary: string; updatedAt: string };
+  descendants: number;
+  collections: string[];
+  onOpen: () => void;
+}) {
+  return (
+    <article className="knowledge-point-card">
+      <button
+        className="knowledge-point-open"
+        type="button"
+        onClick={onOpen}
+        aria-label={`打开文章：${article.title}`}
+      >
+        <span className="knowledge-point-meta">
+          <time
+            dateTime={article.updatedAt}
+            data-timestamp={new Date(article.updatedAt).getTime()}
+          >
+            {formatClock(article.updatedAt)}
+          </time>
+          <span>{descendants} 个节点</span>
+        </span>
+        <span className="knowledge-point-title">
+          <BookOpenText aria-hidden="true" size={18} />
+          <strong>{article.title}</strong>
+        </span>
+        {article.summary && (
+          <span className="knowledge-point-summary">{article.summary}</span>
+        )}
+        <span className="knowledge-point-collections" aria-label="所属集合">
+          {collections.length ? (
+            collections.map((title) => (
+              <span className="collection-chip" key={title}>{title}</span>
+            ))
+          ) : (
+            <span className="collection-chip is-uncategorized">未归类</span>
+          )}
+        </span>
+      </button>
+    </article>
   );
 }

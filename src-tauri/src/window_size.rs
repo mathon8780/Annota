@@ -12,11 +12,21 @@ pub(crate) struct WindowDimensions {
 
 impl WindowDimensions {
     pub(crate) const DEFAULT: Self = Self {
-        width: 1280.0,
-        height: 720.0,
+        width: 1100.0,
+        height: 680.0,
     };
-    const MIN_WIDTH: f64 = 980.0;
-    const MIN_HEIGHT: f64 = 640.0;
+    const MIN_WIDTH: f64 = 800.0;
+    const MIN_HEIGHT: f64 = 520.0;
+
+    pub(crate) fn fit_for_open(self, available_width: f64, available_height: f64) -> Self {
+        let maximum_width = available_width.max(Self::MIN_WIDTH);
+        let maximum_height = available_height.max(Self::MIN_HEIGHT);
+
+        Self {
+            width: self.width.min(Self::DEFAULT.width).min(maximum_width),
+            height: self.height.min(Self::DEFAULT.height).min(maximum_height),
+        }
+    }
 
     fn is_valid(self) -> bool {
         self.width.is_finite()
@@ -151,6 +161,23 @@ mod tests {
             }
         );
         assert!(directory.path().join("window-session-running").exists());
+    }
+
+    #[test]
+    fn caps_an_oversized_saved_window_for_opening() {
+        let dimensions = WindowDimensions {
+            width: 1600.0,
+            height: 1000.0,
+        }
+        .fit_for_open(1040.0, 600.0);
+
+        assert_eq!(
+            dimensions,
+            WindowDimensions {
+                width: 1040.0,
+                height: 600.0,
+            }
+        );
     }
 
     #[test]

@@ -23,6 +23,12 @@ export interface TopologyNodeRecord {
   interactive: boolean;
   interactionStateJson: string;
   appearanceJson: string;
+  family?: string;
+  creationMethod?: string;
+  contentJson?: unknown;
+  anchorJson?: unknown;
+  generationJson?: unknown;
+  configJson?: unknown;
   createdAt: string;
   updatedAt: string;
 }
@@ -79,6 +85,26 @@ export interface SyncMarkdownTopologyRequest {
   relations: UpsertTopologyRelation[];
 }
 
+/** Rust 侧 JSON 字段为 TEXT;对象/数组统一序列化,字符串原样,空值透传。 */
+function toJsonString(value: unknown): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (typeof value === "string") return value;
+  return JSON.stringify(value);
+}
+
+function serializeNodeJson(
+  node: UpsertTopologyNode
+): UpsertTopologyNode {
+  return {
+    ...node,
+    contentJson: toJsonString(node.contentJson),
+    anchorJson: toJsonString(node.anchorJson),
+    generationJson: toJsonString(node.generationJson),
+    configJson: toJsonString(node.configJson)
+  };
+}
+
 interface BrowserState {
   collections: Record<string, TopologyCollectionRecord>;
   nodes: Record<string, TopologyNodeRecord>;
@@ -122,7 +148,7 @@ function browserGraph(
   collectionId: string
 ): TopologyGraphRecord {
   const collection = state.collections[collectionId];
-  if (!collection) throw new Error("内容集合不存在");
+  if (!collection) throw new Error("集合不存在");
   const nodes = Object.values(state.nodes).filter(
     (node) => node.collectionId === collectionId
   );
@@ -139,36 +165,26 @@ function browserGraph(
   };
 }
 
-export async function upsertTopologyCollection(request: {
-  id: string;
-  title: string;
-  description: string;
-}): Promise<TopologyCollectionRecord> {
-  if (isTauri()) return invoke("upsert_topology_collection", { request });
-  const state = readState();
-  const previous = state.collections[request.id];
-  const value = { ...request, createdAt: previous?.createdAt ?? now(), updatedAt: now() };
-  state.collections[value.id] = value;
-  writeState(state);
-  return value;
-}
-
 export async function syncMarkdownTopology(
   request: SyncMarkdownTopologyRequest
 ): Promise<TopologyGraphRecord> {
-  if (isTauri()) return invoke("sync_markdown_topology", { request });
+  const serialized: SyncMarkdownTopologyRequest = {
+    ...request,
+    nodes: request.nodes.map(serializeNodeJson)
+  };
+  if (isTauri()) return invoke("sync_markdown_topology", { request: serialized });
 
   const state = readState();
   const timestamp = now();
-  const previousCollection = state.collections[request.collection.id];
-  state.collections[request.collection.id] = {
-    ...request.collection,
+  const previousCollection = state.collections[serialized.collection.id];
+  state.collections[serialized.collection.id] = {
+    ...serialized.collection,
     createdAt: previousCollection?.createdAt ?? timestamp,
     updatedAt: timestamp
   };
-  request.nodes.forEach((node) => {
+  serialized.nodes.forEach((node) => {
     if (node.collectionId !== request.collection.id) {
-      throw new Error("拓扑节点必须属于当前内容集合");
+      throw new Error("拓扑节点必须属于当前集合");
     }
     if (node.contentMode !== "markdown" || node.isManual) {
       throw new Error("批量同步只接受 Markdown 节点");
@@ -180,9 +196,9 @@ export async function syncMarkdownTopology(
       updatedAt: timestamp
     };
   });
-  request.relations.forEach((relation) => {
+  serialized.relations.forEach((relation) => {
     if (relation.collectionId !== request.collection.id) {
-      throw new Error("拓扑关系必须属于当前内容集合");
+      throw new Error("拓扑关系必须属于当前集合");
     }
     if (relation.sourceNodeId === relation.targetNodeId) {
       throw new Error("拓扑关系不能连接节点自身");
@@ -195,14 +211,14 @@ export async function syncMarkdownTopology(
     };
   });
   writeState(state);
-  return browserGraph(state, request.collection.id);
+  return browserGraph(state, serialized.collection.id);
 }
 
 export async function loadTopologyGraph(collectionId: string): Promise<TopologyGraphRecord> {
   if (isTauri()) return invoke("load_topology_graph", { collectionId });
   const state = readState();
   const collection = state.collections[collectionId];
-  if (!collection) throw new Error("内容集合不存在");
+  if (!collection) throw new Error("集合不存在");
   const nodes = Object.values(state.nodes).filter((node) => node.collectionId === collectionId);
   const nodeIds = new Set(nodes.map((node) => node.id));
   return {
@@ -221,10 +237,11 @@ export async function upsertTopologyNode(
   if (request.isManual && request.contentMode !== "database") {
     throw new Error("手动节点不能关联 Markdown");
   }
-  if (isTauri()) return invoke("upsert_topology_node", { request });
+  const serialized = serializeNodeJson(request);
+  if (isTauri()) return invoke("upsert_topology_node", { request: serialized });
   const state = readState();
-  const previous = state.nodes[request.id];
-  const value = { ...request, createdAt: previous?.createdAt ?? now(), updatedAt: now() };
+  const previous = state.nodes[serialized.id];
+  const value = { ...serialized, createdAt: previous?.createdAt ?? now(), updatedAt: now() };
   state.nodes[value.id] = value;
   writeState(state);
   return value;

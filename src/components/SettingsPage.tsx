@@ -90,6 +90,7 @@ import {
   BUILT_IN_MODEL_CATALOG_UPDATED_AT,
   getBuiltInModels
 } from "../data/builtInModelCatalog";
+import { WorkspaceSettings } from "./WorkspaceSettings";
 
 interface SettingsPageProps {
   appTheme: AppThemeId;
@@ -855,6 +856,8 @@ export function SettingsPage({
                 onChange={onShortcutChange}
                 onReset={onResetShortcuts}
               />
+            ) : activeCategory.id === "storage" ? (
+              <WorkspaceSettings />
             ) : (
               <>
                 {activeCategory.groups.length > 0 && (
