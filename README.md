@@ -7,7 +7,7 @@ Annota 是一款 Windows 优先的本地 Markdown 知识树阅读与编辑应用
 
 ## 当前状况
 
-v0.1.0-alpha 已形成可运行、可测试、可打包的桌面应用骨架，生产入口默认使用空资料库，不再注入演示文章。当前版本适合开发验证、小规模试用和反馈收集，尚不适合承载无法恢复的重要资料。
+v0.1.0-alpha 已形成可运行、可测试、可打包的桌面应用骨架，生产入口默认使用空资料库，不再注入演示文章。当前仅配置 Windows NSIS 安装包，适合开发验证、小规模试用和反馈收集，尚不适合承载无法恢复的重要资料。
 
 当前已实现：
 
@@ -37,11 +37,15 @@ v0.1.0-alpha 已形成可运行、可测试、可打包的桌面应用骨架，�
 
 应用采用 React 18 + TypeScript + Vite 6 构建前端，Tauri 2 + Rust 提供 Windows 桌面容器、文件与 SQLite 持久化和网络请求能力。文章正文继续以 Markdown 文件为唯一内容模型；用户填写的手动节点、关系和互动状态是独立的结构化拓扑数据，不会生成 Markdown 副本。
 
+内容、集合与数据权威的完整说明见 [当前内容与数据模型](../Documents/指导文档/组成.md)。归档文档与原型不作为当前实现要求。
+
 ## 数据与安全边界
 
 - 正式启动使用空资料库；测试数据仅存在于 `src/test/fixtures/`，不会进入生产初始化流程。
-- Tauri 桌面环境将 Markdown 正文保存到应用管理的本地文档目录；手动节点正文、拓扑关系和互动状态保存到同目录的 `library.sqlite3`，界面偏好仍保存在 WebView2 应用数据中。
-- 浏览器开发模式使用浏览器本地存储作为 Markdown 持久化后备，仅用于开发调试。
+- Tauri 桌面工作区将 Markdown 正文保存到 `notes/`，将文章、Notebook/集合、拓扑、互动状态和正文文件索引保存到 `.annota/library.sqlite3`。数据库直接以当前 schema 6 初始化，不保留逐版本迁移链。
+- 桌面应用不会自动导入旧版 WebView `localStorage` 中的资料库数据，也不会搬运旧应用数据目录中的数据库或 Markdown；schema 1–5 的旧数据库会被拒绝。旧资料应先用对应版本导出，再导入当前版本创建的新工作区。
+- 浏览器开发模式仍使用 `localStorage` 作为资料库和 Markdown 持久化后备，仅用于开发调试；主题、字体、模型服务等界面偏好也保存在 WebView2 应用数据中。
+- 桌面节点类型配置直接保存到 SQLite，界面读取内存缓存；Markdown 拓扑由文章元数据派生，不再单独同步。元数据按差异写入，常规正文保存不递归扫描整个 `notes/`。
 - `.annota` 可用于知识树导入导出；重要资料仍建议额外保留原始 Markdown 或其他独立备份。
 - 模型服务 API Key 当前保存在本机 WebView 的 `localStorage` 中，**尚未接入 Windows Credential Manager 等安全凭据存储**。不要在不受信任或多人共用的系统中保存敏感密钥。
 - 调用外部模型会把所选上下文发送给相应服务商，并可能产生费用；请自行确认服务商的隐私条款、区域可用性和计费规则。
@@ -49,8 +53,8 @@ v0.1.0-alpha 已形成可运行、可测试、可打包的桌面应用骨架，�
 ## 已知限制与风险
 
 - Alpha 阶段不保证数据结构、设置项或导入导出格式向后兼容。
-- 当前优先支持 Windows；macOS、Linux 和移动平台尚未完成验证。
-- 文章目录与界面元数据尚未全部迁移到 SQLite/FTS；当前 SQLite 首先承载非 Markdown 拓扑节点、关系和互动状态，大规模资料库的检索性能仍需验证。
+- 当前仅配置并验证 Windows NSIS 打包；macOS、Linux、移动平台和其他安装包格式不在当前发布范围内。
+- 文章与集合元数据已存入 SQLite，但尚未建立 FTS 索引，大规模资料库的检索性能仍需验证。
 - Markdown 实时预览器已覆盖主要语法，但复杂嵌套、异常源码和第三方扩展语法仍可能存在渲染或光标映射问题。
 - 表格、Mermaid、KaTeX、Callout 和代码块属于仍在快速迭代的交互区域。
 - 模型服务兼容层尚不能保证覆盖所有 OpenAI-compatible 或 Anthropic-compatible 变体。
@@ -62,13 +66,13 @@ v0.1.0-alpha 已形成可运行、可测试、可打包的桌面应用骨架，�
 
 近期优先事项：
 
-1. 固化并版本化本地数据迁移流程，补充损坏恢复、备份和导入校验。
+1. 完善工作区完整性检查、损坏恢复、备份和导入校验。
 2. 继续完善 Markdown 光标映射、复杂嵌套语法、表格交互和跨模式一致性。
 3. 将 API Key 迁移到系统安全凭据存储，并补齐模型请求权限、日志和错误边界。
 4. 拆分大型样式与页面组件，建立更明确的编辑器、知识库和模型服务模块边界。
 5. 建立签名的 Windows Alpha 构建、干净环境安装/升级/卸载验证与发布说明。
 
-中期方向包括 SQLite/FTS 索引、大型资料库性能优化、可恢复的历史版本、可靠的文件工作区与备份流程，以及更完整的生成任务审计。跨平台、同步和扩展机制将在本地数据可靠性稳定后再评估。
+中期方向包括 SQLite/FTS 索引、大型资料库性能优化、可恢复的历史版本、可靠的文件工作区与备份流程，以及更完整的生成任务审计。跨平台、其他安装包格式、同步和扩展机制将在本地数据可靠性稳定后再评估。
 
 ## 开发
 
@@ -88,20 +92,18 @@ npm run tauri dev
 ## 验证
 
 ```powershell
-npm run check
 npm run test
 npm run build
 cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
-cargo check --manifest-path src-tauri/Cargo.toml
+cargo test --manifest-path src-tauri/Cargo.toml --lib
 ```
 
-当前 Alpha 基线包含前端单元测试与核心流程测试，并通过 TypeScript 类型检查和生产构建验证。
+`build` 已包含 TypeScript 类型检查；仅需快速检查类型时运行 `npm run check`。前端测试默认使用 Node，编辑器与界面测试使用 jsdom；App 层只保留核心用户流程，排序、上下文和持久化在对应模块验证。
 
-## 构建 Windows 安装包
+## 构建 Windows NSIS 安装包
 
 ```powershell
 npm ci
-npm run check
 npm run test
 npm run tauri build
 ```

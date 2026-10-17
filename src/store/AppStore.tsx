@@ -5,6 +5,7 @@ import {
   useEffect,
   useMemo,
   useReducer,
+  useRef,
   useState,
   type PropsWithChildren
 } from "react";
@@ -15,35 +16,26 @@ import type {
   GenerationJob,
   GenerationType,
   Notebook,
-  SelectionState
+  SelectionState,
+  TopologyCardPatch
 } from "../types";
 import {
-  clearBrowserMarkdownDocuments,
   clearMarkdownWorkspaceSession,
   loadMarkdownDocument,
   saveMarkdownDocument
 } from "../editor/markdownRepository";
 import {
-  createGenerationTypeIndex,
   hydrateGenerationTypesFromDatabase,
-  isGenerationTypeIconId,
-  isTopologyCardVariant,
+  awaitGenerationTypeWrites,
   loadGenerationTypes,
   mergeNodeLevelConfig,
   normalizeNodeLevelConfig,
   rootDefaults,
-  renderPromptTemplate,
   typeFamily,
   type NodeLevelConfig
 } from "../utils/generationConfig";
-import {
-  GENERATION_OUTPUT_INSTRUCTION,
-  generateModelText
-} from "../utils/modelGeneration";
-import {
-  assembleGenerationContext,
-  parseGeneratedArticle
-} from "../utils/generationRuntime";
+import { generateNodeContent } from "../utils/generationService";
+import { decodeLibraryMetadata, libraryAppData } from "../utils/libraryData";
 import { resolveConfiguredModel } from "../utils/modelProviders";
 import {
   awaitDesktopLibraryWrites,
@@ -65,8 +57,9 @@ import {
 import {
   deleteTopologyNode,
   deleteTopologyRelation,
+  decodeTopologyGraph,
   loadTopologyGraph,
-  syncMarkdownTopology,
+  setBrowserLibraryMetadata,
   upsertTopologyInteraction,
   upsertTopologyNode,
   upsertTopologyRelation,
@@ -79,34 +72,13 @@ import type {
 } from "../utils/generationConfig";
 
 export const APP_DATA_STORAGE_KEY = "annota.desktop.library.v2";
-const LEGACY_STORAGE_KEY = "annota.desktop.demo.v1";
-const RETIRED_LIBRARY_STORAGE_KEY = "annota.desktop.library.v1";
-const CONTENT_RESET_STORAGE_KEY = "annota:content-reset.single-markdown-v1";
-const SQLITE_IMPORT_STORAGE_KEY = "annota.desktop.library.sqlite-v1.imported";
 
-function normalizedNodeAppearance(value: unknown): ArticleNode["appearance"] {
-  if (!value || typeof value !== "object") return undefined;
-  const record = value as Record<string, unknown>;
-  if (
-    typeof record.typeId !== "string" ||
-    !isGenerationTypeIconId(record.icon) ||
-    !isTopologyCardVariant(record.cardVariant) ||
-    typeof record.color !== "string"
-  ) {
-    return undefined;
-  }
-  return {
-    typeId: record.typeId,
-    icon: record.icon,
-    cardVariant: record.cardVariant,
-    color: record.color
-  };
-}
 type Action =
   | { type: "open-notebook"; notebookId: string; articleId?: string }
   | { type: "navigate"; articleId: string }
   | { type: "go-home" }
   | { type: "touch-article"; articleId: string }
+  | { type: "update-article"; articleId: string; patch: Partial<ArticleNode> }
   | { type: "create-notebook"; notebook: Notebook; article: ArticleNode }
   | { type: "add-notebook"; notebook: Notebook }
   | { type: "add-to-collection"; notebookId: string; articleIds: string[] }
@@ -122,158 +94,12 @@ type Action =
   | { type: "complete-job"; jobId: string; article: ArticleNode }
   | { type: "cancel-job"; jobId: string };
 
-function metadataOnlyArticles(value: unknown): Record<string, ArticleNode> {
-  if (!value || typeof value !== "object") return {};
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>).flatMap(([id, candidate]) => {
-      if (!candidate || typeof candidate !== "object") return [];
-      const record = candidate as Partial<ArticleNode>;
-      if (
-        typeof record.id !== "string" ||
-        typeof record.rootId !== "string" ||
-        typeof record.title !== "string"
-      ) {
-        return [];
-      }
-      const article: ArticleNode = {
-        id: record.id,
-        rootId: record.rootId,
-        parentId: typeof record.parentId === "string" ? record.parentId : null,
-        title: record.title,
-        summary: typeof record.summary === "string" ? record.summary : "",
-        type: typeof record.type === "string" ? record.type : "文章",
-        childIds: Array.isArray(record.childIds)
-          ? record.childIds.filter((childId): childId is string => typeof childId === "string")
-          : [],
-        createdAt: typeof record.createdAt === "string" ? record.createdAt : new Date().toISOString(),
-        updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : new Date().toISOString(),
-        appearance: normalizedNodeAppearance(record.appearance),
-        source: record.source,
-        // 契约字段必须透传,否则 replaceDesktopLibrary 回写时丢失
-        family:
-          record.family === "笔记" || record.family === "记录" || record.family === "交互"
-            ? record.family
-            : "笔记",
-        creationMethod:
-          record.creationMethod === "导入" ||
-          record.creationMethod === "AI" ||
-          record.creationMethod === "手动"
-            ? record.creationMethod
-            : "手动",
-        contentJson: record.contentJson,
-        anchorJson: record.anchorJson,
-        generationJson: record.generationJson
-      };
-      return [[id, article]];
-    })
-  ) as Record<string, ArticleNode>;
-}
-
-function metadataOnlyNotebooks(value: unknown): Notebook[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((candidate) => {
-    if (!candidate || typeof candidate !== "object") return [];
-    const record = candidate as Partial<Notebook>;
-    if (
-      typeof record.id !== "string" ||
-      typeof record.rootId !== "string" ||
-      typeof record.title !== "string"
-    ) {
-      return [];
-    }
-    return [{
-      id: record.id,
-      rootId: record.rootId,
-      rootIds: Array.isArray(record.rootIds)
-        ? Array.from(
-            new Set([
-              record.rootId,
-              ...record.rootIds.filter((rootId): rootId is string => typeof rootId === "string")
-            ])
-          )
-        : [record.rootId],
-      knowledgePointIds: Array.isArray(record.knowledgePointIds)
-        ? Array.from(
-            new Set([
-              record.rootId,
-              ...record.knowledgePointIds.filter(
-                (rootId): rootId is string => typeof rootId === "string"
-              )
-            ])
-          )
-        : Array.isArray(record.rootIds)
-          ? Array.from(new Set([record.rootId, ...record.rootIds]))
-          : [record.rootId],
-      title: record.title,
-      summary: typeof record.summary === "string" ? record.summary : "",
-      description:
-        typeof record.description === "string"
-          ? record.description
-          : typeof record.summary === "string"
-            ? record.summary
-            : "",
-      color: typeof record.color === "string" ? record.color : "#315fdb",
-      icon: typeof record.icon === "string" ? record.icon : "library",
-      updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : new Date().toISOString(),
-      lastOpenedNodeId:
-        typeof record.lastOpenedNodeId === "string"
-          ? record.lastOpenedNodeId
-          : record.rootId,
-      accent:
-        record.accent === "amber" || record.accent === "green"
-          ? record.accent
-          : "cobalt"
-    }];
-  });
-}
-
-function parseStoredData(raw: string): AppData | null {
-  const parsed = JSON.parse(raw) as Partial<AppData>;
-  if (!Array.isArray(parsed.notebooks) || !parsed.articles) return null;
-  return {
-    notebooks: metadataOnlyNotebooks(parsed.notebooks),
-    articles: metadataOnlyArticles(parsed.articles),
-    jobs: [],
-    currentNotebookId: null,
-    currentArticleId: null
-  };
-}
-
-function normalizedLibraryData(value: LibraryMetadata): AppData {
-  return {
-    notebooks: metadataOnlyNotebooks(value.notebooks),
-    articles: metadataOnlyArticles(value.articles),
-    jobs: [],
-    currentNotebookId: null,
-    currentArticleId: null
-  };
-}
-
-function loadDesktopLegacyMetadata(): LibraryMetadata | null {
-  try {
-    const current = window.localStorage.getItem(APP_DATA_STORAGE_KEY);
-    if (!current) return null;
-    const parsed = parseStoredData(current);
-    if (!parsed) return null;
-    return { notebooks: parsed.notebooks, articles: parsed.articles };
-  } catch {
-    return null;
-  }
-}
-
 function loadInitialData(): AppData {
   if (typeof window === "undefined") return createEmptyAppData();
   if (isDesktopLibrary()) return createEmptyAppData();
   try {
-    if (window.localStorage.getItem(CONTENT_RESET_STORAGE_KEY) !== "done") {
-      window.localStorage.removeItem(RETIRED_LIBRARY_STORAGE_KEY);
-      window.localStorage.removeItem(LEGACY_STORAGE_KEY);
-      clearBrowserMarkdownDocuments();
-      window.localStorage.setItem(CONTENT_RESET_STORAGE_KEY, "done");
-      return createEmptyAppData();
-    }
     const current = window.localStorage.getItem(APP_DATA_STORAGE_KEY);
-    if (current) return parseStoredData(current) ?? createEmptyAppData();
+    if (current) return libraryAppData(decodeLibraryMetadata(JSON.parse(current)));
     return createEmptyAppData();
   } catch {
     return createEmptyAppData();
@@ -310,6 +136,17 @@ function reducer(state: AppData, action: Action): AppData {
       };
     case "go-home":
       return { ...state, currentNotebookId: null, currentArticleId: null };
+    case "update-article": {
+      const article = state.articles[action.articleId];
+      if (!article) return state;
+      return {
+        ...state,
+        articles: {
+          ...state.articles,
+          [article.id]: { ...article, ...action.patch, updatedAt: new Date().toISOString() }
+        }
+      };
+    }
     case "touch-article": {
       const article = state.articles[action.articleId];
       if (!article) return state;
@@ -321,7 +158,7 @@ function reducer(state: AppData, action: Action): AppData {
         ...state,
         articles: { ...state.articles, [article.id]: nextArticle },
         notebooks: state.notebooks.map((notebook) =>
-          (notebook.knowledgePointIds ?? notebook.rootIds ?? [notebook.rootId]).includes(
+          notebook.rootIds.includes(
             article.rootId
           )
             ? {
@@ -356,13 +193,7 @@ function reducer(state: AppData, action: Action): AppData {
             ? {
                 ...item,
                 rootIds: Array.from(
-                  new Set([...(item.rootIds ?? [item.rootId]), ...action.articleIds])
-                ),
-                knowledgePointIds: Array.from(
-                  new Set([
-                    ...(item.knowledgePointIds ?? item.rootIds ?? [item.rootId]),
-                    ...action.articleIds
-                  ])
+                  new Set([...item.rootIds, ...action.articleIds])
                 ),
                 updatedAt: new Date().toISOString()
               }
@@ -380,13 +211,7 @@ function reducer(state: AppData, action: Action): AppData {
             ? {
                 ...item,
                 rootIds: Array.from(
-                  new Set([...(item.rootIds ?? [item.rootId]), action.article.id])
-                ),
-                knowledgePointIds: Array.from(
-                  new Set([
-                    ...(item.knowledgePointIds ?? item.rootIds ?? [item.rootId]),
-                    action.article.id
-                  ])
+                  new Set([...item.rootIds, action.article.id])
                 ),
                 lastOpenedNodeId: action.article.id,
                 updatedAt: action.article.updatedAt
@@ -430,7 +255,7 @@ function reducer(state: AppData, action: Action): AppData {
           [action.article.id]: action.article
         },
         notebooks: state.notebooks.map((notebook) =>
-          notebook.rootId === parent.rootId
+          notebook.rootIds.includes(parent.rootId)
             ? { ...notebook, updatedAt: new Date().toISOString() }
             : notebook
         )
@@ -491,6 +316,7 @@ interface AppStoreValue {
     nodeId: string,
     config: NodeLevelConfig | null
   ) => Promise<void>;
+  updateTopologyCard: (nodeId: string, patch: TopologyCardPatch) => Promise<void>;
   regenerateNode: (
     nodeId: string
   ) => Promise<{ ok: boolean; message: string }>;
@@ -541,20 +367,11 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
   const [workspaceCatalog, setWorkspaceCatalog] = useState<WorkspaceCatalog | null>(null);
   const [workspaceBusy, setWorkspaceBusy] = useState(false);
   const [workspaceError, setWorkspaceError] = useState("");
+  const savedMetadata = useRef<LibraryMetadata | null>(null);
 
   const durableLibraryMetadata = useMemo<LibraryMetadata>(
     () => ({ notebooks: data.notebooks, articles: data.articles }),
     [data.articles, data.notebooks]
-  );
-  const durableAppDataJson = useMemo(
-    () =>
-      JSON.stringify({
-        ...durableLibraryMetadata,
-        jobs: [],
-        currentNotebookId: null,
-        currentArticleId: null
-      }),
-    [durableLibraryMetadata]
   );
 
   useEffect(() => {
@@ -562,26 +379,18 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
     let cancelled = false;
     void (async () => {
       const catalog = await listWorkspaces();
-      const active = catalog.workspaces.find((workspace) => workspace.active);
-      const canImportLegacy =
-        active?.kind === "managed" &&
-        window.localStorage.getItem(SQLITE_IMPORT_STORAGE_KEY) !== "done";
-      const result = await loadDesktopLibrary(
-        canImportLegacy ? loadDesktopLegacyMetadata() : null
-      );
+      const metadata = await loadDesktopLibrary();
       await hydrateGenerationTypesFromDatabase();
-      return { catalog, result };
+      return { catalog, metadata };
     })()
-      .then(({ catalog, result }) => {
+      .then(({ catalog, metadata }) => {
         if (cancelled) return;
+        savedMetadata.current = metadata;
         setWorkspaceCatalog(catalog);
         dispatch({
           type: "replace-data",
-          data: normalizedLibraryData(result.metadata)
+          data: libraryAppData(metadata)
         });
-        if (result.importedLegacy) {
-          window.localStorage.setItem(SQLITE_IMPORT_STORAGE_KEY, "done");
-        }
         setLibraryError("");
         setWorkspaceError("");
         setLibraryPhase("ready");
@@ -607,14 +416,15 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
       setWorkspaceBusy(true);
       setWorkspaceError("");
       try {
-        await awaitDesktopLibraryWrites();
+        await Promise.all([awaitDesktopLibraryWrites(), awaitGenerationTypeWrites()]);
         const catalog = await operation();
         clearMarkdownWorkspaceSession();
-        const result = await loadDesktopLibrary(null);
+        const metadata = await loadDesktopLibrary();
         await hydrateGenerationTypesFromDatabase();
+        savedMetadata.current = metadata;
         dispatch({
           type: "replace-data",
-          data: normalizedLibraryData(result.metadata)
+          data: libraryAppData(metadata)
         });
         setTopologyGraph(null);
         setTopologyError("");
@@ -691,10 +501,14 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
 
   useEffect(() => {
     if (!desktopLibrary) {
-      window.localStorage.setItem(APP_DATA_STORAGE_KEY, durableAppDataJson);
+      window.localStorage.setItem(APP_DATA_STORAGE_KEY, JSON.stringify(durableLibraryMetadata));
+      setBrowserLibraryMetadata(durableLibraryMetadata);
       return;
     }
     if (libraryPhase !== "ready") return;
+    if (savedMetadata.current?.articles === data.articles &&
+        savedMetadata.current.notebooks === data.notebooks) return;
+    savedMetadata.current = durableLibraryMetadata;
     void replaceDesktopLibrary(durableLibraryMetadata)
       .then(() => setLibraryError(""))
       .catch((error) => {
@@ -702,7 +516,27 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
           `工作区资料库保存失败：${error instanceof Error ? error.message : String(error)}`
         );
       });
-  }, [desktopLibrary, durableAppDataJson, durableLibraryMetadata, libraryPhase]);
+  }, [desktopLibrary, durableLibraryMetadata, libraryPhase]);
+
+  useEffect(() => {
+    const collectionId = data.currentNotebookId;
+    if (!collectionId || libraryPhase !== "ready") {
+      setTopologyGraph(null);
+      return;
+    }
+    let active = true;
+    void (async () => {
+      await awaitDesktopLibraryWrites();
+      const graph = await loadTopologyGraph(collectionId);
+      if (active) {
+        setTopologyGraph(graph);
+        setTopologyError("");
+      }
+    })().catch((error) => {
+      if (active) setTopologyError(error instanceof Error ? error.message : String(error));
+    });
+    return () => { active = false; };
+  }, [data.currentNotebookId, durableLibraryMetadata, libraryPhase]);
 
   const openNotebook = useCallback((notebookId: string, articleId?: string) => {
     dispatch({ type: "open-notebook", notebookId, articleId });
@@ -751,7 +585,6 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
       id: notebookId,
       rootId,
       rootIds: [rootId],
-      knowledgePointIds: [rootId],
       title: title.trim() || "未命名集合",
       summary: metadata.description?.trim() || article.summary,
       description: metadata.description?.trim() || article.summary,
@@ -816,7 +649,7 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
       const article = data.articles[articleId];
       if (!article) return null;
       const existing = data.notebooks.find((notebook) =>
-        (notebook.knowledgePointIds ?? notebook.rootIds ?? [notebook.rootId]).includes(
+        notebook.rootIds.includes(
           articleId
         )
       );
@@ -827,7 +660,6 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
         id: notebookId,
         rootId: articleId,
         rootIds: [articleId],
-        knowledgePointIds: [articleId],
         title: article.title,
         summary: article.summary,
         description: "",
@@ -848,7 +680,7 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
       const notebook = data.notebooks.find((item) => item.id === notebookId);
       if (!notebook) return;
       const existing = new Set(
-        notebook.knowledgePointIds ?? notebook.rootIds ?? [notebook.rootId]
+        notebook.rootIds
       );
       const ids = articleIds.filter((id) => !existing.has(id));
       if (!ids.length) return;
@@ -863,88 +695,6 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
     setTopologyError("");
     return graph;
   }, []);
-
-  const markdownTopologySync = useMemo(() => {
-    const notebook = data.notebooks.find(
-      (item) => item.id === data.currentNotebookId
-    );
-    if (!notebook) return null;
-    const rootIds = new Set(notebook.rootIds ?? [notebook.rootId]);
-    const articles = Object.values(data.articles).filter(
-      (article) => rootIds.has(article.rootId) || rootIds.has(article.id)
-    );
-    const nodeTypeIndex = createGenerationTypeIndex(loadGenerationTypes());
-    const request = {
-      collection: {
-        id: notebook.id,
-        title: notebook.title,
-        description: notebook.description || notebook.summary
-      },
-      nodes: articles.map((article) => ({
-        id: article.id,
-        collectionId: notebook.id,
-        nodeType:
-          article.appearance?.typeId ??
-          nodeTypeIndex.byRelationLabel.get(article.type)?.id ??
-          nodeTypeIndex.byName.get(article.type)?.id ??
-          (article.parentId ? "explain" : "root"),
-        title: article.title,
-        summary: article.summary,
-        contentMode: "markdown" as const,
-        content: null,
-        documentId: article.id,
-        isRoot: article.parentId === null,
-        isManual: false,
-        enabled: true,
-        interactive: false,
-        interactionStateJson: "{}",
-        appearanceJson: JSON.stringify(article.appearance ?? {}),
-        family: article.family ?? "笔记",
-        creationMethod: article.creationMethod ?? "手动",
-        contentJson: article.contentJson,
-        anchorJson: article.anchorJson,
-        generationJson: article.generationJson
-      })),
-      relations: articles.flatMap((article) =>
-        article.childIds.map((childId) => ({
-          id: `tree:${article.id}:${childId}`,
-          collectionId: notebook.id,
-          sourceNodeId: article.id,
-          targetNodeId: childId,
-          relationType: "contains",
-          label: data.articles[childId]?.type ?? "下一级",
-          directed: true,
-          metadataJson: '{"source":"markdown-tree"}'
-        }))
-      )
-    };
-    return { request, signature: JSON.stringify(request) };
-  }, [data.articles, data.currentNotebookId, data.notebooks]);
-
-  useEffect(() => {
-    if (!markdownTopologySync) {
-      setTopologyGraph(null);
-      setTopologyError("");
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
-      try {
-        const graph = await syncMarkdownTopology(markdownTopologySync.request);
-        if (!cancelled) {
-          setTopologyGraph(graph);
-          setTopologyError("");
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setTopologyError(error instanceof Error ? error.message : String(error));
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [markdownTopologySync?.signature]);
 
   const createManualTopologyNode = useCallback(
     async (draft: {
@@ -973,13 +723,13 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
         isManual: true,
         enabled: true,
         interactive: draft.interactive,
-        interactionStateJson: "{}",
-        appearanceJson: JSON.stringify({
+        interactionStateJson: {},
+        appearanceJson: {
           typeId: draft.nodeType,
           icon: draft.icon,
           cardVariant: draft.cardVariant,
           color: draft.color
-        }),
+        },
         family:
           loadGenerationTypes().find((type) => type.id === draft.nodeType)?.family ??
           typeFamily(draft.nodeType),
@@ -994,7 +744,7 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
           relationType: "manual-child",
           label: "关联节点",
           directed: true,
-          metadataJson: "{}"
+          metadataJson: {}
         });
       }
       await refreshTopologyGraph(data.currentNotebookId);
@@ -1006,28 +756,7 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
   const updateManualTopologyNode = useCallback(
     async (node: TopologyNodeRecord) => {
       if (!data.currentNotebookId || node.contentMode !== "database") return;
-      await upsertTopologyNode({
-        id: node.id,
-        collectionId: node.collectionId,
-        nodeType: node.nodeType,
-        title: node.title,
-        summary: node.summary,
-        contentMode: "database",
-        content: node.content,
-        documentId: null,
-        isRoot: node.isRoot,
-        isManual: true,
-        enabled: node.enabled,
-        interactive: node.interactive,
-        interactionStateJson: node.interactionStateJson,
-        appearanceJson: node.appearanceJson,
-        family: node.family ?? typeFamily(node.nodeType),
-        creationMethod: node.creationMethod ?? "手动",
-        contentJson: node.contentJson,
-        anchorJson: node.anchorJson,
-        generationJson: node.generationJson,
-        configJson: node.configJson
-      });
+      await upsertTopologyNode({ ...node, isManual: true });
       await refreshTopologyGraph(data.currentNotebookId);
     },
     [data.currentNotebookId, refreshTopologyGraph]
@@ -1036,33 +765,35 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
   const updateNodeConfig = useCallback(
     async (nodeId: string, config: NodeLevelConfig | null) => {
       if (!data.currentNotebookId) return;
+      if (data.articles[nodeId]) {
+        dispatch({ type: "update-article", articleId: nodeId, patch: { configJson: config ? { ...config } : null } });
+        return;
+      }
       const node = topologyGraph?.nodes.find((item) => item.id === nodeId);
       if (!node || node.contentMode !== "database") return;
-      await upsertTopologyNode({
-        id: node.id,
-        collectionId: node.collectionId,
-        nodeType: node.nodeType,
-        title: node.title,
-        summary: node.summary,
-        contentMode: "database",
-        content: node.content,
-        documentId: null,
-        isRoot: node.isRoot,
-        isManual: node.isManual,
-        enabled: node.enabled,
-        interactive: node.interactive,
-        interactionStateJson: node.interactionStateJson,
-        appearanceJson: node.appearanceJson,
-        family: node.family ?? typeFamily(node.nodeType),
-        creationMethod: node.creationMethod ?? "手动",
-        contentJson: node.contentJson,
-        anchorJson: node.anchorJson,
-        generationJson: node.generationJson,
-        configJson: config === null ? undefined : JSON.stringify(config)
-      });
+      await upsertTopologyNode({ ...node, configJson: config ? { ...config } : null });
       await refreshTopologyGraph(data.currentNotebookId);
     },
-    [data.currentNotebookId, topologyGraph, refreshTopologyGraph]
+    [data.currentNotebookId, data.articles, topologyGraph, refreshTopologyGraph]
+  );
+
+  const updateTopologyCard = useCallback<AppStoreValue["updateTopologyCard"]>(
+    async (nodeId, patch) => {
+      if (data.articles[nodeId]) {
+        const { title, summary, contentJson } = patch;
+        dispatch({ type: "update-article", articleId: nodeId, patch: {
+          ...(title === undefined ? {} : { title }),
+          ...(summary === undefined ? {} : { summary }),
+          ...(contentJson === undefined ? {} : { contentJson })
+        } });
+        return;
+      }
+      const node = topologyGraph?.nodes.find((item) => item.id === nodeId);
+      if (!node) throw new Error("节点已不存在");
+      await upsertTopologyNode({ ...node, ...patch });
+      await refreshTopologyGraph(node.collectionId);
+    },
+    [data.articles, topologyGraph, refreshTopologyGraph]
   );
 
   const regenerateNode = useCallback(
@@ -1074,16 +805,7 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
       if (!node || node.contentMode !== "database") {
         return { ok: false, message: "该节点不是数据库节点，无法重新生成。" };
       }
-      let anchor: Record<string, unknown> | null = null;
-      if (node.anchorJson) {
-        const parsed =
-          typeof node.anchorJson === "string"
-            ? JSON.parse(node.anchorJson)
-            : node.anchorJson;
-        if (parsed && typeof parsed === "object") {
-          anchor = parsed as Record<string, unknown>;
-        }
-      }
+      const anchor = node.anchorJson as Record<string, unknown> | null;
       const parentId = anchor?.["文档标识"];
       const blockId = anchor?.["块标识"];
       const text = anchor?.["原文"];
@@ -1128,48 +850,8 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
         documentStart: typeof start === "number" ? start : undefined,
         documentEnd: typeof end === "number" ? end : undefined
       };
-      const contextArticleIds: string[] = [];
-      let contextCursor: ArticleNode | undefined = parent;
-      while (contextCursor) {
-        contextArticleIds.unshift(contextCursor.id);
-        contextCursor = contextCursor.parentId
-          ? data.articles[contextCursor.parentId]
-          : undefined;
-      }
-      const documents = Object.fromEntries(
-        await Promise.all(
-          contextArticleIds.map(async (id) => [id, (await loadMarkdownDocument(id)).content])
-        )
-      );
-      const context = assembleGenerationContext(
-        data.articles,
-        documents,
-        parent,
-        selection,
-        effectiveType.contextScope
-      );
-      const systemPrompt =
-        renderPromptTemplate(effectiveType.systemPrompt, context.values) +
-        GENERATION_OUTPUT_INSTRUCTION;
-      const userPrompt = `${renderPromptTemplate(
-        effectiveType.userPrompt,
-        context.values
-      )}\n\n<context_scope>${context.suppliedContext}</context_scope>`;
-      const response = await generateModelText({
-        baseUrl: resolvedModel.provider.baseUrl,
-        endpointPath: resolvedModel.provider.endpointPath,
-        apiKey: resolvedModel.provider.apiKey,
-        protocol: resolvedModel.provider.protocol,
-        model: resolvedModel.model,
-        systemPrompt,
-        userPrompt,
-        temperature: effectiveType.modelParameters.temperature,
-        topP: effectiveType.modelParameters.topP,
-        maxTokens: effectiveType.modelParameters.maxTokens
-      });
-      const generated = parseGeneratedArticle(
-        response,
-        `${effectiveType.name}：${selection.text.slice(0, 28)}`
+      const generated = await generateNodeContent(
+        data.articles, parent, selection, effectiveType, resolvedModel
       );
       await upsertTopologyNode({
         id: node.id,
@@ -1235,7 +917,7 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
         relationType: "related",
         label: label.trim() || "关联",
         directed,
-        metadataJson: "{}"
+        metadataJson: {}
       });
       await refreshTopologyGraph(data.currentNotebookId);
     },
@@ -1263,8 +945,8 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
         nodeId,
         interactionType,
         title: "拓扑节点互动",
-        configJson: "{}",
-        stateJson: JSON.stringify(state),
+        configJson: {},
+        stateJson: state,
         enabled: true
       });
       await refreshTopologyGraph(data.currentNotebookId);
@@ -1279,6 +961,7 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
           const parsed = JSON.parse(text) as Partial<AppData> & {
             format?: string;
             documents?: Record<string, string>;
+            topology?: unknown;
           };
           if (
             parsed.format !== "annota-v2" ||
@@ -1288,33 +971,45 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
           ) {
             return { ok: false, message: "仅支持包含 Markdown 文档的 annota-v2 关系包。" };
           }
-          await Promise.all(
-            Object.entries(parsed.documents).map(([id, markdown]) => {
-              const rootId = parsed.articles?.[id]?.rootId ?? id;
-              return typeof markdown === "string"
-                ? saveMarkdownDocument(id, markdown, rootId)
-                : Promise.reject(new Error("关系包包含无效 Markdown 文档"));
-            })
-          );
+          const metadata = decodeLibraryMetadata(parsed);
+          const graph = parsed.topology ? decodeTopologyGraph(parsed.topology) : null;
+          const documents = parsed.documents;
+          const articles = Object.values(metadata.articles);
+          if (articles.some((article) => typeof documents[article.id] !== "string")) {
+            throw new Error("关系包缺少文章对应的 Markdown 文档");
+          }
+          await Promise.all(articles.map((article) =>
+            saveMarkdownDocument(article.id, documents[article.id], article.rootId)
+          ));
+          if (desktopLibrary) {
+            await replaceDesktopLibrary(metadata);
+            savedMetadata.current = metadata;
+          } else {
+            setBrowserLibraryMetadata(metadata);
+            window.localStorage.setItem(APP_DATA_STORAGE_KEY, JSON.stringify(metadata));
+          }
+          if (graph) {
+            for (const node of graph.nodes.filter((node) => node.contentMode === "database")) {
+              await upsertTopologyNode(node);
+            }
+            for (const relation of graph.relations.filter((relation) => relation.relationType !== "contains")) {
+              await upsertTopologyRelation(relation);
+            }
+            for (const interaction of graph.interactions) await upsertTopologyInteraction(interaction);
+          }
           dispatch({
             type: "replace-data",
-            data: {
-              notebooks: metadataOnlyNotebooks(parsed.notebooks),
-              articles: metadataOnlyArticles(parsed.articles),
-              jobs: [],
-              currentNotebookId: null,
-              currentArticleId: null
-            }
+            data: libraryAppData(metadata)
           });
           return { ok: true, message: `已导入 ${parsed.notebooks.length} 个集合。` };
-        } catch {
-          return { ok: false, message: "无法解析关系包；请确认文件未损坏。" };
+        } catch (error) {
+          return { ok: false, message: `无法导入关系包：${error instanceof Error ? error.message : String(error)}` };
         }
       }
       await createNotebook(safeTitle(fileName), text);
       return { ok: true, message: "内容已作为知识点导入并打开。" };
     },
-    [createNotebook]
+    [createNotebook, desktopLibrary]
   );
 
   const exportCurrentTree = useCallback(async () => {
@@ -1326,7 +1021,7 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
       ids.add(id);
       data.articles[id]?.childIds.forEach(collect);
     };
-    (notebook.rootIds ?? [notebook.rootId]).forEach(collect);
+    notebook.rootIds.forEach(collect);
     const articles = Object.fromEntries(
       Array.from(ids)
         .map((id) => [id, data.articles[id]])
@@ -1410,54 +1105,12 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
       void (async () => {
         dispatch({ type: "job-status", jobId, status: "generating" });
         try {
-          const contextArticleIds: string[] = [];
-          let contextCursor: ArticleNode | undefined = parent;
-          while (contextCursor) {
-            contextArticleIds.unshift(contextCursor.id);
-            contextCursor = contextCursor.parentId
-              ? data.articles[contextCursor.parentId]
-              : undefined;
-          }
-          const documents = Object.fromEntries(
-            await Promise.all(
-              contextArticleIds.map(async (id) => [id, (await loadMarkdownDocument(id)).content])
-            )
-          );
-          const context = assembleGenerationContext(
-            data.articles,
-            documents,
-            parent,
-            selection,
-            generationType.contextScope
-          );
-          const systemPrompt =
-            renderPromptTemplate(
-              generationType.systemPrompt,
-              context.values
-            ) + GENERATION_OUTPUT_INSTRUCTION;
-          const userPrompt = `${renderPromptTemplate(
-            generationType.userPrompt,
-            context.values
-          )}\n\n<context_scope>${context.suppliedContext}</context_scope>`;
-          const response = await generateModelText({
-            baseUrl: resolvedModel.provider.baseUrl,
-            endpointPath: resolvedModel.provider.endpointPath,
-            apiKey: resolvedModel.provider.apiKey,
-            protocol: resolvedModel.provider.protocol,
-            model: resolvedModel.model,
-            systemPrompt,
-            userPrompt,
-            temperature: generationType.modelParameters.temperature,
-            topP: generationType.modelParameters.topP,
-            maxTokens: generationType.modelParameters.maxTokens
-          });
-          const generated = parseGeneratedArticle(
-            response,
-            `${generationType.name}：${selection.text.slice(0, 28)}`
+          const generated = await generateNodeContent(
+            data.articles, parent, selection, generationType, resolvedModel
           );
           if (generationType.family !== "笔记") {
             const collection = data.notebooks.find((notebook) =>
-              (notebook.knowledgePointIds ?? notebook.rootIds ?? [notebook.rootId])
+              notebook.rootIds
                 .includes(parent.rootId)
             );
             if (!collection) {
@@ -1485,15 +1138,13 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
               enabled: true,
               interactive:
                 generationType.family === "交互" || generationType.interactive,
-              interactionStateJson: JSON.stringify({
-                content: generated.markdown
-              }),
-              appearanceJson: JSON.stringify({
+              interactionStateJson: {},
+              appearanceJson: {
                 typeId: generationType.id,
                 icon: generationType.icon,
                 cardVariant: generationType.cardVariant,
                 color: generationType.color
-              }),
+              },
               family: generationType.family,
               creationMethod: "AI",
               contentJson: {
@@ -1516,7 +1167,7 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
               relationType: "generated-from-selection",
               label: generationType.relationLabel || generationType.name,
               directed: true,
-              metadataJson: JSON.stringify(anchorJson)
+              metadataJson: anchorJson
             });
             await refreshTopologyGraph(collection.id);
             dispatch({ type: "cancel-job", jobId });
@@ -1619,6 +1270,7 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
       createManualTopologyNode,
       updateManualTopologyNode,
       updateNodeConfig,
+      updateTopologyCard,
       regenerateNode,
       removeManualTopologyNode,
       createTopologyRelation,
@@ -1655,6 +1307,7 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
       createManualTopologyNode,
       updateManualTopologyNode,
       updateNodeConfig,
+      updateTopologyCard,
       regenerateNode,
       removeManualTopologyNode,
       createTopologyRelation,

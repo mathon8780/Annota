@@ -32,7 +32,7 @@ export function buildArticleDescendantCounts(
   return counts;
 }
 
-export function compareArticleChildren(
+function compareArticleChildren(
   left: ArticleNode,
   right: ArticleNode,
   parent: ArticleNode,
@@ -70,14 +70,6 @@ export function compareArticleChildren(
   return left.id.localeCompare(right.id);
 }
 
-function inferredBlockOrdinal(blockId: string, parentId: string) {
-  const localId = blockId.startsWith(`${parentId}-`)
-    ? blockId.slice(parentId.length + 1)
-    : blockId;
-  const match = /^(?:b)?(\d+)(?:-|_|$)/i.exec(localId);
-  return match ? Number(match[1]) : null;
-}
-
 export function sourceBlockIdsInDocumentOrder(
   parent: ArticleNode,
   articles: Readonly<Record<string, ArticleNode>>
@@ -103,11 +95,6 @@ export function sourceBlockIdsInDocumentOrder(
     }
   });
   return Array.from(firstChildIndex.keys()).sort((left, right) => {
-    const leftOrdinal = inferredBlockOrdinal(left, parent.id);
-    const rightOrdinal = inferredBlockOrdinal(right, parent.id);
-    if (leftOrdinal !== null && rightOrdinal !== null && leftOrdinal !== rightOrdinal) {
-      return leftOrdinal - rightOrdinal;
-    }
     const leftDocumentPosition = firstDocumentPosition.get(left);
     const rightDocumentPosition = firstDocumentPosition.get(right);
     if (leftDocumentPosition !== undefined && rightDocumentPosition !== undefined) {

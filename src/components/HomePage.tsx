@@ -1,5 +1,4 @@
 import {
-  useEffect,
   useMemo,
   useRef,
   useState,
@@ -75,7 +74,7 @@ function countDescendants(rootIds: string | readonly string[], articles: ReturnT
 }
 
 function collectionKnowledgePointIds(notebook: Notebook) {
-  return notebook.knowledgePointIds ?? notebook.rootIds ?? [notebook.rootId];
+  return notebook.rootIds;
 }
 
 function formatClock(value: string) {
@@ -175,7 +174,7 @@ export function HomePage({
 
   const collectionsOfArticle = (articleId: string) =>
     data.notebooks.filter((notebook) =>
-      (notebook.knowledgePointIds ?? notebook.rootIds ?? [notebook.rootId]).includes(
+      (notebook.rootIds).includes(
         articleId
       )
     );
@@ -541,7 +540,7 @@ export function HomePage({
                           key={notebook.id}
                           notebook={notebook}
                           descendants={countDescendants(
-                            notebook.rootIds ?? [notebook.rootId],
+                            notebook.rootIds,
                             data.articles
                           )}
                           subNotesLabel={terms.subNotes}
@@ -765,7 +764,7 @@ export function HomePage({
                   collectTargetId &&
                     data.notebooks
                       .find((item) => item.id === collectTargetId)
-                      ?.knowledgePointIds?.includes(article.id)
+                      ?.rootIds.includes(article.id)
                 );
                 return (
                   <label

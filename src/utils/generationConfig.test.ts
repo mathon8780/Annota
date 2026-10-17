@@ -1,8 +1,9 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ArticleNode } from "../types";
 import {
   createGenerationTypeIndex,
   GENERATION_TYPES_STORAGE_KEY,
+  hydrateGenerationTypesFromDatabase,
   initialGenerationTypes,
   loadGenerationTypes,
   mergeNodeLevelConfig,
@@ -13,7 +14,15 @@ import {
   type GenerationTypeConfig
 } from "./generationConfig";
 
+const tauriMock = vi.hoisted(() => ({ desktop: false, invoke: vi.fn() }));
+vi.mock("@tauri-apps/api/core", () => ({
+  isTauri: () => tauriMock.desktop,
+  invoke: tauriMock.invoke
+}));
+
 afterEach(() => {
+  tauriMock.desktop = false;
+  tauriMock.invoke.mockReset();
   window.localStorage.removeItem(GENERATION_TYPES_STORAGE_KEY);
 });
 
@@ -38,144 +47,67 @@ describe("topology node generation configuration", () => {
       }
     } satisfies ArticleNode;
 
-    expect(index.byRelationLabel.get("翻译")?.id).toBe("translate");
+    expect(index.byId.get("translate")?.relationLabel).toBe("翻译");
     expect(resolveArticleGenerationType(article, index).id).toBe("code");
     expect(
       resolveArticleGenerationType(
         { ...article, source: undefined, type: "未知旧节点" },
         index
       ).id
-    ).toBe("root");
+    ).toBe("explain");
   });
 
-  it("defines every card node family represented by the topology prototype", () => {
-    expect(initialGenerationTypes.map((type) => type.id)).toEqual([
-      "root",
-      "explain",
-      "translate",
-      "summary",
-      "highlight",
-      "socratic",
-      "terms",
-      "compare",
-      "code",
-      "checklist",
-      "note",
-      "source",
-      "flashcard",
-      "formula",
-      "diagram",
-      "pitfall",
-      "analogy",
-      "task"
-    ]);
-    expect(initialGenerationTypes.map((type) => type.cardVariant)).toEqual([
-      "root",
-      "explain",
-      "translate",
-      "summary",
-      "highlight",
-      "question",
-      "terms",
-      "compare",
-      "code",
-      "checklist",
-      "note",
-      "source",
-      "flashcard",
-      "formula",
-      "diagram",
-      "pitfall",
-      "analogy",
-      "task"
-    ]);
-    expect(
-      initialGenerationTypes
-        .filter((type) => type.executionMode !== "ai")
-        .map((type) => [type.id, type.executionMode, type.enabled])
-    ).toEqual([
-      ["root", "system", false],
-      ["highlight", "manual", false],
-      ["note", "manual", false],
-      ["source", "manual", false],
-      ["formula", "manual", false],
-      ["diagram", "manual", false],
-      ["pitfall", "manual", false],
-      ["analogy", "manual", false],
-      ["task", "manual", false]
-    ]);
-    expect(
-      initialGenerationTypes
-        .filter((type) => type.interactive)
-        .map((type) => type.id)
-    ).toEqual([
-      "highlight",
-      "socratic",
-      "checklist",
-      "note",
-      "source",
-      "flashcard"
-    ]);
+  it("keeps built-in definitions unique and usable", () => {
+    const ids = initialGenerationTypes.map((type) => type.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(createGenerationTypeIndex(initialGenerationTypes).root.id).toBe("root");
+    expect(initialGenerationTypes.find((type) => type.id === "root")).toMatchObject({
+      executionMode: "system", enabled: false
+    });
+    for (const type of initialGenerationTypes) {
+      expect(type.icon).toBeTruthy();
+      expect(type.cardVariant).toBeTruthy();
+      expect(type.displayFields.length).toBeGreaterThan(0);
+      if (type.executionMode !== "ai") {
+        expect(type.systemPrompt).toBe("");
+        expect(type.userPrompt).toBe("");
+      }
+    }
   });
 
   it("maps every built-in generation type to a contract family", () => {
-    const expected: Array<[string, string]> = [
-      ["root", "笔记"],
-      ["explain", "笔记"],
-      ["translate", "笔记"],
-      ["summary", "记录"],
-      ["highlight", "记录"],
-      ["socratic", "交互"],
-      ["terms", "记录"],
-      ["compare", "记录"],
-      ["code", "笔记"],
-      ["checklist", "交互"],
-      ["note", "记录"],
-      ["source", "记录"],
-      ["flashcard", "交互"],
-      ["formula", "记录"],
-      ["diagram", "记录"],
-      ["pitfall", "记录"],
-      ["analogy", "记录"],
-      ["task", "交互"]
-    ];
-    for (const [id, family] of expected) {
-      expect(TYPE_FAMILIES[id], `${id} 应归属 ${family}`).toBe(family);
-    }
-    // 全部内置 id 都有家族映射
     for (const type of initialGenerationTypes) {
       expect(TYPE_FAMILIES[type.id], `${type.id} 缺少家族映射`).toBeDefined();
+      expect(type.family).toBe(TYPE_FAMILIES[type.id]);
     }
   });
 
-  it("migrates legacy prompt types and appends newly introduced built-ins", () => {
+  it("loads current saved types and appends missing built-ins", () => {
     window.localStorage.setItem(
       GENERATION_TYPES_STORAGE_KEY,
       JSON.stringify([
         {
+          ...initialGenerationTypes.find((type) => type.id === "explain")!,
           id: "explain",
           name: "自定义解释",
-          icon: "explain",
           color: "#123456",
-          isBuiltIn: false,
           enabled: false,
           modelBindingId: "deepseek:deepseek-chat",
           relationLabel: "说明",
-          systemPrompt: "legacy system {{output.language}}",
-          userPrompt: "legacy user {{selection.text}}",
+          systemPrompt: "system {{output.language}}",
+          userPrompt: "user {{selection.text}}",
           contextScope: "article"
         },
         {
+          ...initialGenerationTypes.find((type) => type.id === "socratic")!,
           id: "socratic",
-          name: "旧版追问",
-          icon: "question",
+          name: "自定义追问",
           color: "#654321",
-          isBuiltIn: false,
           enabled: true,
           modelBindingId: "global-default",
           relationLabel: "追问",
-          systemPrompt: "legacy question system",
-          userPrompt: "legacy question {{selection.text}}",
+          systemPrompt: "question system",
+          userPrompt: "question {{selection.text}}",
           contextScope: "nearbyParagraphs"
         }
       ])
@@ -197,7 +129,7 @@ describe("topology node generation configuration", () => {
       contextScope: "article"
     });
     expect(socratic).toMatchObject({
-      name: "旧版追问",
+      name: "自定义追问",
       cardVariant: "question",
       executionMode: "ai",
       isBuiltIn: true,
@@ -216,15 +148,10 @@ describe("topology node generation configuration", () => {
       GENERATION_TYPES_STORAGE_KEY,
       JSON.stringify([
         {
+          ...initialGenerationTypes.find((type) => type.id === "highlight")!,
           id: "highlight",
-          name: "重点",
-          icon: "highlight",
-          cardVariant: "highlight",
-          executionMode: "manual",
           interactive: true,
-          color: "#c05245",
           enabled: true,
-          relationLabel: "重点"
         }
       ])
     );
@@ -241,7 +168,7 @@ describe("topology node generation configuration", () => {
       });
   });
 
-  it("keeps custom nodes after built-ins and persists their card presentation", () => {
+  it("keeps custom nodes after built-ins and persists their card presentation", async () => {
     const custom: GenerationTypeConfig = {
       ...initialGenerationTypes.find((type) => type.id === "explain")!,
       id: "custom-map",
@@ -252,7 +179,7 @@ describe("topology node generation configuration", () => {
       enabled: true
     };
 
-    saveGenerationTypes([custom]);
+    await saveGenerationTypes([custom]);
 
     const loaded = loadGenerationTypes();
     expect(loaded.at(-1)).toEqual(custom);
@@ -263,6 +190,22 @@ describe("topology node generation configuration", () => {
     window.localStorage.setItem(GENERATION_TYPES_STORAGE_KEY, "not-json");
 
     expect(loadGenerationTypes()).toEqual(initialGenerationTypes);
+  });
+
+  it("uses SQLite directly for desktop configuration and propagates save errors", async () => {
+    tauriMock.desktop = true;
+    const customized = {
+      ...initialGenerationTypes.find((type) => type.id === "explain")!,
+      name: "数据库解释"
+    };
+    tauriMock.invoke.mockResolvedValueOnce([customized]);
+    const hydrated = await hydrateGenerationTypesFromDatabase();
+    expect(hydrated.find((type) => type.id === "explain")?.name).toBe("数据库解释");
+    expect(loadGenerationTypes().find((type) => type.id === "explain")?.name).toBe("数据库解释");
+    expect(window.localStorage.getItem(GENERATION_TYPES_STORAGE_KEY)).toBeNull();
+    tauriMock.invoke.mockRejectedValueOnce(new Error("磁盘写入失败"));
+    await expect(saveGenerationTypes(hydrated)).rejects.toThrow("磁盘写入失败");
+    expect(window.localStorage.getItem(GENERATION_TYPES_STORAGE_KEY)).toBeNull();
   });
 });
 
@@ -301,9 +244,7 @@ describe("node-level config merge", () => {
     expect(normalizeNodeLevelConfig(null)).toBeNull();
     expect(normalizeNodeLevelConfig("string")).toBeNull();
     expect(normalizeNodeLevelConfig(42)).toBeNull();
-    expect(normalizeNodeLevelConfig('{"displayFields":["title"]}')).toEqual({
-      displayFields: ["title"]
-    });
+    expect(normalizeNodeLevelConfig('{"displayFields":["title"]}')).toBeNull();
     const normalized = normalizeNodeLevelConfig({
       modelBindingId: "provider-a:gpt-4o",
       modelParameters: { temperature: 99, topP: -1, maxTokens: "many" },

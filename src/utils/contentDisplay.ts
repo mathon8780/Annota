@@ -1,8 +1,8 @@
-export const CONTENT_STYLE_STORAGE_KEY = "annota:content-style";
-export const CUSTOM_CONTENT_STYLE_STORAGE_KEY =
+const CONTENT_STYLE_STORAGE_KEY = "annota:content-style";
+const CUSTOM_CONTENT_STYLE_STORAGE_KEY =
   "annota:custom-content-style";
 
-export type PresetContentStyleId =
+type PresetContentStyleId =
   | "traditional"
   | "digital-garden"
   | "cognitive-neural"
@@ -117,9 +117,9 @@ export const contentTermLabels: ReadonlyArray<{
   { key: "highlightCreate", label: "划词生成" }
 ];
 
-export const defaultContentStyle: ContentStyleId = "traditional";
+const defaultContentStyle: ContentStyleId = "traditional";
 
-export const defaultCustomContentStyle: CustomContentStyle = {
+const defaultCustomContentStyle: CustomContentStyle = {
   name: "我的风格",
   terms: { ...contentStyles[0].terms }
 };

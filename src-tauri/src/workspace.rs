@@ -1,17 +1,15 @@
-use rusqlite::{backup::Backup, Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, OpenOptions},
     io::{self, Write},
     path::{Path, PathBuf},
-    time::Duration,
 };
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use uuid::Uuid;
 
 const WORKSPACE_FORMAT: &str = "annota-workspace";
 const WORKSPACE_FORMAT_VERSION: u32 = 1;
-const DATABASE_SCHEMA_VERSION: u32 = 5;
+const DATABASE_SCHEMA_VERSION: u32 = 6;
 const CONTENT_LAYOUT_VERSION: u32 = 2;
 
 #[derive(Clone, Debug)]
@@ -30,12 +28,6 @@ pub struct WorkspaceManifest {
     pub content_layout_version: u32,
     pub created_at: String,
     pub minimum_app_version: String,
-}
-
-#[derive(Debug, Default, PartialEq, Eq)]
-pub struct LegacyMigrationReport {
-    pub database_copied: bool,
-    pub documents_copied: usize,
 }
 
 impl WorkspaceLayout {
@@ -90,7 +82,6 @@ impl WorkspaceLayout {
         } else {
             layout.create_manifest("我的 Annota 资料库")?
         };
-        layout.migrate_legacy_data(app_data_dir)?;
         Ok((layout, manifest))
     }
 
@@ -165,20 +156,6 @@ impl WorkspaceLayout {
         Ok(manifest)
     }
 
-    pub fn migrate_legacy_data(
-        &self,
-        app_data_dir: &Path,
-    ) -> Result<LegacyMigrationReport, String> {
-        let database_copied =
-            copy_legacy_database(&app_data_dir.join("library.sqlite3"), &self.database_path())?;
-        let documents_copied =
-            copy_legacy_documents(&app_data_dir.join("vault").join("documents"), self)?;
-        Ok(LegacyMigrationReport {
-            database_copied,
-            documents_copied,
-        })
-    }
-
     pub(crate) fn synchronize_database_schema_version(
         &self,
         manifest: &mut WorkspaceManifest,
@@ -228,26 +205,6 @@ impl WorkspaceManifest {
     }
 }
 
-pub fn document_relative_path(document_id: &str) -> Result<PathBuf, String> {
-    validate_document_id(document_id)?;
-    let prefix = &document_id[..document_id.len().min(2)];
-    Ok(PathBuf::from("notes")
-        .join(prefix)
-        .join(format!("{document_id}.md")))
-}
-
-fn validate_document_id(document_id: &str) -> Result<(), String> {
-    if document_id.is_empty()
-        || document_id.len() > 128
-        || !document_id
-            .bytes()
-            .all(|value| value.is_ascii_alphanumeric() || matches!(value, b'-' | b'_'))
-    {
-        return Err("文档标识无效".to_string());
-    }
-    Ok(())
-}
-
 pub(crate) fn durable_json_replace<T: Serialize>(path: &Path, value: &T) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -286,113 +243,6 @@ pub(crate) fn durable_json_replace<T: Serialize>(path: &Path, value: &T) -> io::
     Ok(())
 }
 
-fn copy_legacy_database(source: &Path, destination: &Path) -> Result<bool, String> {
-    if !source.is_file() || destination.exists() {
-        return Ok(false);
-    }
-    let parent = destination
-        .parent()
-        .ok_or_else(|| "工作区数据库路径无效".to_string())?;
-    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    let temporary = destination.with_extension("sqlite3.migration-tmp");
-    if temporary.exists() {
-        fs::remove_file(&temporary).map_err(|error| error.to_string())?;
-    }
-
-    let result = (|| -> Result<(), String> {
-        let source_connection = Connection::open_with_flags(
-            source,
-            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        )
-        .map_err(|error| format!("无法打开旧资料库数据库：{error}"))?;
-        let mut destination_connection = Connection::open(&temporary)
-            .map_err(|error| format!("无法创建工作区数据库快照：{error}"))?;
-        {
-            let backup = Backup::new(&source_connection, &mut destination_connection)
-                .map_err(|error| format!("无法启动旧数据库迁移：{error}"))?;
-            backup
-                .run_to_completion(128, Duration::from_millis(10), None)
-                .map_err(|error| format!("无法完成旧数据库迁移：{error}"))?;
-        }
-        destination_connection
-            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
-            .map_err(|error| format!("无法校验迁移数据库：{error}"))?;
-        drop(destination_connection);
-        OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&temporary)
-            .and_then(|file| file.sync_all())
-            .map_err(|error| format!("无法同步迁移数据库：{error}"))?;
-        fs::rename(&temporary, destination)
-            .map_err(|error| format!("无法提交迁移数据库：{error}"))?;
-        Ok(())
-    })();
-
-    if result.is_err() && temporary.exists() {
-        let _ = fs::remove_file(&temporary);
-    }
-    result.map(|_| true)
-}
-
-fn copy_legacy_documents(source: &Path, layout: &WorkspaceLayout) -> Result<usize, String> {
-    if !source.is_dir() {
-        return Ok(0);
-    }
-    let mut copied = 0;
-    for entry in fs::read_dir(source).map_err(|error| error.to_string())? {
-        let entry = entry.map_err(|error| error.to_string())?;
-        let path = entry.path();
-        if !path.is_file() || path.extension().and_then(|value| value.to_str()) != Some("md") {
-            continue;
-        }
-        let Some(document_id) = path.file_stem().and_then(|value| value.to_str()) else {
-            continue;
-        };
-        let relative_path = document_relative_path(document_id)?;
-        let destination = layout.root().join(relative_path);
-        if copy_file_without_overwrite(&path, &destination)
-            .map_err(|error| format!("无法迁移 Markdown 文档 {document_id}：{error}"))?
-        {
-            copied += 1;
-        }
-    }
-    Ok(copied)
-}
-
-fn copy_file_without_overwrite(source: &Path, destination: &Path) -> io::Result<bool> {
-    if destination.exists() {
-        return Ok(false);
-    }
-    let parent = destination
-        .parent()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "destination has no parent"))?;
-    fs::create_dir_all(parent)?;
-    let temporary = destination.with_extension("md.migration-tmp");
-    if temporary.exists() {
-        fs::remove_file(&temporary)?;
-    }
-    let mut input = File::open(source)?;
-    let mut output = OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(&temporary)?;
-    io::copy(&mut input, &mut output)?;
-    output.sync_all()?;
-    drop(output);
-    match fs::rename(&temporary, destination) {
-        Ok(()) => Ok(true),
-        Err(_) if destination.exists() => {
-            let _ = fs::remove_file(temporary);
-            Ok(false)
-        }
-        Err(error) => {
-            let _ = fs::remove_file(temporary);
-            Err(error)
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -423,7 +273,7 @@ mod tests {
         let (layout, manifest) = WorkspaceLayout::initialize(&directory.0).unwrap();
         assert_eq!(manifest.format, WORKSPACE_FORMAT);
         assert_eq!(manifest.workspace_format_version, 1);
-        assert_eq!(manifest.database_schema_version, 5);
+        assert_eq!(manifest.database_schema_version, 6);
         assert!(layout.manifest_path().is_file());
         assert!(layout.notes_dir().is_dir());
         assert!(layout.assets_dir().is_dir());
@@ -433,45 +283,5 @@ mod tests {
 
         let (_, reloaded) = WorkspaceLayout::initialize(&directory.0).unwrap();
         assert_eq!(manifest.workspace_id, reloaded.workspace_id);
-    }
-
-    #[test]
-    fn migrates_legacy_data_once_without_removing_the_source() {
-        let directory = TestDirectory::new("migration");
-        let legacy_documents = directory.0.join("vault/documents");
-        fs::create_dir_all(&legacy_documents).unwrap();
-        fs::write(legacy_documents.join("article-1.md"), "# 旧正文\n").unwrap();
-        let legacy_database = directory.0.join("library.sqlite3");
-        let connection = Connection::open(&legacy_database).unwrap();
-        connection
-            .execute_batch(
-                "CREATE TABLE legacy_value(value TEXT); INSERT INTO legacy_value VALUES ('kept');",
-            )
-            .unwrap();
-        drop(connection);
-
-        let layout = WorkspaceLayout::managed(&directory.0);
-        layout.create_directories().unwrap();
-        let first = layout.migrate_legacy_data(&directory.0).unwrap();
-        assert_eq!(first.documents_copied, 1);
-        assert!(first.database_copied);
-        assert!(legacy_documents.join("article-1.md").is_file());
-        assert!(legacy_database.is_file());
-        assert_eq!(
-            fs::read_to_string(layout.root().join("notes/ar/article-1.md")).unwrap(),
-            "# 旧正文\n"
-        );
-        let migrated = Connection::open(layout.database_path()).unwrap();
-        assert_eq!(
-            migrated
-                .query_row("SELECT value FROM legacy_value", [], |row| row
-                    .get::<_, String>(0))
-                .unwrap(),
-            "kept"
-        );
-        drop(migrated);
-
-        let second = layout.migrate_legacy_data(&directory.0).unwrap();
-        assert_eq!(second, LegacyMigrationReport::default());
     }
 }

@@ -1612,7 +1612,6 @@ html.is-topology-transitioning .topology-scene.is-animating {
 
   .icon-button:hover,
   .home-sidebar-footer button:hover,
-  .sort-button:hover,
   .generation-button:hover:not(:disabled),
   .inline-formatting-toolbar button:hover:not(:disabled),
   .topology-actions button:hover {
@@ -1621,8 +1620,7 @@ html.is-topology-transitioning .topology-scene.is-animating {
     transform: scale(1.08);
   }
 
-  .home-nav-item:hover:not(.is-active),
-  .home-scroll-cue:hover {
+  .home-nav-item:hover:not(.is-active) {
     color: var(--color-ink);
     background: var(--color-paper-soft);
   }
@@ -1788,9 +1786,6 @@ html.is-topology-transitioning .topology-scene.is-animating {
     transition-delay: 0ms, 0ms, 0ms, 250ms;
   }
 
-  .sidebar-section-title,
-
-
   .home-sidebar-collapse {
     padding: 3px;
     justify-content: space-between;
@@ -1853,7 +1848,6 @@ html.is-topology-transitioning .topology-scene.is-animating {
   }
 
   .home-sidebar-shell:not(.is-collapsed):is(:hover, :has(.home-sidebar:hover)) .home-nav-item span,
-  .home-sidebar-shell:not(.is-collapsed):is(:hover, :has(.home-sidebar:hover)) .sidebar-section-title,
   .home-sidebar-shell:not(.is-collapsed):is(:hover, :has(.home-sidebar:hover)) .home-sidebar-footer button span {
     opacity: 1;
     visibility: visible;
@@ -2005,10 +1999,6 @@ html.is-topology-transitioning .topology-scene.is-animating {
     grid-template-columns: auto minmax(0, 1fr);
   }
 
-  .recent-timeline-group {
-    grid-template-columns: 94px 20px minmax(0, 1fr);
-  }
-
   .save-status {
     display: none;
   }
@@ -2156,8 +2146,7 @@ html.is-topology-transitioning .topology-scene.is-animating {
   }
 
   .home-app,
-  .reader-app,
-  .settings-app {
+  .reader-app {
     height: auto;
     min-height: inherit;
     overflow: visible;
@@ -2353,14 +2342,6 @@ html.is-topology-transitioning .topology-scene.is-animating {
   .recent-header {
     align-items: flex-start;
     flex-direction: column;
-  }
-
-  .recent-timeline-group {
-    grid-template-columns: 70px 18px minmax(0, 1fr);
-  }
-
-  .recent-timeline-stamp {
-    padding-right: var(--space-2);
   }
 
   .inline-filter {
@@ -2649,17 +2630,6 @@ html.is-topology-transitioning .topology-scene.is-animating {
     align-self: center;
   }
 
-  .settings-value-slot,
-  .settings-value-slot.is-wide {
-    width: 100%;
-    justify-self: stretch;
-  }
-
-  .settings-value-slot.is-compact {
-    width: 48px;
-    justify-self: end;
-  }
-
   .settings-font-control,
   .settings-font-control.is-size {
     width: 100%;
@@ -2690,39 +2660,9 @@ html.is-topology-transitioning .topology-scene.is-animating {
     padding-left: var(--space-4);
   }
 
-  .home-recent-preview > header {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: var(--space-2);
-  }
-
   .recent-tools {
     align-items: stretch;
     flex-direction: column;
-  }
-
-  .recent-timeline-group {
-    grid-template-columns: 18px minmax(0, 1fr);
-  }
-
-  .recent-timeline-stamp {
-    padding: 0 0 var(--space-3) var(--space-3);
-    grid-column: 2;
-    align-items: flex-start;
-    text-align: left;
-  }
-
-  .recent-timeline-line {
-    grid-row: 1 / span 2;
-  }
-
-  .recent-timeline-cards {
-    padding-left: var(--space-3);
-    grid-column: 2;
-  }
-
-  .sort-button {
-    justify-content: center;
   }
 
   .reader-home-button .brand {
@@ -2817,16 +2757,6 @@ html.is-topology-transitioning .topology-scene.is-animating {
   }
   to {
     opacity: 1;
-  }
-}
-
-@keyframes home-scroll-cue {
-  0%,
-  100% {
-    transform: translateY(-1px);
-  }
-  50% {
-    transform: translateY(3px);
   }
 }
 

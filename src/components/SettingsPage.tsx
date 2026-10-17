@@ -9,8 +9,6 @@ import {
   Zhipu
 } from "@lobehub/icons";
 import {
-  ArchiveRestore,
-  ArrowDownUp,
   BrainCircuit,
   BookOpenText,
   Bot,
@@ -35,10 +33,8 @@ import {
   RotateCcw,
   Search,
   Server,
-  ShieldCheck,
   Sprout,
-  Trash2,
-  Wrench
+  Trash2
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import {
@@ -90,6 +86,14 @@ import {
   BUILT_IN_MODEL_CATALOG_UPDATED_AT,
   getBuiltInModels
 } from "../data/builtInModelCatalog";
+import {
+  loadModelProviders,
+  saveModelProviders
+} from "../utils/modelProviders";
+import type {
+  ModelProvider,
+  ProviderProtocol
+} from "../utils/modelProviders";
 import { WorkspaceSettings } from "./WorkspaceSettings";
 
 interface SettingsPageProps {
@@ -109,12 +113,8 @@ interface SettingsPageProps {
   onResetShortcuts: () => void;
 }
 
-type SettingSlotSize = "compact" | "medium" | "wide";
-
 interface SettingItem {
   label: string;
-  scope: string;
-  slot?: SettingSlotSize;
 }
 
 interface SettingGroup {
@@ -131,36 +131,6 @@ interface SettingCategory {
   groups: SettingGroup[];
 }
 
-type ProviderTone = "cobalt" | "indigo" | "cyan" | "violet" | "slate";
-type ProviderBrand =
-  | "chatgpt"
-  | "gemini"
-  | "kimi"
-  | "deepseek"
-  | "claude"
-  | "zhipu"
-  | "custom";
-type ProviderProtocol = "openai-compatible" | "anthropic-messages";
-
-interface ModelProvider {
-  id: string;
-  name: string;
-  shortName: string;
-  kind: "default" | "custom";
-  tone: ProviderTone;
-  brand: ProviderBrand;
-  protocol: ProviderProtocol;
-  baseUrl: string;
-  modelsPath: string;
-  endpointPath: string;
-  apiKey: string;
-  model: string;
-  availableModels: string[];
-  enabledModels: string[];
-  enabled: boolean;
-  isDefault: boolean;
-}
-
 type ModelCatalogStatus = "idle" | "loading" | "ready" | "error";
 
 interface ModelCatalog {
@@ -174,287 +144,6 @@ type ConnectionTestStatus = "idle" | "loading" | "success" | "error";
 interface ConnectionTest {
   status: ConnectionTestStatus;
   message?: string;
-}
-
-export const MODEL_PROVIDERS_STORAGE_KEY = "annota:model-providers.v1";
-
-const initialModelProviders: ModelProvider[] = [
-  {
-    id: "chatgpt",
-    name: "Chat GPT",
-    shortName: "GPT",
-    kind: "default",
-    tone: "slate",
-    brand: "chatgpt",
-    protocol: "openai-compatible",
-    baseUrl: "https://api.openai.com/v1",
-    modelsPath: "/models",
-    endpointPath: "/chat/completions",
-    apiKey: "",
-    model: "gpt-5-mini",
-    availableModels: [],
-    enabledModels: [],
-    enabled: true,
-    isDefault: true
-  },
-  {
-    id: "gemini",
-    name: "Gemini",
-    shortName: "GM",
-    kind: "default",
-    tone: "cyan",
-    brand: "gemini",
-    protocol: "openai-compatible",
-    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
-    modelsPath: "/models",
-    endpointPath: "/chat/completions",
-    apiKey: "",
-    model: "gemini-3.6-flash",
-    availableModels: [],
-    enabledModels: [],
-    enabled: false,
-    isDefault: false
-  },
-  {
-    id: "kimi",
-    name: "Kimi",
-    shortName: "KM",
-    kind: "default",
-    tone: "slate",
-    brand: "kimi",
-    protocol: "openai-compatible",
-    baseUrl: "https://api.moonshot.cn/v1",
-    modelsPath: "/models",
-    endpointPath: "/chat/completions",
-    apiKey: "",
-    model: "kimi-k3",
-    availableModels: [],
-    enabledModels: [],
-    enabled: false,
-    isDefault: false
-  },
-  {
-    id: "deepseek",
-    name: "Deepseek",
-    shortName: "DS",
-    kind: "default",
-    tone: "cobalt",
-    brand: "deepseek",
-    protocol: "openai-compatible",
-    baseUrl: "https://api.deepseek.com",
-    modelsPath: "/models",
-    endpointPath: "/chat/completions",
-    apiKey: "",
-    model: "deepseek-v4-flash",
-    availableModels: [],
-    enabledModels: [],
-    enabled: true,
-    isDefault: false
-  },
-  {
-    id: "claude",
-    name: "Claude",
-    shortName: "CL",
-    kind: "default",
-    tone: "violet",
-    brand: "claude",
-    protocol: "anthropic-messages",
-    baseUrl: "https://api.anthropic.com/v1",
-    modelsPath: "/models",
-    endpointPath: "/messages",
-    apiKey: "",
-    model: "claude-sonnet-5",
-    availableModels: [],
-    enabledModels: [],
-    enabled: false,
-    isDefault: false
-  },
-  {
-    id: "glm",
-    name: "GLM",
-    shortName: "GLM",
-    kind: "default",
-    tone: "indigo",
-    brand: "zhipu",
-    protocol: "openai-compatible",
-    baseUrl: "https://open.bigmodel.cn/api/paas/v4",
-    modelsPath: "/models",
-    endpointPath: "/chat/completions",
-    apiKey: "",
-    model: "glm-5.2",
-    availableModels: [],
-    enabledModels: [],
-    enabled: false,
-    isDefault: false
-  },
-  {
-    id: "custom-1",
-    name: "本地兼容接口",
-    shortName: "API",
-    kind: "custom",
-    tone: "slate",
-    brand: "custom",
-    protocol: "openai-compatible",
-    baseUrl: "http://127.0.0.1:11434/v1",
-    modelsPath: "/models",
-    endpointPath: "/chat/completions",
-    apiKey: "",
-    model: "",
-    availableModels: [],
-    enabledModels: [],
-    enabled: false,
-    isDefault: false
-  }
-];
-
-const providerTones: ProviderTone[] = [
-  "cobalt",
-  "indigo",
-  "cyan",
-  "violet",
-  "slate"
-];
-const providerBrands: ProviderBrand[] = [
-  "chatgpt",
-  "gemini",
-  "kimi",
-  "deepseek",
-  "claude",
-  "zhipu",
-  "custom"
-];
-const providerProtocols: ProviderProtocol[] = [
-  "openai-compatible",
-  "anthropic-messages"
-];
-
-function isStoredModelProvider(value: unknown): value is ModelProvider {
-  if (!value || typeof value !== "object") return false;
-  const provider = value as Partial<ModelProvider>;
-  return (
-    typeof provider.id === "string" &&
-    typeof provider.name === "string" &&
-    typeof provider.shortName === "string" &&
-    (provider.kind === "default" || provider.kind === "custom") &&
-    providerTones.includes(provider.tone as ProviderTone) &&
-    providerBrands.includes(provider.brand as ProviderBrand) &&
-    providerProtocols.includes(provider.protocol as ProviderProtocol) &&
-    typeof provider.baseUrl === "string" &&
-    typeof provider.modelsPath === "string" &&
-    typeof provider.endpointPath === "string" &&
-    typeof provider.apiKey === "string" &&
-    typeof provider.model === "string" &&
-    typeof provider.enabled === "boolean" &&
-    typeof provider.isDefault === "boolean"
-  );
-}
-
-function normalizeDefaultProvider(providers: ModelProvider[]) {
-  const defaultProviderId =
-    providers.find((provider) => provider.isDefault)?.id ??
-    initialModelProviders[0].id;
-  return providers.map((provider) => ({
-    ...provider,
-    isDefault: provider.id === defaultProviderId
-  }));
-}
-
-function normalizeModels(value: unknown) {
-  return Array.isArray(value)
-    ? Array.from(
-        new Set(
-          value
-            .filter((model): model is string => typeof model === "string")
-            .map((model) => model.trim())
-            .filter(Boolean)
-        )
-      )
-    : [];
-}
-
-function loadModelProviders() {
-  const fallback = initialModelProviders.map((provider) => ({ ...provider }));
-
-  try {
-    const raw = window.localStorage.getItem(MODEL_PROVIDERS_STORAGE_KEY);
-    if (!raw) return fallback;
-
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return fallback;
-
-    const storedProviders = parsed.filter(isStoredModelProvider);
-    const storedById = new Map(
-      storedProviders.map((provider) => [provider.id, provider])
-    );
-    const builtInIds = new Set(
-      initialModelProviders
-        .filter((provider) => provider.kind === "default")
-        .map((provider) => provider.id)
-    );
-    const builtInProviders = initialModelProviders
-      .filter((provider) => provider.kind === "default")
-      .map((provider) => {
-        const stored = storedById.get(provider.id);
-        if (!stored) return { ...provider };
-        const availableModels = normalizeModels(stored.availableModels);
-        const storedEnabledModels = Array.isArray(stored.enabledModels)
-          ? normalizeModels(stored.enabledModels)
-          : [];
-        const enabledModels = storedEnabledModels.filter((model) =>
-          availableModels.includes(model)
-        );
-        return {
-          ...provider,
-          protocol: stored.protocol,
-          endpointPath: stored.endpointPath,
-          apiKey: stored.apiKey,
-          model: enabledModels.includes(stored.model)
-            ? stored.model
-            : enabledModels[0] ?? "",
-          availableModels,
-          enabledModels,
-          enabled: stored.enabled,
-          isDefault: stored.isDefault
-        };
-      });
-    const customProviders = storedProviders
-      .filter(
-        (provider) =>
-          provider.kind === "custom" && !builtInIds.has(provider.id)
-      )
-      .map((provider) => {
-        const availableModels = normalizeModels(provider.availableModels);
-        const storedEnabledModels = Array.isArray(provider.enabledModels)
-          ? normalizeModels(provider.enabledModels)
-          : [];
-        const enabledModels = storedEnabledModels.filter((model) =>
-          availableModels.includes(model)
-        );
-        return {
-          ...provider,
-          model: enabledModels.includes(provider.model)
-            ? provider.model
-            : enabledModels[0] ?? "",
-          availableModels,
-          enabledModels
-        };
-      });
-
-    return normalizeDefaultProvider([...builtInProviders, ...customProviders]);
-  } catch {
-    return fallback;
-  }
-}
-
-function saveModelProviders(providers: ModelProvider[]) {
-  try {
-    window.localStorage.setItem(
-      MODEL_PROVIDERS_STORAGE_KEY,
-      JSON.stringify(providers)
-    );
-  } catch {
-    // Storage can be unavailable in restricted previews; keep the page usable.
-  }
 }
 
 function getNextCustomProviderNumber(providers: ModelProvider[]) {
@@ -527,22 +216,19 @@ const settingCategories: SettingCategory[] = [
       {
         title: "字体",
         items: [
-          { label: "界面字体", scope: "全局", slot: "wide" },
-          { label: "正文字体", scope: "全局", slot: "wide" },
-          { label: "代码字体", scope: "全局", slot: "wide" },
-          { label: "界面字号", scope: "全局" },
-          { label: "正文字号", scope: "全局" },
-          { label: "代码字号", scope: "全局" }
+          { label: "界面字体" },
+          { label: "正文字体" },
+          { label: "代码字体" },
+          { label: "界面字号" },
+          { label: "正文字号" },
+          { label: "代码字号" }
         ]
       },
       {
         title: "阅读与标注",
         items: [
-          { label: "保留后续阅读路径", scope: "全局", slot: "compact" },
-          { label: "顶部交互仅显示图标", scope: "全局", slot: "compact" },
-          { label: "正文行高", scope: "全局" },
-          { label: "默认标注颜色", scope: "全局", slot: "compact" },
-          { label: "减少动态效果", scope: "全局", slot: "compact" }
+          { label: "保留后续阅读路径" },
+          { label: "顶部交互仅显示图标" }
         ]
       }
     ]
@@ -569,172 +255,7 @@ const settingCategories: SettingCategory[] = [
     eyebrow: "本地工作区",
     description: "查看当前知识库的位置、占用情况与数据健康状态。",
     icon: Database,
-    groups: [
-      {
-        title: "当前知识库",
-        items: [
-          { label: "名称", scope: "当前 Vault", slot: "wide" },
-          { label: "数据目录", scope: "当前 Vault", slot: "wide" },
-          { label: "存储占用", scope: "当前 Vault", slot: "wide" },
-          { label: "工作区状态", scope: "当前 Vault", slot: "wide" }
-        ]
-      },
-      {
-        title: "维护",
-        items: [
-          { label: "打开知识库目录", scope: "当前 Vault", slot: "medium" },
-          { label: "检查数据完整性", scope: "当前 Vault", slot: "medium" },
-          { label: "清理可重建缓存", scope: "当前 Vault", slot: "medium" }
-        ]
-      },
-      {
-        title: "路径与工作区",
-        items: [
-          { label: "迁移知识库位置", scope: "后续增强", slot: "wide" },
-          { label: "切换或新增工作区", scope: "后续增强", slot: "wide" }
-        ]
-      }
-    ]
-  },
-  {
-    id: "backup",
-    label: "备份与恢复",
-    eyebrow: "资产保护",
-    description: "规划自动备份、保留策略、校验与安全恢复流程。",
-    icon: ArchiveRestore,
-    groups: [
-      {
-        title: "自动备份",
-        items: [
-          { label: "启用自动备份", scope: "当前 Vault", slot: "compact" },
-          { label: "备份位置", scope: "当前 Vault", slot: "wide" },
-          { label: "每日备份数量", scope: "当前 Vault" },
-          { label: "每周备份数量", scope: "当前 Vault" },
-          { label: "清理规则", scope: "当前 Vault", slot: "wide" }
-        ]
-      },
-      {
-        title: "备份与校验",
-        items: [
-          { label: "立即备份", scope: "当前 Vault", slot: "medium" },
-          { label: "历史备份", scope: "当前 Vault", slot: "wide" },
-          { label: "验证备份完整性", scope: "单个备份", slot: "medium" }
-        ]
-      },
-      {
-        title: "恢复与敏感信息",
-        items: [
-          { label: "从备份恢复", scope: "单个备份", slot: "medium" },
-          { label: "备份 API Key", scope: "当前 Vault", slot: "compact" },
-          { label: "加密口令", scope: "当前 Vault", slot: "wide" }
-        ]
-      }
-    ]
-  },
-  {
-    id: "transfer",
-    label: "导入、导出与迁移",
-    eyebrow: "内容流转",
-    description: "集中展示材料导入、知识包导出和版本迁移入口。",
-    icon: ArrowDownUp,
-    groups: [
-      {
-        title: "导入",
-        items: [
-          { label: "导入文本材料", scope: "当前 Vault", slot: "wide" },
-          { label: "导入 .annota 包", scope: "当前 Vault", slot: "wide" },
-          { label: "重复内容处理", scope: "单次导入", slot: "wide" },
-          { label: "安全校验", scope: "单次导入", slot: "wide" }
-        ]
-      },
-      {
-        title: "导出",
-        items: [
-          { label: "导出纯文本", scope: "单次导出", slot: "wide" },
-          { label: "导出 .annota v2", scope: "单次导出", slot: "wide" },
-          { label: "默认导出内容", scope: "单次导出", slot: "wide" },
-          { label: "包含 API Key", scope: "单次导出", slot: "compact" }
-        ]
-      },
-      {
-        title: "版本兼容",
-        items: [
-          { label: "数据与包格式版本", scope: "当前 Vault", slot: "wide" },
-          { label: "旧版本迁移状态", scope: "当前 Vault", slot: "wide" }
-        ]
-      }
-    ]
-  },
-  {
-    id: "privacy",
-    label: "隐私与安全",
-    eyebrow: "安全边界",
-    description: "明确本地数据、模型请求、密钥与诊断日志的边界。",
-    icon: ShieldCheck,
-    groups: [
-      {
-        title: "本地数据与模型请求",
-        items: [
-          { label: "本地优先说明", scope: "全局", slot: "wide" },
-          { label: "发送内容说明", scope: "全局", slot: "wide" },
-          { label: "目标服务说明", scope: "全局", slot: "wide" },
-          { label: "遥测状态", scope: "全局", slot: "medium" }
-        ]
-      },
-      {
-        title: "密钥与导出",
-        items: [
-          { label: "已保存密钥状态", scope: "全局", slot: "wide" },
-          { label: "安全存储状态", scope: "全局", slot: "wide" },
-          { label: "删除全部模型密钥", scope: "全局", slot: "medium" },
-          { label: "加密 secrets 规则", scope: "单次操作", slot: "wide" }
-        ]
-      },
-      {
-        title: "日志与本地清理",
-        items: [
-          { label: "日志隐私说明", scope: "全局", slot: "wide" },
-          { label: "离开应用前确认", scope: "全局", slot: "compact" },
-          { label: "清理可重建临时数据", scope: "全局", slot: "medium" }
-        ]
-      }
-    ]
-  },
-  {
-    id: "maintenance",
-    label: "更新、诊断与关于",
-    eyebrow: "应用维护",
-    description: "查看应用版本、更新状态、运行环境与诊断信息。",
-    icon: Wrench,
-    groups: [
-      {
-        title: "更新",
-        items: [
-          { label: "自动检查更新", scope: "全局", slot: "compact" },
-          { label: "检查更新", scope: "全局", slot: "medium" },
-          { label: "更新通道", scope: "全局", slot: "medium" },
-          { label: "更新安全", scope: "单次更新", slot: "wide" }
-        ]
-      },
-      {
-        title: "日志",
-        items: [
-          { label: "日志保留时间", scope: "全局", slot: "medium" },
-          { label: "导出脱敏诊断日志", scope: "单次导出", slot: "medium" },
-          { label: "打开日志目录", scope: "全局", slot: "medium" },
-          { label: "清理诊断日志", scope: "全局", slot: "medium" }
-        ]
-      },
-      {
-        title: "诊断与关于",
-        items: [
-          { label: "运行环境信息", scope: "全局", slot: "wide" },
-          { label: "工作区诊断", scope: "当前 Vault", slot: "wide" },
-          { label: "应用版本", scope: "全局", slot: "medium" },
-          { label: "许可证与第三方组件", scope: "全局", slot: "wide" }
-        ]
-      }
-    ]
+    groups: []
   }
 ];
 
@@ -860,14 +381,6 @@ export function SettingsPage({
               <WorkspaceSettings />
             ) : (
               <>
-                {activeCategory.groups.length > 0 && (
-                  <div className="settings-preview-note" role="note">
-                    {activeCategory.id === "appearance"
-                      ? "应用主题、字体、内容显示与阅读路径偏好现已可用；其余阅读与标注项目仍为结构预览。"
-                      : "当前项目暂为结构预览，不会更改应用数据。"}
-                  </div>
-                )}
-
                 {activeCategory.id === "appearance" && (
                   <ThemeSettings
                     value={appTheme}
@@ -960,13 +473,7 @@ export function SettingsPage({
                                 </span>
                                 <i aria-hidden="true" />
                               </button>
-                            ) : (
-                              <div
-                                className={`settings-value-slot is-${item.slot ?? "medium"}`}
-                                data-setting-slot
-                                aria-hidden="true"
-                              />
-                            )}
+                            ) : null}
                           </div>
                         ))}
                       </div>

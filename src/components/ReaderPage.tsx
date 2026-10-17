@@ -183,6 +183,7 @@ export function ReaderPage({
     topologyError,
     createManualTopologyNode,
     updateManualTopologyNode,
+    updateTopologyCard,
     updateNodeConfig,
     regenerateNode,
     removeManualTopologyNode,
@@ -398,54 +399,12 @@ export function ReaderPage({
     );
   }, []);
 
-  const measureVisibleBlocks = useCallback(() => {
-    const surface = readerSurfaceRef.current;
-    const articleRegion = articleScrollRegionRef.current;
-    if (!surface || !articleRegion) return;
-
-    const surfaceRect = surface.getBoundingClientRect();
-    const toolbar = surface.querySelector<HTMLElement>(
-      ":scope > .inline-formatting-toolbar"
-    );
-    const toolbarRect = toolbar?.getBoundingClientRect();
-    const viewportTop = Math.max(surfaceRect.top, toolbarRect?.bottom ?? surfaceRect.top);
-    const viewportBottom = surfaceRect.bottom;
-    const lines = articleRegion.querySelectorAll<HTMLElement>(
-      "[data-markdown-block-id]"
-    );
-    if (!lines.length || viewportBottom <= viewportTop) return;
-
-    const visible = new Set<string>();
-    lines.forEach((line) => {
-      const blockId = line.dataset.markdownBlockId;
-      if (!blockId) return;
-      const rect = line.getBoundingClientRect();
-      if (rect.height > 0 && rect.bottom > viewportTop && rect.top < viewportBottom) {
-        visible.add(blockId);
-      }
-    });
-    const orderedVisible = [...visible];
-    setVisibleBlockIds((current) =>
-      current &&
-      current.length === orderedVisible.length &&
-      current.every((blockId, index) => blockId === orderedVisible[index])
-        ? current
-        : orderedVisible
-    );
-  }, []);
-
   useEffect(() => {
     const surface = readerSurfaceRef.current;
     const articleRegion = articleScrollRegionRef.current;
     if (!surface || !articleRegion) return;
 
-    const scheduleMeasure = () => {
-      window.cancelAnimationFrame(visibleBlocksFrameRef.current ?? 0);
-      visibleBlocksFrameRef.current = window.requestAnimationFrame(measureVisibleBlocks);
-    };
-    const resizeObserver = typeof ResizeObserver === "undefined"
-      ? null
-      : new ResizeObserver(() => scheduleIndex());
+    const resizeObserver = new ResizeObserver(() => scheduleIndex());
     let mutationObserver: MutationObserver;
     let intersectionObserver: IntersectionObserver | null = null;
     let observedBlockIds = new Map<Element, string>();
@@ -500,10 +459,6 @@ export function ReaderPage({
     };
 
     const scheduleIndex = () => {
-      if (typeof IntersectionObserver === "undefined") {
-        scheduleMeasure();
-        return;
-      }
       window.cancelAnimationFrame(visibleBlocksFrameRef.current ?? 0);
       visibleBlocksFrameRef.current = window.requestAnimationFrame(
         rebuildIntersectionIndex
@@ -519,24 +474,16 @@ export function ReaderPage({
     });
     resizeObserver?.observe(surface);
     resizeObserver?.observe(articleRegion);
-    if (typeof IntersectionObserver === "undefined") {
-      surface.addEventListener("scroll", scheduleMeasure, { passive: true });
-      window.addEventListener("resize", scheduleMeasure);
-      scheduleMeasure();
-    } else {
-      window.addEventListener("resize", scheduleIndex);
-      scheduleIndex();
-    }
+    window.addEventListener("resize", scheduleIndex);
+    scheduleIndex();
     return () => {
       mutationObserver.disconnect();
       intersectionObserver?.disconnect();
       resizeObserver?.disconnect();
-      surface.removeEventListener("scroll", scheduleMeasure);
-      window.removeEventListener("resize", scheduleMeasure);
       window.removeEventListener("resize", scheduleIndex);
       window.cancelAnimationFrame(visibleBlocksFrameRef.current ?? 0);
     };
-  }, [contentZoom, currentArticle?.id, measureVisibleBlocks]);
+  }, [contentZoom, currentArticle?.id]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1008,7 +955,7 @@ export function ReaderPage({
       <TopologyPanel
         articles={data.articles}
         rootId={currentNotebook.rootId}
-        rootIds={currentNotebook.rootIds ?? [currentNotebook.rootId]}
+        rootIds={currentNotebook.rootIds}
         currentId={currentArticle.id}
         onNavigate={navigateTo}
         fullScreen={fullTopology}
@@ -1021,6 +968,7 @@ export function ReaderPage({
         onCreateRoot={createRootArticle}
         onCreateManualNode={createManualTopologyNode}
         onUpdateManualNode={updateManualTopologyNode}
+        onUpdateCard={updateTopologyCard}
         onUpdateNodeConfig={updateNodeConfig}
         onRegenerateNode={regenerateNode}
         onRemoveManualNode={removeManualTopologyNode}

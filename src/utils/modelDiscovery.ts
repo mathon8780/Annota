@@ -1,6 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 
-export type ModelDiscoveryProtocol =
+type ModelDiscoveryProtocol =
   | "openai-compatible"
   | "anthropic-messages";
 
@@ -56,7 +56,7 @@ async function responseErrorMessage(response: Response) {
     : `模型列表接口返回 HTTP ${response.status}`;
 }
 
-export function resolveModelListUrl(
+function resolveModelListUrl(
   baseUrl: string,
   modelsPath: string
 ) {
@@ -74,7 +74,7 @@ export function resolveModelListUrl(
   ).replace(/^\/+/, "")}`;
 }
 
-export function parseModelListPayload(payload: unknown) {
+function parseModelListPayload(payload: unknown) {
   const candidates = Array.isArray(payload)
     ? payload
     : payload && typeof payload === "object"
@@ -137,15 +137,11 @@ export async function discoverModels(
     return discoverModelsInBrowser(request);
   }
 
-  const values = await invoke<unknown>("discover_models", { request });
-  if (!Array.isArray(values)) {
-    throw new Error("模型列表命令返回了无效数据");
-  }
+  const values = await invoke<string[]>("discover_models", { request });
 
   const models = Array.from(
     new Set(
       values
-        .filter((value): value is string => typeof value === "string")
         .map((value) => value.trim())
         .filter(Boolean)
     )

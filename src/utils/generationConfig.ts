@@ -30,9 +30,9 @@ export type GenerationTypeIconId =
   | "task";
 
 export type TopologyCardVariant = GenerationTypeIconId;
-export type NodeExecutionMode = "ai" | "manual" | "system";
+type NodeExecutionMode = "ai" | "manual" | "system";
 
-export interface NodeModelParameters {
+interface NodeModelParameters {
   temperature: number;
   topP: number;
   maxTokens: number;
@@ -69,15 +69,19 @@ export interface GenerationTypeConfig {
 
 export interface GenerationTypeIndex {
   byId: ReadonlyMap<string, GenerationTypeConfig>;
-  byName: ReadonlyMap<string, GenerationTypeConfig>;
-  byRelationLabel: ReadonlyMap<string, GenerationTypeConfig>;
   fallback: GenerationTypeConfig;
   first: GenerationTypeConfig;
   root: GenerationTypeConfig;
 }
 
 export const GENERATION_TYPES_STORAGE_KEY = "annota.generation-types.v1";
-export const GENERATION_TYPES_HYDRATED_EVENT = "annota:generation-types-hydrated";
+const GENERATION_TYPES_HYDRATED_EVENT = "annota:generation-types-hydrated";
+let desktopGenerationTypes: GenerationTypeConfig[] | null = null;
+let pendingDesktopSave: Promise<unknown> = Promise.resolve();
+
+export function isGenerationTypesHydrated() {
+  return !isTauri() || desktopGenerationTypes !== null;
+}
 
 export const TYPE_FAMILIES: Readonly<Record<string, NodeFamily>> = {
   root: "笔记",
@@ -112,34 +116,25 @@ export function createGenerationTypeIndex(
     nodeTypes.find((type) => type.id === "explain") ?? first;
   const root = nodeTypes.find((type) => type.id === "root") ?? first;
   const byId = new Map<string, GenerationTypeConfig>();
-  const byName = new Map<string, GenerationTypeConfig>();
-  const byRelationLabel = new Map<string, GenerationTypeConfig>();
   nodeTypes.forEach((type) => {
     if (!byId.has(type.id)) byId.set(type.id, type);
-    if (!byName.has(type.name)) byName.set(type.name, type);
-    if (!byRelationLabel.has(type.relationLabel)) {
-      byRelationLabel.set(type.relationLabel, type);
-    }
   });
-  return { byId, byName, byRelationLabel, fallback, first, root };
+  return { byId, fallback, first, root };
 }
 
 export function resolveArticleGenerationType(
   article: ArticleNode,
   index: GenerationTypeIndex
 ): GenerationTypeConfig {
-  const sourceType = article.source?.generationType
-    ? index.byId.get(article.source.generationType)
-    : undefined;
+  const typeId = article.source?.generationType ?? article.appearance?.typeId;
+  const sourceType = typeId ? index.byId.get(typeId) : undefined;
   const configuredType = article.parentId === null
     ? index.root
-    : sourceType ??
-      index.byRelationLabel.get(article.type) ??
-      index.byName.get(article.type);
+    : sourceType;
   if (configuredType) return configuredType;
 
   const appearance = article.appearance;
-  if (!appearance) return index.first;
+  if (!appearance) return index.fallback;
   return {
     ...index.fallback,
     id: appearance.typeId,
@@ -213,7 +208,7 @@ export const explainDefaults = nodeType({
     "请解释 <selection>{{selection.text}}</selection>。\n\n<document_title>{{document.title}}</document_title>\n<section_path>{{section.path}}</section_path>\n<containing_block>{{block.text}}</containing_block>\n<additional_instruction>{{generation.instruction}}</additional_instruction>"
 });
 
-export const translateDefaults = nodeType({
+const translateDefaults = nodeType({
   id: "translate",
   name: "翻译",
   icon: "translate",
@@ -500,174 +495,133 @@ export function cloneGenerationType(type: GenerationTypeConfig) {
   };
 }
 
-function inferredVariant(value: Partial<GenerationTypeConfig>, fallback: GenerationTypeConfig) {
-  if (iconIds.includes(value.cardVariant as TopologyCardVariant)) {
-    return value.cardVariant as TopologyCardVariant;
-  }
-  if (value.id === "socratic") return "question";
-  if (iconIds.includes(value.icon as GenerationTypeIconId)) {
-    return value.icon as TopologyCardVariant;
-  }
-  return fallback.cardVariant;
-}
-
 function normalizeGenerationType(
-  value: Partial<GenerationTypeConfig>,
-  fallback: GenerationTypeConfig
+  value: Partial<GenerationTypeConfig>
 ): GenerationTypeConfig | null {
   if (
     typeof value.id !== "string" ||
-    typeof value.name !== "string"
+    typeof value.name !== "string" ||
+    typeof value.description !== "string" ||
+    (value.family !== "笔记" && value.family !== "记录" && value.family !== "交互") ||
+    !isGenerationTypeIconId(value.icon) ||
+    !isTopologyCardVariant(value.cardVariant) ||
+    !executionModes.includes(value.executionMode as NodeExecutionMode) ||
+    typeof value.interactive !== "boolean" ||
+    typeof value.color !== "string" ||
+    typeof value.isBuiltIn !== "boolean" ||
+    typeof value.enabled !== "boolean" ||
+    typeof value.modelBindingId !== "string" ||
+    !value.modelParameters ||
+    !Number.isFinite(value.modelParameters.temperature) ||
+    !Number.isFinite(value.modelParameters.topP) ||
+    !Number.isFinite(value.modelParameters.maxTokens) ||
+    typeof value.relationLabel !== "string" ||
+    typeof value.systemPrompt !== "string" ||
+    typeof value.userPrompt !== "string" ||
+    !contextScopes.includes(value.contextScope as ContextScope) ||
+    !Array.isArray(value.displayFields)
   ) {
     return null;
   }
   const builtInDefault = initialGenerationTypes.find((item) => item.id === value.id);
-  const executionMode = executionModes.includes(
-    value.executionMode as NodeExecutionMode
-  )
-    ? (value.executionMode as NodeExecutionMode)
-    : fallback.executionMode;
-  if (
-    executionMode === "ai" &&
-    (typeof value.systemPrompt !== "string" ||
-      typeof value.userPrompt !== "string")
-  ) {
-    return null;
-  }
+  const executionMode = value.executionMode as NodeExecutionMode;
   return {
     id: value.id,
-    name:
-      value.id === "root" && value.name === "主文章"
-        ? rootDefaults.name
-        : value.name,
-    description:
-      typeof value.description === "string"
-        ? value.description
-        : fallback.description,
-    family:
-      value.family === "笔记" || value.family === "记录" || value.family === "交互"
-        ? value.family
-        : typeFamily(value.id),
-    icon: iconIds.includes(value.icon as GenerationTypeIconId)
-      ? (value.icon as GenerationTypeIconId)
-      : fallback.icon,
-    cardVariant: inferredVariant(value, fallback),
+    name: value.name,
+    description: value.description,
+    family: value.family,
+    icon: value.icon,
+    cardVariant: value.cardVariant,
     executionMode,
-    interactive:
-      typeof value.interactive === "boolean"
-        ? value.interactive
-        : fallback.interactive,
-    color: typeof value.color === "string" ? value.color : fallback.color,
+    interactive: value.interactive,
+    color: value.color,
     isBuiltIn: builtInDefault ? true : Boolean(value.isBuiltIn),
-    enabled:
-      executionMode === "system"
-        ? false
-        : typeof value.enabled === "boolean"
-          ? value.enabled
-          : fallback.enabled,
+    enabled: executionMode === "system" ? false : value.enabled,
     modelBindingId:
-      executionMode === "ai" && typeof value.modelBindingId === "string"
-        ? value.modelBindingId
-        : "global-default",
+      executionMode === "ai" ? value.modelBindingId : "global-default",
     modelParameters: {
-      temperature:
-        typeof value.modelParameters?.temperature === "number"
-          ? Math.min(2, Math.max(0, value.modelParameters.temperature))
-          : fallback.modelParameters.temperature,
-      topP:
-        typeof value.modelParameters?.topP === "number"
-          ? Math.min(1, Math.max(0, value.modelParameters.topP))
-          : fallback.modelParameters.topP,
-      maxTokens:
-        typeof value.modelParameters?.maxTokens === "number"
-          ? Math.min(32768, Math.max(128, Math.round(value.modelParameters.maxTokens)))
-          : fallback.modelParameters.maxTokens
+      temperature: Math.min(2, Math.max(0, value.modelParameters.temperature)),
+      topP: Math.min(1, Math.max(0, value.modelParameters.topP)),
+      maxTokens: Math.min(32768, Math.max(128, Math.round(value.modelParameters.maxTokens)))
     },
-    relationLabel:
-      typeof value.relationLabel === "string"
-        ? value.relationLabel
-        : value.name,
-    systemPrompt: executionMode === "ai" ? value.systemPrompt! : "",
-    userPrompt: executionMode === "ai" ? value.userPrompt! : "",
+    relationLabel: value.relationLabel,
+    systemPrompt: executionMode === "ai" ? value.systemPrompt : "",
+    userPrompt: executionMode === "ai" ? value.userPrompt : "",
     contextScope:
-      executionMode === "ai" &&
-      contextScopes.includes(value.contextScope as ContextScope)
-      ? (value.contextScope as ContextScope)
-      : "containingParagraph",
-    displayFields: Array.isArray(value.displayFields)
-      ? value.displayFields.filter(
-          (field): field is NodeDisplayField =>
-            ["type", "title", "summary", "source", "model", "content"].includes(
-              field as NodeDisplayField
-            )
+      executionMode === "ai" ? (value.contextScope as ContextScope) : "containingParagraph",
+    displayFields: value.displayFields.filter(
+      (field): field is NodeDisplayField =>
+        ["type", "title", "summary", "source", "model", "content"].includes(
+          field as NodeDisplayField
         )
-      : [...fallback.displayFields]
+    )
   };
 }
 
-export function loadGenerationTypes(): GenerationTypeConfig[] {
+function normalizeGenerationTypes(parsed: unknown): GenerationTypeConfig[] {
   const fallback = initialGenerationTypes.map(cloneGenerationType);
-  if (typeof window === "undefined") return fallback;
+  if (!Array.isArray(parsed) || !parsed.length) return fallback;
+  const normalized = parsed
+    .map((value) =>
+      value && typeof value === "object"
+        ? normalizeGenerationType(value as Partial<GenerationTypeConfig>)
+        : null
+    )
+    .filter((value): value is GenerationTypeConfig => Boolean(value));
+  const savedById = new Map(normalized.map((type) => [type.id, type]));
+  return [
+    ...initialGenerationTypes.map((type) =>
+      savedById.get(type.id) ?? cloneGenerationType(type)
+    ),
+    ...normalized.filter(
+      (type) => !initialGenerationTypes.some((item) => item.id === type.id)
+    )
+  ];
+}
+
+export function loadGenerationTypes(): GenerationTypeConfig[] {
+  if (isTauri()) {
+    return (desktopGenerationTypes ?? initialGenerationTypes).map(cloneGenerationType);
+  }
   try {
-    const raw = window.localStorage.getItem(GENERATION_TYPES_STORAGE_KEY);
-    if (!raw) return fallback;
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed) || !parsed.length) return fallback;
-    const normalized = parsed
-      .map((value) =>
-        value && typeof value === "object"
-          ? normalizeGenerationType(
-              value as Partial<GenerationTypeConfig>,
-              initialGenerationTypes.find(
-                (item) => item.id === (value as Partial<GenerationTypeConfig>).id
-              ) ?? explainDefaults
-            )
-          : null
-      )
-      .filter((value): value is GenerationTypeConfig => Boolean(value));
-    const savedById = new Map(normalized.map((type) => [type.id, type]));
-    return [
-      ...initialGenerationTypes.map((type) =>
-        savedById.get(type.id) ?? cloneGenerationType(type)
-      ),
-      ...normalized.filter(
-        (type) => !initialGenerationTypes.some((item) => item.id === type.id)
-      )
-    ];
+    return normalizeGenerationTypes(JSON.parse(
+      window.localStorage.getItem(GENERATION_TYPES_STORAGE_KEY) ?? "null"
+    ));
   } catch {
-    return fallback;
+    return initialGenerationTypes.map(cloneGenerationType);
   }
 }
 
-export function saveGenerationTypes(types: GenerationTypeConfig[]) {
-  try {
-    window.localStorage.setItem(
-      GENERATION_TYPES_STORAGE_KEY,
-      JSON.stringify(types)
-    );
-  } catch {
-    // Keep editing available if storage is unavailable.
-  }
+export async function saveGenerationTypes(types: GenerationTypeConfig[]): Promise<void> {
   if (isTauri()) {
-    void invoke("replace_node_type_definitions", { definitions: types }).catch(
-      () => undefined
+    const write = pendingDesktopSave.catch(() => undefined).then(() =>
+      invoke("replace_node_type_definitions", { definitions: types })
     );
+    pendingDesktopSave = write;
+    await write;
+    desktopGenerationTypes = normalizeGenerationTypes(types);
+    return;
   }
+  window.localStorage.setItem(GENERATION_TYPES_STORAGE_KEY, JSON.stringify(types));
+}
+
+export async function awaitGenerationTypeWrites(): Promise<void> {
+  await pendingDesktopSave;
 }
 
 export async function hydrateGenerationTypesFromDatabase() {
   if (!isTauri()) return loadGenerationTypes();
+  await awaitGenerationTypeWrites();
   const definitions = await invoke<unknown[]>("load_node_type_definitions");
   if (!definitions.length) {
-    const initial = loadGenerationTypes();
+    const initial = initialGenerationTypes.map(cloneGenerationType);
     await invoke("replace_node_type_definitions", { definitions: initial });
+    desktopGenerationTypes = initial;
+    window.dispatchEvent(new CustomEvent(GENERATION_TYPES_HYDRATED_EVENT));
     return initial;
   }
-  window.localStorage.setItem(
-    GENERATION_TYPES_STORAGE_KEY,
-    JSON.stringify(definitions)
-  );
-  const hydrated = loadGenerationTypes();
+  const hydrated = normalizeGenerationTypes(definitions);
+  desktopGenerationTypes = hydrated;
   window.dispatchEvent(new CustomEvent(GENERATION_TYPES_HYDRATED_EVENT));
   return hydrated;
 }
@@ -708,17 +662,10 @@ const NODE_DISPLAY_FIELDS: readonly NodeDisplayField[] = [
   "content"
 ];
 
-/** 兼容旧载荷/任意 JSON 的节点级配置归一化;非法结构丢弃对应字段。 */
+/** 归一化当前节点级配置载荷；非法结构丢弃对应字段。 */
 export function normalizeNodeLevelConfig(
   value: unknown
 ): NodeLevelConfig | null {
-  if (typeof value === "string") {
-    try {
-      value = JSON.parse(value);
-    } catch {
-      return null;
-    }
-  }
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const raw = value as Record<string, unknown>;
   const normalized: NodeLevelConfig = {};
@@ -768,35 +715,14 @@ export function mergeNodeLevelConfig(
   if (!nodeConfig) return typeConfig;
   return {
     ...typeConfig,
-    modelBindingId:
-      typeof nodeConfig.modelBindingId === "string"
-        ? nodeConfig.modelBindingId
-        : typeConfig.modelBindingId,
+    modelBindingId: nodeConfig.modelBindingId ?? typeConfig.modelBindingId,
     modelParameters: {
-      temperature:
-        typeof nodeConfig.modelParameters?.temperature === "number"
-          ? nodeConfig.modelParameters.temperature
-          : typeConfig.modelParameters.temperature,
-      topP:
-        typeof nodeConfig.modelParameters?.topP === "number"
-          ? nodeConfig.modelParameters.topP
-          : typeConfig.modelParameters.topP,
-      maxTokens:
-        typeof nodeConfig.modelParameters?.maxTokens === "number"
-          ? nodeConfig.modelParameters.maxTokens
-          : typeConfig.modelParameters.maxTokens
+      ...typeConfig.modelParameters,
+      ...nodeConfig.modelParameters
     },
-    systemPrompt:
-      typeof nodeConfig.systemPrompt === "string"
-        ? nodeConfig.systemPrompt
-        : typeConfig.systemPrompt,
-    userPrompt:
-      typeof nodeConfig.userPrompt === "string"
-        ? nodeConfig.userPrompt
-        : typeConfig.userPrompt,
-    displayFields:
-      Array.isArray(nodeConfig.displayFields) && nodeConfig.displayFields.length > 0
-        ? nodeConfig.displayFields
-        : typeConfig.displayFields
+    systemPrompt: nodeConfig.systemPrompt ?? typeConfig.systemPrompt,
+    userPrompt: nodeConfig.userPrompt ?? typeConfig.userPrompt,
+    displayFields: nodeConfig.displayFields?.length
+      ? nodeConfig.displayFields : typeConfig.displayFields
   };
 }

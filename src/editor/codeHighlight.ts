@@ -19,6 +19,7 @@ import sql from "highlight.js/lib/languages/sql";
 import typescript from "highlight.js/lib/languages/typescript";
 import xml from "highlight.js/lib/languages/xml";
 import yaml from "highlight.js/lib/languages/yaml";
+import { fencedCodeState } from "./fencedCode";
 
 const languages = {
   bash,
@@ -137,41 +138,19 @@ export function highlightedCodeSpans(source: string, language: string): CodeHigh
 
 function fencedCodeDecorations(state: EditorState): DecorationSet {
   const decorations = new RangeSetBuilder<Decoration>();
-  let openFence: {
-    language: string;
-    length: number;
-    marker: "`" | "~";
-  } | null = null;
-
-  for (let lineNumber = 1; lineNumber <= state.doc.lines; lineNumber += 1) {
-    const line = state.doc.line(lineNumber);
-    const fence = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line.text);
-    if (!openFence && fence) {
-      openFence = {
-        language: fence[2].trim().split(/\s+/)[0] ?? "",
-        marker: fence[1][0] as "`" | "~",
-        length: fence[1].length
-      };
-      continue;
+  const fencedCode = state.field(fencedCodeState);
+  for (const block of fencedCode.blocks) {
+    for (let lineNumber = block.startLine + 1; lineNumber <= block.endLine; lineNumber += 1) {
+      if (fencedCode.fences.has(lineNumber)) continue;
+      const line = state.doc.line(lineNumber);
+      highlightedCodeSpans(line.text, block.language).forEach((span) => {
+        decorations.add(
+          line.from + span.from,
+          line.from + span.to,
+          Decoration.mark({ class: span.className })
+        );
+      });
     }
-    if (!openFence) continue;
-    if (
-      fence &&
-      fence[1][0] === openFence.marker &&
-      fence[1].length >= openFence.length &&
-      !fence[2].trim()
-    ) {
-      openFence = null;
-      continue;
-    }
-
-    highlightedCodeSpans(line.text, openFence.language).forEach((span) => {
-      decorations.add(
-        line.from + span.from,
-        line.from + span.to,
-        Decoration.mark({ class: span.className })
-      );
-    });
   }
 
   return decorations.finish();
@@ -187,4 +166,4 @@ const fencedCodeHighlightField = StateField.define<DecorationSet>({
   provide: (field) => EditorView.decorations.from(field)
 });
 
-export const fencedCodeHighlightExtension: Extension = fencedCodeHighlightField;
+export const fencedCodeHighlightExtension: Extension = [fencedCodeState, fencedCodeHighlightField];

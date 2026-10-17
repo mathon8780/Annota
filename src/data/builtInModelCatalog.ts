@@ -1,6 +1,6 @@
 export const BUILT_IN_MODEL_CATALOG_UPDATED_AT = "2026-07-28";
 
-export const BUILT_IN_MODEL_CATALOG = {
+const BUILT_IN_MODEL_CATALOG = {
   chatgpt: [
     "gpt-5.6",
     "gpt-5.6-sol",

@@ -2,7 +2,7 @@ import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { Decoration, EditorView, highlightActiveLine } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
 
-export const markdownHighlightStyle = HighlightStyle.define([
+const markdownHighlightStyle = HighlightStyle.define([
   { tag: tags.heading1, color: "var(--color-heading-1)", fontWeight: "700" },
   { tag: tags.heading2, color: "var(--color-heading-2)", fontWeight: "700" },
   { tag: tags.heading3, color: "var(--color-heading-3)", fontWeight: "700" },

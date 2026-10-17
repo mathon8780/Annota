@@ -1,4 +1,4 @@
-export const SHORTCUTS_STORAGE_KEY = "annota:shortcuts";
+const SHORTCUTS_STORAGE_KEY = "annota:shortcuts";
 
 export type ShortcutActionId =
   | "open-search"
@@ -81,7 +81,7 @@ export const shortcutDefinitions: readonly ShortcutDefinition[] = [
   }
 ];
 
-export const defaultShortcuts: ShortcutPreferences = {
+const defaultShortcuts: ShortcutPreferences = {
   "open-search": { key: "K", ctrl: true, alt: false, shift: false },
   "save-article": { key: "S", ctrl: true, alt: false, shift: false },
   "go-parent": {
@@ -127,7 +127,7 @@ const displayKeys: Record<string, string> = {
   " ": "Space"
 };
 
-export function normalizeShortcutKey(key: string) {
+function normalizeShortcutKey(key: string) {
   const normalized = keyAliases[key] ?? key;
   return normalized.length === 1
     ? normalized.toLocaleUpperCase("en-US")
@@ -160,7 +160,7 @@ export function matchesShortcut(
   );
 }
 
-export function shortcutSignature(binding: ShortcutBinding) {
+function shortcutSignature(binding: ShortcutBinding) {
   return [
     binding.ctrl ? "ctrl" : "",
     binding.alt ? "alt" : "",

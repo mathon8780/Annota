@@ -1,5 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import type { ProviderProtocol } from "./modelProviders";
+export { GENERATION_OUTPUT_INSTRUCTION } from "./generationOutput";
 
 export interface ModelGenerationRequest {
   baseUrl: string;
@@ -132,15 +133,9 @@ export async function generateModelText(request: ModelGenerationRequest) {
   if (!request.apiKey.trim()) throw new Error("所选模型没有配置 API Key");
   if (!request.model.trim()) throw new Error("拓扑节点没有选择可用模型");
   if (!isTauri()) return generateInBrowser(request);
-  const text = await invoke<unknown>("generate_text", { request });
-  if (typeof text !== "string" || !text.trim()) {
+  const text = await invoke<string>("generate_text", { request });
+  if (!text.trim()) {
     throw new Error("模型生成命令没有返回可用内容");
   }
   return text.trim();
 }
-
-export const GENERATION_OUTPUT_INSTRUCTION = `
-
-请只返回一个 JSON 对象，不要使用 Markdown 代码围栏。结构必须为：
-{"title":"文章标题","summary":"一句摘要","blocks":[{"type":"heading|paragraph|quote","text":"正文"}]}
-blocks 至少包含一项；heading 仅用于小节标题。`;

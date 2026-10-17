@@ -1,7 +1,7 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 
-export type WorkspaceKind = "managed" | "user";
+type WorkspaceKind = "managed" | "user";
 export type WorkspaceHealth = "healthy" | "warning" | "error";
 
 export interface WorkspaceDiagnosticCheck {
@@ -17,7 +17,7 @@ export interface WorkspaceDiagnosticReport {
   checks: WorkspaceDiagnosticCheck[];
 }
 
-export interface WorkspaceSummary {
+interface WorkspaceSummary {
   id: string;
   displayName: string;
   path: string;

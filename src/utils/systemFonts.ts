@@ -1,6 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 
-export type FontCatalogSource = "loading" | "system" | "builtin" | "error";
+type FontCatalogSource = "loading" | "system" | "builtin" | "error";
 
 export interface SystemFontCatalog {
   families: string[];
@@ -19,15 +19,11 @@ export async function loadSystemFontCatalog(): Promise<SystemFontCatalog> {
   }
 
   try {
-    const values = await invoke<unknown>("list_system_fonts");
-    if (!Array.isArray(values)) {
-      throw new Error("系统字体命令返回了无效数据");
-    }
+    const values = await invoke<string[]>("list_system_fonts");
 
     const families = Array.from(
       new Map(
         values
-          .filter((value): value is string => typeof value === "string")
           .map((value) => value.trim())
           .filter(Boolean)
           .map((value) => [value.toLocaleLowerCase("zh-CN"), value])

@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection, OptionalExtension, Row, Transaction};
+use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashSet},
@@ -81,13 +81,6 @@ pub struct LibraryArticle {
     pub config_json: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LibraryLoadResult {
-    pub metadata: LibraryMetadata,
-    pub imported_legacy: bool,
-}
-
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TopologyCollection {
@@ -163,15 +156,6 @@ pub struct TopologyGraph {
     pub interactions: Vec<TopologyInteraction>,
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UpsertTopologyCollectionRequest {
-    pub id: String,
-    pub title: String,
-    #[serde(default)]
-    pub description: String,
-}
-
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpsertTopologyNodeRequest {
@@ -237,16 +221,6 @@ pub struct UpsertTopologyInteractionRequest {
     pub state_json: String,
     #[serde(default = "default_true")]
     pub enabled: bool,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SyncMarkdownTopologyRequest {
-    pub collection: UpsertTopologyCollectionRequest,
-    #[serde(default)]
-    pub nodes: Vec<UpsertTopologyNodeRequest>,
-    #[serde(default)]
-    pub relations: Vec<UpsertTopologyRelationRequest>,
 }
 
 fn default_true() -> bool {
@@ -351,91 +325,33 @@ fn map_interaction(row: &Row<'_>) -> rusqlite::Result<TopologyInteraction> {
     })
 }
 
-fn migrate(connection: &mut Connection) -> Result<(), String> {
+fn initialize_database(connection: &mut Connection) -> Result<(), String> {
     connection
         .pragma_update(None, "foreign_keys", "ON")
         .map_err(|error| error.to_string())?;
     connection
         .pragma_update(None, "journal_mode", "WAL")
         .map_err(|error| error.to_string())?;
-    let mut version = connection
+    let version = connection
         .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
         .map_err(|error| error.to_string())?;
+    if version == DATABASE_VERSION {
+        return Ok(());
+    }
     if version > DATABASE_VERSION {
         return Err(format!(
             "拓扑数据库版本 {version} 高于当前支持版本 {DATABASE_VERSION}"
         ));
     }
-    if version == 0 {
-        let transaction = connection
-            .transaction()
-            .map_err(|error| error.to_string())?;
-        migrate_v1(&transaction)?;
-        transaction
-            .pragma_update(None, "user_version", 1)
-            .map_err(|error| error.to_string())?;
-        transaction.commit().map_err(|error| error.to_string())?;
-        version = 1;
+    if version != 0 {
+        return Err(format!(
+            "不再支持数据库版本 {version}；请使用当前版本创建新工作区"
+        ));
     }
-    if version < 2 {
-        let transaction = connection
-            .transaction()
-            .map_err(|error| error.to_string())?;
-        migrate_v2(&transaction)?;
-        transaction
-            .pragma_update(None, "user_version", 2)
-            .map_err(|error| error.to_string())?;
-        transaction.commit().map_err(|error| error.to_string())?;
-        version = 2;
-    }
-    if version < 3 {
-        let transaction = connection
-            .transaction()
-            .map_err(|error| error.to_string())?;
-        migrate_v3(&transaction)?;
-        transaction
-            .pragma_update(None, "user_version", 3)
-            .map_err(|error| error.to_string())?;
-        transaction.commit().map_err(|error| error.to_string())?;
-        version = 3;
-    }
-    if version < 4 {
-        let transaction = connection
-            .transaction()
-            .map_err(|error| error.to_string())?;
-        migrate_v4(&transaction)?;
-        transaction
-            .pragma_update(None, "user_version", 4)
-            .map_err(|error| error.to_string())?;
-        transaction.commit().map_err(|error| error.to_string())?;
-        version = 4;
-    }
-    if version < 5 {
-        let transaction = connection
-            .transaction()
-            .map_err(|error| error.to_string())?;
-        migrate_v5(&transaction)?;
-        transaction
-            .pragma_update(None, "user_version", 5)
-            .map_err(|error| error.to_string())?;
-        transaction.commit().map_err(|error| error.to_string())?;
-        version = 5;
-    }
-    if version < 6 {
-        let transaction = connection
-            .transaction()
-            .map_err(|error| error.to_string())?;
-        migrate_v6(&transaction)?;
-        transaction
-            .pragma_update(None, "user_version", 6)
-            .map_err(|error| error.to_string())?;
-        transaction.commit().map_err(|error| error.to_string())?;
-        version = 6;
-    }
-    Ok(())
-}
 
-fn migrate_v1(transaction: &Transaction<'_>) -> Result<(), String> {
+    let transaction = connection
+        .transaction()
+        .map_err(|error| error.to_string())?;
     transaction
         .execute_batch(
             r#"
@@ -462,6 +378,12 @@ fn migrate_v1(transaction: &Transaction<'_>) -> Result<(), String> {
                 interactive INTEGER NOT NULL DEFAULT 0 CHECK (interactive IN (0, 1)),
                 interaction_state_json TEXT NOT NULL DEFAULT '{}',
                 appearance_json TEXT NOT NULL DEFAULT '{}',
+                family TEXT NOT NULL DEFAULT '笔记',
+                creation_method TEXT NOT NULL DEFAULT '手动',
+                content_json TEXT,
+                anchor_json TEXT,
+                generation_json TEXT,
+                config_json TEXT,
                 created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
                 updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
                 CHECK (
@@ -505,15 +427,7 @@ fn migrate_v1(transaction: &Transaction<'_>) -> Result<(), String> {
 
             CREATE INDEX topology_interactions_node_idx
                 ON topology_interactions(node_id, enabled DESC, updated_at DESC);
-            "#,
-        )
-        .map_err(|error| error.to_string())
-}
 
-fn migrate_v2(transaction: &Transaction<'_>) -> Result<(), String> {
-    transaction
-        .execute_batch(
-            r#"
             CREATE TABLE documents (
                 id TEXT PRIMARY KEY NOT NULL,
                 relative_path TEXT NOT NULL UNIQUE,
@@ -533,6 +447,12 @@ fn migrate_v2(transaction: &Transaction<'_>) -> Result<(), String> {
                 article_type TEXT NOT NULL,
                 appearance_json TEXT,
                 source_json TEXT,
+                family TEXT NOT NULL DEFAULT '笔记',
+                creation_method TEXT NOT NULL DEFAULT '手动',
+                content_json TEXT,
+                anchor_json TEXT,
+                generation_json TEXT,
+                config_json TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -544,6 +464,7 @@ fn migrate_v2(transaction: &Transaction<'_>) -> Result<(), String> {
                 parent_id TEXT NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
                 child_id TEXT NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
                 position INTEGER NOT NULL CHECK (position >= 0),
+                relation_type TEXT NOT NULL DEFAULT '派生',
                 PRIMARY KEY (parent_id, child_id),
                 UNIQUE (parent_id, position),
                 CHECK (parent_id <> child_id)
@@ -554,6 +475,9 @@ fn migrate_v2(transaction: &Transaction<'_>) -> Result<(), String> {
                 root_id TEXT NOT NULL REFERENCES articles(id) DEFERRABLE INITIALLY DEFERRED,
                 title TEXT NOT NULL,
                 summary TEXT NOT NULL DEFAULT '',
+                description TEXT NOT NULL DEFAULT '',
+                color TEXT NOT NULL DEFAULT '#315fdb',
+                icon TEXT NOT NULL DEFAULT 'library',
                 updated_at TEXT NOT NULL,
                 last_opened_node_id TEXT NOT NULL REFERENCES articles(id) DEFERRABLE INITIALLY DEFERRED,
                 accent TEXT NOT NULL CHECK (accent IN ('cobalt', 'amber', 'green'))
@@ -568,15 +492,7 @@ fn migrate_v2(transaction: &Transaction<'_>) -> Result<(), String> {
             );
 
             CREATE INDEX notebook_roots_article_idx ON notebook_roots(article_id);
-            "#,
-        )
-        .map_err(|error| error.to_string())
-}
 
-fn migrate_v3(transaction: &Transaction<'_>) -> Result<(), String> {
-    transaction
-        .execute_batch(
-            r#"
             CREATE TABLE pending_file_ops (
                 operation_id TEXT PRIMARY KEY NOT NULL,
                 operation_kind TEXT NOT NULL CHECK (operation_kind IN ('markdown-write')),
@@ -596,78 +512,19 @@ fn migrate_v3(transaction: &Transaction<'_>) -> Result<(), String> {
             CREATE INDEX pending_file_ops_state_idx
                 ON pending_file_ops(state, created_at, operation_id);
 
-            CREATE TABLE migration_history (
-                version INTEGER PRIMARY KEY NOT NULL,
-                name TEXT NOT NULL,
-                applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-            );
-
-            INSERT INTO migration_history (version, name)
-            VALUES (3, 'transaction-journal-and-pending-file-ops');
-            "#,
-        )
-        .map_err(|error| error.to_string())
-}
-
-fn migrate_v4(transaction: &Transaction<'_>) -> Result<(), String> {
-    transaction
-        .execute_batch(
-            r#"
-            ALTER TABLE articles ADD COLUMN family TEXT NOT NULL DEFAULT '笔记';
-            ALTER TABLE articles ADD COLUMN creation_method TEXT NOT NULL DEFAULT '手动';
-            ALTER TABLE articles ADD COLUMN content_json TEXT;
-            ALTER TABLE articles ADD COLUMN anchor_json TEXT;
-            ALTER TABLE articles ADD COLUMN generation_json TEXT;
-
-            ALTER TABLE topology_nodes ADD COLUMN family TEXT NOT NULL DEFAULT '笔记';
-            ALTER TABLE topology_nodes ADD COLUMN creation_method TEXT NOT NULL DEFAULT '手动';
-            ALTER TABLE topology_nodes ADD COLUMN content_json TEXT;
-            ALTER TABLE topology_nodes ADD COLUMN anchor_json TEXT;
-            ALTER TABLE topology_nodes ADD COLUMN generation_json TEXT;
-
-            ALTER TABLE article_edges ADD COLUMN relation_type TEXT NOT NULL DEFAULT '派生';
-
-            INSERT INTO migration_history (version, name)
-            VALUES (4, 'node-content-contract-fields');
-            "#,
-        )
-        .map_err(|error| error.to_string())
-}
-
-fn migrate_v5(transaction: &Transaction<'_>) -> Result<(), String> {
-    transaction
-        .execute_batch(
-            r#"
-            ALTER TABLE notebooks ADD COLUMN description TEXT NOT NULL DEFAULT '';
-            ALTER TABLE notebooks ADD COLUMN color TEXT NOT NULL DEFAULT '#315fdb';
-            ALTER TABLE notebooks ADD COLUMN icon TEXT NOT NULL DEFAULT 'library';
-
             CREATE TABLE node_type_definitions (
                 id TEXT PRIMARY KEY NOT NULL,
                 config_json TEXT NOT NULL,
                 position INTEGER NOT NULL CHECK (position >= 0),
                 updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
             );
-
-            INSERT INTO migration_history (version, name)
-            VALUES (5, 'collections-and-node-type-definitions');
             "#,
         )
-        .map_err(|error| error.to_string())
-}
-
-fn migrate_v6(transaction: &Transaction<'_>) -> Result<(), String> {
+        .map_err(|error| error.to_string())?;
     transaction
-        .execute_batch(
-            r#"
-            ALTER TABLE articles ADD COLUMN config_json TEXT;
-            ALTER TABLE topology_nodes ADD COLUMN config_json TEXT;
-
-            INSERT INTO migration_history (version, name)
-            VALUES (6, 'node-level-config');
-            "#,
-        )
-        .map_err(|error| error.to_string())
+        .pragma_update(None, "user_version", DATABASE_VERSION)
+        .map_err(|error| error.to_string())?;
+    transaction.commit().map_err(|error| error.to_string())
 }
 
 fn validate_library_metadata(metadata: &LibraryMetadata) -> Result<(), String> {
@@ -739,12 +596,12 @@ fn validate_library_metadata(metadata: &LibraryMetadata) -> Result<(), String> {
             }
         }
         if !matches!(article.family.as_str(), "笔记" | "记录" | "交互") {
-            return Err(format!("文章 {} 的家族无效：{}", article.id, article.family));
+            return Err(format!(
+                "文章 {} 的家族无效：{}",
+                article.id, article.family
+            ));
         }
-        if !matches!(
-            article.creation_method.as_str(),
-            "导入" | "AI" | "手动"
-        ) {
+        if !matches!(article.creation_method.as_str(), "导入" | "AI" | "手动") {
             return Err(format!(
                 "文章 {} 的创建方式无效：{}",
                 article.id, article.creation_method
@@ -759,7 +616,11 @@ fn validate_library_metadata(metadata: &LibraryMetadata) -> Result<(), String> {
             ("文章节点配置", article.config_json.as_ref()),
         ] {
             if let Some(value) = value {
-                validate_json(label, &value.to_string())?;
+                let serialized = serde_json::to_string(value)
+                    .map_err(|error| format!("{label}无法序列化：{error}"))?;
+                if serialized.len() > MAX_JSON_LENGTH {
+                    return Err(format!("{label}超过 1 MiB 限制"));
+                }
             }
         }
     }
@@ -800,24 +661,20 @@ fn validate_library_metadata(metadata: &LibraryMetadata) -> Result<(), String> {
 fn replace_library_metadata_on_connection(
     connection: &mut Connection,
     metadata: &LibraryMetadata,
+    force_projection: bool,
 ) -> Result<(), String> {
     validate_library_metadata(metadata)?;
+    let previous = load_library_metadata_from_connection(connection)?;
     let transaction = connection
         .transaction()
         .map_err(|error| error.to_string())?;
     transaction
         .pragma_update(None, "defer_foreign_keys", "ON")
         .map_err(|error| error.to_string())?;
-    transaction
-        .execute_batch(
-            "DELETE FROM notebook_roots;
-             DELETE FROM article_edges;
-             DELETE FROM notebooks;
-             DELETE FROM articles;",
-        )
-        .map_err(|error| error.to_string())?;
-
     for article in metadata.articles.values() {
+        if previous.articles.get(&article.id) == Some(article) {
+            continue;
+        }
         let appearance_json = article
             .appearance
             .as_ref()
@@ -857,7 +714,15 @@ fn replace_library_metadata_on_connection(
         transaction
             .execute(
                 "INSERT INTO articles (id, root_id, parent_id, title, summary, article_type, appearance_json, source_json, family, creation_method, content_json, anchor_json, generation_json, config_json, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+                 ON CONFLICT(id) DO UPDATE SET
+                   root_id=excluded.root_id, parent_id=excluded.parent_id, title=excluded.title,
+                   summary=excluded.summary, article_type=excluded.article_type,
+                   appearance_json=excluded.appearance_json, source_json=excluded.source_json,
+                   family=excluded.family, creation_method=excluded.creation_method,
+                   content_json=excluded.content_json, anchor_json=excluded.anchor_json,
+                   generation_json=excluded.generation_json, config_json=excluded.config_json,
+                   created_at=excluded.created_at, updated_at=excluded.updated_at",
                 params![
                     article.id,
                     article.root_id,
@@ -881,10 +746,18 @@ fn replace_library_metadata_on_connection(
     }
 
     for notebook in &metadata.notebooks {
+        if previous.notebooks.iter().any(|old| old == notebook) {
+            continue;
+        }
         transaction
             .execute(
                 "INSERT INTO notebooks (id, root_id, title, summary, description, color, icon, updated_at, last_opened_node_id, accent)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                 ON CONFLICT(id) DO UPDATE SET
+                   root_id=excluded.root_id, title=excluded.title, summary=excluded.summary,
+                   description=excluded.description, color=excluded.color, icon=excluded.icon,
+                   updated_at=excluded.updated_at,
+                   last_opened_node_id=excluded.last_opened_node_id, accent=excluded.accent",
                 params![
                     notebook.id,
                     notebook.root_id,
@@ -905,17 +778,41 @@ fn replace_library_metadata_on_connection(
                 roots.push(root_id.clone());
             }
         }
-        for (position, root_id) in roots.iter().enumerate() {
+        let previous_roots = previous
+            .notebooks
+            .iter()
+            .find(|old| old.id == notebook.id)
+            .map(|old| &old.root_ids);
+        if previous_roots != Some(&roots) {
             transaction
                 .execute(
-                    "INSERT INTO notebook_roots (notebook_id, article_id, position) VALUES (?1, ?2, ?3)",
-                    params![notebook.id, root_id, position as i64],
+                    "DELETE FROM notebook_roots WHERE notebook_id = ?1",
+                    [&notebook.id],
                 )
                 .map_err(|error| error.to_string())?;
+            for (position, root_id) in roots.iter().enumerate() {
+                transaction.execute(
+                    "INSERT INTO notebook_roots (notebook_id, article_id, position) VALUES (?1, ?2, ?3)",
+                    params![notebook.id, root_id, position as i64],
+                ).map_err(|error| error.to_string())?;
+            }
         }
     }
 
     for article in metadata.articles.values() {
+        if previous
+            .articles
+            .get(&article.id)
+            .is_some_and(|old| old.child_ids == article.child_ids)
+        {
+            continue;
+        }
+        transaction
+            .execute(
+                "DELETE FROM article_edges WHERE parent_id = ?1",
+                [&article.id],
+            )
+            .map_err(|error| error.to_string())?;
         for (position, child_id) in article.child_ids.iter().enumerate() {
             transaction
                 .execute(
@@ -925,7 +822,217 @@ fn replace_library_metadata_on_connection(
                 .map_err(|error| error.to_string())?;
         }
     }
+    for notebook in &previous.notebooks {
+        if !metadata
+            .notebooks
+            .iter()
+            .any(|current| current.id == notebook.id)
+        {
+            transaction
+                .execute("DELETE FROM notebooks WHERE id = ?1", [&notebook.id])
+                .map_err(|error| error.to_string())?;
+        }
+    }
+    for article_id in previous.articles.keys() {
+        if !metadata.articles.contains_key(article_id) {
+            transaction
+                .execute("DELETE FROM articles WHERE id = ?1", [article_id])
+                .map_err(|error| error.to_string())?;
+        }
+    }
+    project_markdown_topology(&transaction, &previous, metadata, force_projection)?;
     transaction.commit().map_err(|error| error.to_string())
+}
+
+fn markdown_owners(metadata: &LibraryMetadata) -> BTreeMap<&str, &str> {
+    let mut root_owners = BTreeMap::<&str, &str>::new();
+    for notebook in &metadata.notebooks {
+        for root_id in std::iter::once(&notebook.root_id).chain(&notebook.root_ids) {
+            root_owners
+                .entry(root_id.as_str())
+                .and_modify(|owner| {
+                    if notebook.id.as_str() < *owner {
+                        *owner = &notebook.id;
+                    }
+                })
+                .or_insert(&notebook.id);
+        }
+    }
+    let owners = metadata
+        .articles
+        .values()
+        .filter_map(|article| {
+            root_owners
+                .get(article.root_id.as_str())
+                .map(|owner| (article.id.as_str(), *owner))
+        })
+        .collect::<BTreeMap<_, _>>();
+    owners
+}
+
+fn project_markdown_topology(
+    transaction: &rusqlite::Transaction<'_>,
+    previous: &LibraryMetadata,
+    metadata: &LibraryMetadata,
+    force: bool,
+) -> Result<(), String> {
+    for notebook in &metadata.notebooks {
+        let description = if notebook.description.is_empty() {
+            &notebook.summary
+        } else {
+            &notebook.description
+        };
+        transaction
+            .execute(
+                "INSERT INTO topology_collections (id, title, description) VALUES (?1, ?2, ?3)
+             ON CONFLICT(id) DO UPDATE SET title=excluded.title, description=excluded.description,
+               updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+             WHERE title IS NOT excluded.title OR description IS NOT excluded.description",
+                params![notebook.id, notebook.title, description],
+            )
+            .map_err(|error| error.to_string())?;
+    }
+
+    // 每篇文章只保留一条物理节点记录以供互动外键引用；其他集合的成员关系由根文章推导。
+    let owners = markdown_owners(metadata);
+    let previous_owners = markdown_owners(previous);
+    for article in metadata.articles.values() {
+        let Some(collection_id) = owners.get(article.id.as_str()) else {
+            continue;
+        };
+        if !force
+            && previous.articles.get(&article.id) == Some(article)
+            && previous_owners.get(article.id.as_str()) == Some(collection_id)
+        {
+            continue;
+        }
+        let appearance_json = article
+            .appearance
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|error| error.to_string())?
+            .unwrap_or_else(|| "{}".into());
+        let node_type = article
+            .appearance
+            .as_ref()
+            .and_then(|value| value.get("typeId"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(if article.parent_id.is_some() {
+                "explain"
+            } else {
+                "root"
+            });
+        let content_json = article
+            .content_json
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|error| error.to_string())?;
+        let anchor_json = article
+            .anchor_json
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|error| error.to_string())?;
+        let generation_json = article
+            .generation_json
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|error| error.to_string())?;
+        let config_json = article
+            .config_json
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|error| error.to_string())?;
+        transaction
+            .execute(
+                "INSERT INTO topology_nodes (id, collection_id, node_type, title, summary,
+               content_mode, content, document_id, is_root, is_manual, enabled, interactive,
+               interaction_state_json, appearance_json, family, creation_method,
+               content_json, anchor_json, generation_json, config_json, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'markdown', NULL, ?1, ?6, 0, 1, 0,
+               '{}', ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+             ON CONFLICT(id) DO UPDATE SET
+               collection_id=excluded.collection_id, node_type=excluded.node_type,
+               title=excluded.title, summary=excluded.summary, document_id=excluded.document_id,
+               is_root=excluded.is_root, appearance_json=excluded.appearance_json,
+               family=excluded.family, creation_method=excluded.creation_method,
+               content_json=excluded.content_json, anchor_json=excluded.anchor_json,
+               generation_json=excluded.generation_json, config_json=excluded.config_json,
+               updated_at=excluded.updated_at
+             WHERE topology_nodes.collection_id IS NOT excluded.collection_id
+               OR topology_nodes.node_type IS NOT excluded.node_type
+               OR topology_nodes.title IS NOT excluded.title
+               OR topology_nodes.summary IS NOT excluded.summary
+               OR topology_nodes.is_root IS NOT excluded.is_root
+               OR topology_nodes.appearance_json IS NOT excluded.appearance_json
+               OR topology_nodes.family IS NOT excluded.family
+               OR topology_nodes.creation_method IS NOT excluded.creation_method
+               OR topology_nodes.content_json IS NOT excluded.content_json
+               OR topology_nodes.anchor_json IS NOT excluded.anchor_json
+               OR topology_nodes.generation_json IS NOT excluded.generation_json
+               OR topology_nodes.config_json IS NOT excluded.config_json
+               OR topology_nodes.updated_at IS NOT excluded.updated_at",
+                params![
+                    article.id,
+                    collection_id,
+                    node_type,
+                    article.title,
+                    article.summary,
+                    article.parent_id.is_none(),
+                    appearance_json,
+                    article.family,
+                    article.creation_method,
+                    content_json,
+                    anchor_json,
+                    generation_json,
+                    config_json,
+                    article.created_at,
+                    article.updated_at
+                ],
+            )
+            .map_err(|error| error.to_string())?;
+    }
+
+    // 清除旧前端同步留下的树关系；图谱读取时直接由文章父子关系推导。
+    transaction
+        .execute(
+            "DELETE FROM topology_relations WHERE metadata_json = '{\"source\":\"markdown-tree\"}'",
+            [],
+        )
+        .map_err(|error| error.to_string())?;
+    for article_id in previous.articles.keys() {
+        if !owners.contains_key(article_id.as_str()) {
+            transaction.execute(
+                "DELETE FROM topology_relations WHERE source_node_id = ?1 OR target_node_id = ?1",
+                [article_id],
+            ).map_err(|error| error.to_string())?;
+            transaction
+                .execute(
+                    "DELETE FROM topology_nodes WHERE id = ?1 AND content_mode = 'markdown'",
+                    [article_id],
+                )
+                .map_err(|error| error.to_string())?;
+        }
+    }
+    for notebook in &previous.notebooks {
+        if !metadata
+            .notebooks
+            .iter()
+            .any(|current| current.id == notebook.id)
+        {
+            transaction
+                .execute(
+                    "DELETE FROM topology_collections WHERE id = ?1",
+                    [&notebook.id],
+                )
+                .map_err(|error| error.to_string())?;
+        }
+    }
+    Ok(())
 }
 
 fn load_library_metadata_from_connection(
@@ -1110,7 +1217,10 @@ impl TopologyStore {
             .ok_or_else(|| "资料库数据库路径无效".to_string())?;
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         let mut connection = Connection::open(database_path).map_err(|error| error.to_string())?;
-        migrate(&mut connection)?;
+        initialize_database(&mut connection)?;
+        // 旧版 schema 6 工作区可能已有文章但尚无投影；启动时从元数据补齐。
+        let metadata = load_library_metadata_from_connection(&connection)?;
+        replace_library_metadata_on_connection(&mut connection, &metadata, true)?;
         Ok(Self {
             connection: Mutex::new(connection),
         })
@@ -1122,57 +1232,27 @@ impl TopologyStore {
             .map_err(|_| "拓扑数据库锁已损坏".to_string())
     }
 
-    pub fn load_library_metadata(
-        &self,
-        legacy: Option<LibraryMetadata>,
-    ) -> Result<LibraryLoadResult, String> {
-        let mut connection = self.connection()?;
-        let contains_metadata = connection
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM notebooks) OR EXISTS(SELECT 1 FROM articles)",
-                [],
-                |row| row.get::<_, i64>(0),
-            )
-            .map_err(|error| error.to_string())?
-            != 0;
-        let imported_legacy = if !contains_metadata {
-            match legacy {
-                Some(metadata)
-                    if !metadata.notebooks.is_empty() || !metadata.articles.is_empty() =>
-                {
-                    replace_library_metadata_on_connection(&mut connection, &metadata)?;
-                    true
-                }
-                _ => false,
-            }
-        } else {
-            false
-        };
-        Ok(LibraryLoadResult {
-            metadata: load_library_metadata_from_connection(&connection)?,
-            imported_legacy,
-        })
+    pub fn load_library_metadata(&self) -> Result<LibraryMetadata, String> {
+        let connection = self.connection()?;
+        load_library_metadata_from_connection(&connection)
     }
 
     pub fn replace_library_metadata(&self, metadata: LibraryMetadata) -> Result<(), String> {
         let mut connection = self.connection()?;
-        replace_library_metadata_on_connection(&mut connection, &metadata)
+        replace_library_metadata_on_connection(&mut connection, &metadata, false)
     }
 
     pub fn load_node_type_definitions(&self) -> Result<Vec<serde_json::Value>, String> {
         let connection = self.connection()?;
         let mut statement = connection
-            .prepare(
-                "SELECT config_json FROM node_type_definitions ORDER BY position, id",
-            )
+            .prepare("SELECT config_json FROM node_type_definitions ORDER BY position, id")
             .map_err(|error| error.to_string())?;
         let definitions = statement
             .query_map([], |row| row.get::<_, String>(0))
             .map_err(|error| error.to_string())?
             .map(|value| {
                 let json = value.map_err(|error| error.to_string())?;
-                serde_json::from_str(&json)
-                    .map_err(|error| format!("拓扑节点配置已损坏：{error}"))
+                serde_json::from_str(&json).map_err(|error| format!("拓扑节点配置已损坏：{error}"))
             })
             .collect();
         definitions
@@ -1199,9 +1279,11 @@ impl TopologyStore {
             if !ids.insert(id.to_string()) {
                 return Err(format!("拓扑节点配置包含重复标识 {id}"));
             }
-            let config_json = serde_json::to_string(&definition)
-                .map_err(|error| error.to_string())?;
-            validate_json("拓扑节点配置", &config_json)?;
+            let config_json =
+                serde_json::to_string(&definition).map_err(|error| error.to_string())?;
+            if config_json.len() > MAX_JSON_LENGTH {
+                return Err("拓扑节点配置超过 1 MiB 限制".to_string());
+            }
             transaction
                 .execute(
                     "INSERT INTO node_type_definitions (id, config_json, position)
@@ -1211,251 +1293,6 @@ impl TopologyStore {
                 .map_err(|error| error.to_string())?;
         }
         transaction.commit().map_err(|error| error.to_string())
-    }
-
-    pub fn list_collections(&self) -> Result<Vec<TopologyCollection>, String> {
-        let connection = self.connection()?;
-        let mut statement = connection
-            .prepare("SELECT id, title, description, created_at, updated_at FROM topology_collections ORDER BY updated_at DESC, id")
-            .map_err(|error| error.to_string())?;
-        let collections = statement
-            .query_map([], map_collection)
-            .map_err(|error| error.to_string())?
-            .collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(|error| error.to_string())?;
-        Ok(collections)
-    }
-
-    pub fn upsert_collection(
-        &self,
-        request: UpsertTopologyCollectionRequest,
-    ) -> Result<TopologyCollection, String> {
-        validate_id("集合标识", &request.id)?;
-        validate_text("集合标题", &request.title)?;
-        validate_text("集合说明", &request.description)?;
-        let connection = self.connection()?;
-        connection
-            .execute(
-                r#"INSERT INTO topology_collections (id, title, description)
-                   VALUES (?1, ?2, ?3)
-                   ON CONFLICT(id) DO UPDATE SET
-                     title = excluded.title,
-                     description = excluded.description,
-                     updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"#,
-                params![request.id, request.title, request.description],
-            )
-            .map_err(|error| error.to_string())?;
-        connection
-            .query_row(
-                "SELECT id, title, description, created_at, updated_at FROM topology_collections WHERE id = ?1",
-                params![request.id],
-                map_collection,
-            )
-            .map_err(|error| error.to_string())
-    }
-
-    pub fn sync_markdown_topology(
-        &self,
-        request: SyncMarkdownTopologyRequest,
-    ) -> Result<TopologyGraph, String> {
-        validate_id("集合标识", &request.collection.id)?;
-        validate_text("集合标题", &request.collection.title)?;
-        validate_text("集合说明", &request.collection.description)?;
-
-        let node_ids = request
-            .nodes
-            .iter()
-            .map(|node| node.id.as_str())
-            .collect::<HashSet<_>>();
-        for node in &request.nodes {
-            validate_id("节点标识", &node.id)?;
-            validate_id("集合标识", &node.collection_id)?;
-            validate_text("节点标题", &node.title)?;
-            validate_text("节点摘要", &node.summary)?;
-            validate_json("节点互动状态", &node.interaction_state_json)?;
-            validate_json("节点外观", &node.appearance_json)?;
-            if let Some(content_json) = &node.content_json {
-                validate_json("节点结构化内容", content_json)?;
-            }
-            if let Some(anchor_json) = &node.anchor_json {
-                validate_json("节点原文锚点", anchor_json)?;
-            }
-            if let Some(generation_json) = &node.generation_json {
-                validate_json("节点生成信息", generation_json)?;
-            }
-            if let Some(config_json) = &node.config_json {
-                validate_json("节点配置", config_json)?;
-            }
-            if !matches!(node.family.as_str(), "笔记" | "记录" | "交互" | "") {
-                return Err(format!("节点家族无效：{}", node.family));
-            }
-            if !matches!(
-                node.creation_method.as_str(),
-                "导入" | "AI" | "手动" | ""
-            ) {
-                return Err(format!("节点创建方式无效：{}", node.creation_method));
-            }
-            if node.collection_id != request.collection.id {
-                return Err("批量同步节点必须属于当前集合".to_string());
-            }
-            if node.content_mode != "markdown"
-                || node.is_manual
-                || node.content.is_some()
-                || node
-                    .document_id
-                    .as_deref()
-                    .map(str::trim)
-                    .unwrap_or("")
-                    .is_empty()
-            {
-                return Err("批量同步只接受文件关联的 Markdown 节点".to_string());
-            }
-        }
-        for relation in &request.relations {
-            validate_id("关系标识", &relation.id)?;
-            validate_id("集合标识", &relation.collection_id)?;
-            validate_id("来源节点标识", &relation.source_node_id)?;
-            validate_id("目标节点标识", &relation.target_node_id)?;
-            validate_json("关系元数据", &relation.metadata_json)?;
-            if relation.collection_id != request.collection.id {
-                return Err("批量同步关系必须属于当前集合".to_string());
-            }
-            if relation.source_node_id == relation.target_node_id {
-                return Err("拓扑关系不能指向节点自身".to_string());
-            }
-            if !node_ids.contains(relation.source_node_id.as_str())
-                || !node_ids.contains(relation.target_node_id.as_str())
-            {
-                return Err("批量同步关系必须连接本次同步的 Markdown 节点".to_string());
-            }
-        }
-
-        let collection_id = request.collection.id.clone();
-        let mut connection = self.connection()?;
-        let transaction = connection
-            .transaction()
-            .map_err(|error| error.to_string())?;
-        transaction
-            .execute(
-                r#"INSERT INTO topology_collections (id, title, description)
-                   VALUES (?1, ?2, ?3)
-                   ON CONFLICT(id) DO UPDATE SET
-                     title = excluded.title,
-                     description = excluded.description,
-                     updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"#,
-                params![
-                    &request.collection.id,
-                    &request.collection.title,
-                    &request.collection.description
-                ],
-            )
-            .map_err(|error| error.to_string())?;
-        {
-            let mut statement = transaction
-                .prepare(
-                    r#"INSERT INTO topology_nodes (
-                         id, collection_id, node_type, title, summary, content_mode, content,
-                         document_id, is_root, is_manual, enabled, interactive,
-                         interaction_state_json, appearance_json, family, creation_method,
-                         content_json, anchor_json, generation_json, config_json
-                       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
-                       ON CONFLICT(id) DO UPDATE SET
-                         collection_id = excluded.collection_id,
-                         node_type = excluded.node_type,
-                         title = excluded.title,
-                         summary = excluded.summary,
-                         content_mode = excluded.content_mode,
-                         content = excluded.content,
-                         document_id = excluded.document_id,
-                         is_root = excluded.is_root,
-                         is_manual = excluded.is_manual,
-                         enabled = excluded.enabled,
-                         interactive = excluded.interactive,
-                         interaction_state_json = excluded.interaction_state_json,
-                         appearance_json = excluded.appearance_json,
-                         family = excluded.family,
-                         creation_method = excluded.creation_method,
-                         content_json = excluded.content_json,
-                         anchor_json = excluded.anchor_json,
-                         generation_json = excluded.generation_json,
-                         config_json = excluded.config_json,
-                         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"#,
-                )
-                .map_err(|error| error.to_string())?;
-            for node in &request.nodes {
-                statement
-                    .execute(params![
-                        &node.id,
-                        &node.collection_id,
-                        &node.node_type,
-                        &node.title,
-                        &node.summary,
-                        &node.content_mode,
-                        &node.content,
-                        &node.document_id,
-                        node.is_root,
-                        node.is_manual,
-                        node.enabled,
-                        node.interactive,
-                        &node.interaction_state_json,
-                        &node.appearance_json,
-                        &node.family,
-                        &node.creation_method,
-                        &node.content_json,
-                        &node.anchor_json,
-                        &node.generation_json,
-                        &node.config_json,
-                    ])
-                    .map_err(|error| error.to_string())?;
-            }
-        }
-        {
-            let mut statement = transaction
-                .prepare(
-                    r#"INSERT INTO topology_relations (
-                         id, collection_id, source_node_id, target_node_id, relation_type,
-                         label, directed, metadata_json
-                       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-                       ON CONFLICT(id) DO UPDATE SET
-                         collection_id = excluded.collection_id,
-                         source_node_id = excluded.source_node_id,
-                         target_node_id = excluded.target_node_id,
-                         relation_type = excluded.relation_type,
-                         label = excluded.label,
-                         directed = excluded.directed,
-                         metadata_json = excluded.metadata_json,
-                         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"#,
-                )
-                .map_err(|error| error.to_string())?;
-            for relation in &request.relations {
-                statement
-                    .execute(params![
-                        &relation.id,
-                        &relation.collection_id,
-                        &relation.source_node_id,
-                        &relation.target_node_id,
-                        &relation.relation_type,
-                        &relation.label,
-                        relation.directed,
-                        &relation.metadata_json,
-                    ])
-                    .map_err(|error| error.to_string())?;
-            }
-        }
-        transaction.commit().map_err(|error| error.to_string())?;
-        drop(connection);
-        self.load_graph(&collection_id)
-    }
-
-    pub fn delete_collection(&self, collection_id: &str) -> Result<bool, String> {
-        validate_id("集合标识", collection_id)?;
-        self.connection()?
-            .execute(
-                "DELETE FROM topology_collections WHERE id = ?1",
-                params![collection_id],
-            )
-            .map(|count| count > 0)
-            .map_err(|error| error.to_string())
     }
 
     pub fn upsert_node(&self, request: UpsertTopologyNodeRequest) -> Result<TopologyNode, String> {
@@ -1490,26 +1327,10 @@ impl TopologyStore {
             validate_text("节点内容", content)?;
         }
         let content_mode = request.content_mode.trim();
-        if content_mode != "markdown" && content_mode != "database" {
-            return Err("节点内容模式只能是 markdown 或 database".to_string());
+        if content_mode != "database" {
+            return Err("Markdown 节点由文章元数据派生，不能独立写入".to_string());
         }
-        if request.is_manual && content_mode != "database" {
-            return Err("手动节点内容必须存入 SQLite，不能关联 Markdown".to_string());
-        }
-        if content_mode == "markdown" {
-            if request.content.is_some() {
-                return Err("Markdown 节点正文不能写入 SQLite".to_string());
-            }
-            if request
-                .document_id
-                .as_deref()
-                .map(str::trim)
-                .unwrap_or("")
-                .is_empty()
-            {
-                return Err("Markdown 节点必须关联文档标识".to_string());
-            }
-        } else if request.document_id.is_some() {
+        if request.document_id.is_some() {
             return Err("数据库节点不能关联 Markdown 文档".to_string());
         }
 
@@ -1628,7 +1449,17 @@ impl TopologyStore {
                 .as_deref()
                 .is_some_and(|id| id != request.collection_id)
             {
-                return Err("已持久化的关系端点必须位于同一集合".to_string());
+                let shared_article: bool = connection
+                    .query_row(
+                        "SELECT EXISTS(SELECT 1 FROM articles a JOIN notebook_roots nr
+                     ON nr.article_id = a.root_id WHERE a.id = ?1 AND nr.notebook_id = ?2)",
+                        params![endpoint, request.collection_id],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| error.to_string())?;
+                if !shared_article {
+                    return Err("已持久化的关系端点必须位于同一集合".to_string());
+                }
             }
         }
         connection
@@ -1725,57 +1556,112 @@ impl TopologyStore {
             .map_err(|error| error.to_string())
     }
 
-    pub fn delete_interaction(&self, interaction_id: &str) -> Result<bool, String> {
-        validate_id("互动标识", interaction_id)?;
-        self.connection()?
-            .execute(
-                "DELETE FROM topology_interactions WHERE id = ?1",
-                params![interaction_id],
-            )
-            .map(|count| count > 0)
-            .map_err(|error| error.to_string())
-    }
-
     pub fn load_graph(&self, collection_id: &str) -> Result<TopologyGraph, String> {
         validate_id("集合标识", collection_id)?;
         let connection = self.connection()?;
         let collection = connection
             .query_row(
                 "SELECT id, title, description, created_at, updated_at FROM topology_collections WHERE id = ?1",
-                params![collection_id],
-                map_collection,
+                [collection_id], map_collection,
             )
             .optional()
             .map_err(|error| error.to_string())?
             .ok_or_else(|| "集合不存在".to_string())?;
         let nodes = {
-            let mut statement = connection
-                .prepare("SELECT id, collection_id, node_type, title, summary, content_mode, content, document_id, is_root, is_manual, enabled, interactive, interaction_state_json, appearance_json, family, creation_method, content_json, anchor_json, generation_json, config_json, created_at, updated_at FROM topology_nodes WHERE collection_id = ?1 ORDER BY is_root DESC, created_at, id")
-                .map_err(|error| error.to_string())?;
+            let mut statement = connection.prepare(
+                "SELECT n.id, n.collection_id, n.node_type, n.title, n.summary, n.content_mode,
+                   n.content, n.document_id, n.is_root, n.is_manual, n.enabled, n.interactive,
+                   n.interaction_state_json, n.appearance_json, n.family, n.creation_method,
+                   n.content_json, n.anchor_json, n.generation_json, n.config_json, n.created_at, n.updated_at
+                 FROM topology_nodes n
+                 WHERE (n.content_mode = 'database' AND n.collection_id = ?1)
+                    OR (n.content_mode = 'markdown' AND EXISTS (
+                      SELECT 1 FROM articles a JOIN notebook_roots nr ON nr.article_id = a.root_id
+                      WHERE a.id = n.id AND nr.notebook_id = ?1))
+                 ORDER BY n.is_root DESC, n.created_at, n.id"
+            ).map_err(|error| error.to_string())?;
             let values = statement
-                .query_map(params![collection_id], map_node)
+                .query_map([collection_id], |row| {
+                    let mut node = map_node(row)?;
+                    node.collection_id = collection_id.to_string();
+                    Ok(node)
+                })
                 .map_err(|error| error.to_string())?
                 .collect::<rusqlite::Result<Vec<_>>>()
                 .map_err(|error| error.to_string())?;
             values
         };
-        let relations = {
-            let mut statement = connection
-                .prepare("SELECT id, collection_id, source_node_id, target_node_id, relation_type, label, directed, metadata_json, created_at, updated_at FROM topology_relations WHERE collection_id = ?1 ORDER BY created_at, id")
-                .map_err(|error| error.to_string())?;
+        let node_ids = nodes
+            .iter()
+            .map(|node| node.id.as_str())
+            .collect::<HashSet<_>>();
+        let mut relations = {
+            let mut statement = connection.prepare(
+                "SELECT id, collection_id, source_node_id, target_node_id, relation_type, label,
+                   directed, metadata_json, created_at, updated_at FROM topology_relations
+                 WHERE collection_id = ?1 ORDER BY created_at, id"
+            ).map_err(|error| error.to_string())?;
             let values = statement
-                .query_map(params![collection_id], map_relation)
+                .query_map([collection_id], map_relation)
                 .map_err(|error| error.to_string())?
                 .collect::<rusqlite::Result<Vec<_>>>()
                 .map_err(|error| error.to_string())?;
             values
+                .into_iter()
+                .filter(|relation| {
+                    node_ids.contains(relation.source_node_id.as_str())
+                        && node_ids.contains(relation.target_node_id.as_str())
+                })
+                .collect::<Vec<_>>()
         };
+        {
+            let mut statement = connection.prepare(
+                "SELECT e.parent_id, e.child_id, child.article_type, parent.created_at, parent.updated_at
+                 FROM article_edges e JOIN articles parent ON parent.id = e.parent_id
+                 JOIN articles child ON child.id = e.child_id
+                 JOIN notebook_roots nr ON nr.article_id = parent.root_id
+                 WHERE nr.notebook_id = ?1 ORDER BY parent.created_at, e.parent_id, e.position"
+            ).map_err(|error| error.to_string())?;
+            let edges = statement
+                .query_map([collection_id], |row| {
+                    let source_node_id: String = row.get(0)?;
+                    let target_node_id: String = row.get(1)?;
+                    Ok(TopologyRelation {
+                        id: format!("tree:{source_node_id}:{target_node_id}"),
+                        collection_id: collection_id.to_string(),
+                        source_node_id,
+                        target_node_id,
+                        relation_type: "contains".into(),
+                        label: row.get(2)?,
+                        directed: true,
+                        metadata_json: "{\"source\":\"markdown-tree\"}".into(),
+                        created_at: row.get(3)?,
+                        updated_at: row.get(4)?,
+                    })
+                })
+                .map_err(|error| error.to_string())?;
+            for edge in edges {
+                relations.push(edge.map_err(|error| error.to_string())?);
+            }
+        }
+        relations.sort_by(|left, right| {
+            left.created_at
+                .cmp(&right.created_at)
+                .then_with(|| left.id.cmp(&right.id))
+        });
         let interactions = {
-            let mut statement = connection
-                .prepare("SELECT i.id, i.node_id, i.interaction_type, i.title, i.config_json, i.state_json, i.enabled, i.created_at, i.updated_at FROM topology_interactions i JOIN topology_nodes n ON n.id = i.node_id WHERE n.collection_id = ?1 ORDER BY i.created_at, i.id")
-                .map_err(|error| error.to_string())?;
+            let mut statement = connection.prepare(
+                "SELECT i.id, i.node_id, i.interaction_type, i.title, i.config_json, i.state_json,
+                   i.enabled, i.created_at, i.updated_at
+                 FROM topology_interactions i JOIN topology_nodes n ON n.id = i.node_id
+                 WHERE (n.content_mode = 'database' AND n.collection_id = ?1)
+                    OR (n.content_mode = 'markdown' AND EXISTS (
+                      SELECT 1 FROM articles a JOIN notebook_roots nr ON nr.article_id = a.root_id
+                      WHERE a.id = i.node_id AND nr.notebook_id = ?1))
+                 ORDER BY i.created_at, i.id"
+            ).map_err(|error| error.to_string())?;
             let values = statement
-                .query_map(params![collection_id], map_interaction)
+                .query_map([collection_id], map_interaction)
                 .map_err(|error| error.to_string())?
                 .collect::<rusqlite::Result<Vec<_>>>()
                 .map_err(|error| error.to_string())?;
@@ -1794,12 +1680,40 @@ impl TopologyStore {
 mod tests {
     use super::*;
 
+    struct TestDirectory(PathBuf);
+
+    impl TestDirectory {
+        fn new() -> Self {
+            let path =
+                std::env::temp_dir().join(format!("annota-topology-{}", uuid::Uuid::new_v4()));
+            fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
     fn test_store() -> TopologyStore {
         let mut connection = Connection::open_in_memory().expect("open in-memory sqlite");
-        migrate(&mut connection).expect("migrate topology schema");
+        initialize_database(&mut connection).expect("initialize topology schema");
         TopologyStore {
             connection: Mutex::new(connection),
         }
+    }
+
+    fn create_test_collection(store: &TopologyStore) {
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO topology_collections (id, title) VALUES ('collection-1', '集合')",
+                [],
+            )
+            .unwrap();
     }
 
     fn sample_library(title: &str) -> LibraryMetadata {
@@ -1864,9 +1778,112 @@ mod tests {
         let store = test_store();
         let metadata = sample_library("知识库");
         store.replace_library_metadata(metadata.clone()).unwrap();
-        let loaded = store.load_library_metadata(None).unwrap();
-        assert!(!loaded.imported_legacy);
-        assert_eq!(loaded.metadata, metadata);
+        assert_eq!(store.load_library_metadata().unwrap(), metadata);
+    }
+
+    #[test]
+    fn opening_existing_articles_restores_missing_topology_projection() {
+        let directory = TestDirectory::new();
+        let path = directory.0.join("library.sqlite3");
+        let store = TopologyStore::open(path.clone()).unwrap();
+        store
+            .replace_library_metadata(sample_library("已有资料库"))
+            .unwrap();
+        store
+            .connection()
+            .unwrap()
+            .execute("DELETE FROM topology_collections", [])
+            .unwrap();
+        drop(store);
+
+        let reopened = TopologyStore::open(path).unwrap();
+        let graph = reopened.load_graph("notebook-1").unwrap();
+        assert_eq!(graph.collection.title, "已有资料库");
+        assert_eq!(graph.nodes.len(), 2);
+        assert!(graph
+            .relations
+            .iter()
+            .any(|relation| relation.id == "tree:root-1:child-1"));
+    }
+
+    #[test]
+    fn identical_snapshot_does_not_rewrite_metadata_or_topology() {
+        let store = test_store();
+        let mut metadata = sample_library("知识库");
+        store.replace_library_metadata(metadata.clone()).unwrap();
+        let changes = store.connection().unwrap().total_changes();
+        store.replace_library_metadata(metadata.clone()).unwrap();
+        assert_eq!(store.connection().unwrap().total_changes(), changes);
+
+        metadata.notebooks[0].last_opened_node_id = "root-1".into();
+        store.replace_library_metadata(metadata).unwrap();
+        assert_eq!(store.connection().unwrap().total_changes(), changes + 1);
+    }
+
+    #[test]
+    fn shared_articles_appear_in_each_collection_and_accept_manual_relations() {
+        let store = test_store();
+        let mut metadata = sample_library("知识库");
+        let mut second = metadata.notebooks[0].clone();
+        second.id = "notebook-2".into();
+        second.title = "第二集合".into();
+        metadata.notebooks.push(second);
+        store.replace_library_metadata(metadata.clone()).unwrap();
+        let graph = store.load_graph("notebook-2").unwrap();
+        assert_eq!(graph.collection.title, "第二集合");
+        assert_eq!(
+            graph
+                .nodes
+                .iter()
+                .filter(|node| node.content_mode == "markdown")
+                .count(),
+            2
+        );
+        assert!(graph
+            .relations
+            .iter()
+            .any(|relation| relation.id == "tree:root-1:child-1"));
+
+        store
+            .upsert_relation(UpsertTopologyRelationRequest {
+                id: "manual-link".into(),
+                collection_id: "notebook-2".into(),
+                source_node_id: "root-1".into(),
+                target_node_id: "child-1".into(),
+                relation_type: "related".into(),
+                label: "补充".into(),
+                directed: false,
+                metadata_json: "{}".into(),
+            })
+            .unwrap();
+        assert!(store
+            .load_graph("notebook-2")
+            .unwrap()
+            .relations
+            .iter()
+            .any(|relation| relation.id == "manual-link"));
+
+        metadata
+            .articles
+            .get_mut("root-1")
+            .unwrap()
+            .child_ids
+            .clear();
+        metadata.articles.remove("child-1");
+        for notebook in &mut metadata.notebooks {
+            notebook.last_opened_node_id = "root-1".into();
+        }
+        store.replace_library_metadata(metadata).unwrap();
+        let graph = store.load_graph("notebook-2").unwrap();
+        assert_eq!(
+            graph
+                .nodes
+                .iter()
+                .filter(|node| node.content_mode == "markdown")
+                .count(),
+            1
+        );
+        assert!(graph.relations.is_empty());
     }
 
     #[test]
@@ -1882,87 +1899,64 @@ mod tests {
             .child_ids
             .push("missing".into());
         assert!(store.replace_library_metadata(invalid).is_err());
-        assert_eq!(
-            store.load_library_metadata(None).unwrap().metadata,
-            metadata
-        );
+        assert_eq!(store.load_library_metadata().unwrap(), metadata);
     }
 
     #[test]
-    fn imports_legacy_metadata_only_when_the_database_is_empty() {
-        let store = test_store();
-        let first = store
-            .load_library_metadata(Some(sample_library("旧资料库")))
-            .unwrap();
-        assert!(first.imported_legacy);
-        assert_eq!(first.metadata.notebooks[0].title, "旧资料库");
-
-        let second = store
-            .load_library_metadata(Some(sample_library("不应覆盖")))
-            .unwrap();
-        assert!(!second.imported_legacy);
-        assert_eq!(second.metadata.notebooks[0].title, "旧资料库");
-    }
-
-    #[test]
-    fn upgrades_an_existing_v1_database_without_losing_topology() {
+    fn creates_only_the_current_database_schema() {
         let mut connection = Connection::open_in_memory().unwrap();
-        {
-            let transaction = connection.transaction().unwrap();
-            migrate_v1(&transaction).unwrap();
-            transaction.pragma_update(None, "user_version", 1).unwrap();
-            transaction.commit().unwrap();
-        }
-        connection
-            .execute(
-                "INSERT INTO topology_collections (id, title) VALUES ('legacy', '旧拓扑')",
-                [],
-            )
-            .unwrap();
-        migrate(&mut connection).unwrap();
-        assert_eq!(
-            connection
-                .query_row(
-                    "SELECT title FROM topology_collections WHERE id = 'legacy'",
-                    [],
-                    |row| row.get::<_, String>(0)
-                )
-                .unwrap(),
-            "旧拓扑"
-        );
+        initialize_database(&mut connection).unwrap();
+
         assert_eq!(
             connection
                 .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
                 .unwrap(),
-            6
+            DATABASE_VERSION
         );
+
+        for table in [
+            "topology_collections",
+            "topology_nodes",
+            "topology_relations",
+            "topology_interactions",
+            "documents",
+            "articles",
+            "article_edges",
+            "notebooks",
+            "notebook_roots",
+            "pending_file_ops",
+            "node_type_definitions",
+        ] {
+            let exists: bool = connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+                    [table],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert!(exists, "current schema is missing {table}");
+        }
+
+        let has_migration_history: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'migration_history')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(!has_migration_history);
+
         connection
-            .prepare("SELECT id FROM documents")
-            .expect("v2 documents table should exist");
-        connection
-            .prepare("SELECT operation_id FROM pending_file_ops")
-            .expect("v3 pending_file_ops table should exist");
-        connection
-            .prepare("SELECT version FROM migration_history")
-            .expect("v3 migration_history table should exist");
-        connection
-            .prepare("SELECT family FROM articles")
-            .expect("v4 articles family column should exist");
-        connection
-            .prepare("SELECT relation_type FROM article_edges")
-            .expect("v4 article_edges relation_type column should exist");
+            .pragma_update(None, "user_version", DATABASE_VERSION - 1)
+            .unwrap();
+        let error = initialize_database(&mut connection).unwrap_err();
+        assert!(error.contains("不再支持数据库版本"));
     }
 
     #[test]
     fn stores_multiple_roots_manual_content_relations_and_interactions() {
         let store = test_store();
-        store
-            .upsert_collection(UpsertTopologyCollectionRequest {
-                id: "collection-1".into(),
-                title: "集合".into(),
-                description: String::new(),
-            })
-            .unwrap();
+        create_test_collection(&store);
         for id in ["root-a", "root-b"] {
             store
                 .upsert_node(UpsertTopologyNodeRequest {
@@ -2021,13 +2015,7 @@ mod tests {
     #[test]
     fn rejects_manual_markdown_nodes() {
         let store = test_store();
-        store
-            .upsert_collection(UpsertTopologyCollectionRequest {
-                id: "collection-1".into(),
-                title: "集合".into(),
-                description: String::new(),
-            })
-            .unwrap();
+        create_test_collection(&store);
         let error = store
             .upsert_node(UpsertTopologyNodeRequest {
                 id: "node-1".into(),
@@ -2052,120 +2040,26 @@ mod tests {
                 config_json: None,
             })
             .unwrap_err();
-        assert!(error.contains("SQLite"));
-    }
-
-    #[test]
-    fn bulk_syncs_markdown_graph_without_replacing_manual_nodes() {
-        let store = test_store();
-        store
-            .upsert_node(UpsertTopologyNodeRequest {
-                id: "manual-1".into(),
-                collection_id: "collection-1".into(),
-                node_type: "note".into(),
-                title: "个人笔记".into(),
-                summary: String::new(),
-                content_mode: "database".into(),
-                content: Some("手动内容".into()),
-                document_id: None,
-                is_root: true,
-                is_manual: true,
-                enabled: true,
-                interactive: true,
-                interaction_state_json: "{}".into(),
-                appearance_json: "{}".into(),
-                family: "笔记".into(),
-                creation_method: "手动".into(),
-                content_json: None,
-                anchor_json: None,
-                generation_json: None,
-                config_json: None,
-            })
-            .unwrap();
-
-        let markdown_node = |id: &str, is_root: bool| UpsertTopologyNodeRequest {
-            id: id.into(),
-            collection_id: "collection-1".into(),
-            node_type: if is_root { "root" } else { "explain" }.into(),
-            title: id.into(),
-            summary: String::new(),
-            content_mode: "markdown".into(),
-            content: None,
-            document_id: Some(id.into()),
-            is_root,
-            is_manual: false,
-            enabled: true,
-            interactive: false,
-            interaction_state_json: "{}".into(),
-            appearance_json: "{}".into(),
-            family: "笔记".into(),
-            creation_method: "手动".into(),
-            content_json: None,
-            anchor_json: None,
-            generation_json: None,
-            config_json: None,
-        };
-        let graph = store
-            .sync_markdown_topology(SyncMarkdownTopologyRequest {
-                collection: UpsertTopologyCollectionRequest {
-                    id: "collection-1".into(),
-                    title: "同步后的集合".into(),
-                    description: "说明".into(),
-                },
-                nodes: vec![
-                    markdown_node("root-1", true),
-                    markdown_node("child-1", false),
-                ],
-                relations: vec![UpsertTopologyRelationRequest {
-                    id: "tree:root-1:child-1".into(),
-                    collection_id: "collection-1".into(),
-                    source_node_id: "root-1".into(),
-                    target_node_id: "child-1".into(),
-                    relation_type: "contains".into(),
-                    label: "下一级".into(),
-                    directed: true,
-                    metadata_json: r#"{"source":"markdown-tree"}"#.into(),
-                }],
-            })
-            .unwrap();
-
-        assert_eq!(graph.collection.title, "同步后的集合");
-        assert_eq!(graph.nodes.len(), 3);
-        assert!(graph.nodes.iter().any(|node| node.id == "manual-1"));
-        assert!(graph
-            .relations
-            .iter()
-            .any(|relation| relation.id == "tree:root-1:child-1"));
+        assert!(error.contains("文章元数据"));
     }
 
     #[test]
     fn persists_node_level_config_across_replace_and_upsert() {
         let store = test_store();
         let mut metadata = sample_library("带节点配置");
-        metadata
-            .articles
-            .get_mut("child-1")
-            .unwrap()
-            .config_json = Some(serde_json::json!({
+        metadata.articles.get_mut("child-1").unwrap().config_json = Some(serde_json::json!({
                 "modelBindingId": "gpt-4o",
                 "systemPrompt": "用中文解释",
                 "displayFields": ["title", "content"]
-            }));
+        }));
         store.replace_library_metadata(metadata.clone()).unwrap();
-        let loaded = store.load_library_metadata(None).unwrap();
+        let loaded = store.load_library_metadata().unwrap();
         assert_eq!(
-            loaded.metadata.articles["child-1"].config_json,
-            metadata.articles["child-1"].config_json,
+            loaded.articles["child-1"].config_json, metadata.articles["child-1"].config_json,
             "replace/load 应完整保留 config_json"
         );
 
-        store
-            .upsert_collection(UpsertTopologyCollectionRequest {
-                id: "collection-1".into(),
-                title: "集合".into(),
-                description: String::new(),
-            })
-            .unwrap();
+        create_test_collection(&store);
         let mut request = UpsertTopologyNodeRequest {
             id: "node-1".into(),
             collection_id: "collection-1".into(),
@@ -2199,78 +2093,3 @@ mod tests {
         assert_eq!(reloaded.nodes[0].config_json, request.config_json);
     }
 }
-
-    #[test]
-    fn upgrades_an_existing_v3_database_without_losing_topology() {
-        let mut connection = Connection::open_in_memory().expect("open in-memory sqlite");
-        connection
-            .pragma_update(None, "foreign_keys", "ON")
-            .expect("enable foreign keys");
-        {
-            let transaction = connection.transaction().expect("begin transaction");
-            migrate_v1(&transaction).expect("migrate v1");
-            migrate_v2(&transaction).expect("migrate v2");
-            migrate_v3(&transaction).expect("migrate v3");
-            transaction
-                .pragma_update(None, "user_version", 3)
-                .expect("set user_version");
-            transaction.commit().expect("commit");
-        }
-        connection
-            .execute(
-                "INSERT INTO articles (id, root_id, parent_id, title, summary, article_type, created_at, updated_at)
-                 VALUES ('old-root', 'old-root', NULL, '旧文章', '旧摘要', '根节点', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
-                [],
-            )
-            .expect("insert v3-era article");
-
-        migrate(&mut connection).expect("upgrade to v4");
-
-        let version: i64 = connection
-            .pragma_query_value(None, "user_version", |row| row.get(0))
-            .expect("read user_version");
-        assert_eq!(version, 6);
-        let article_columns = connection
-            .prepare("PRAGMA table_info(articles)")
-            .expect("prepare pragma")
-            .query_map([], |row| row.get::<_, String>(1))
-            .expect("query columns")
-            .collect::<rusqlite::Result<Vec<_>>>()
-            .expect("collect columns");
-        for column in [
-            "family",
-            "creation_method",
-            "content_json",
-            "anchor_json",
-            "generation_json",
-            "config_json",
-        ] {
-            assert!(article_columns.iter().any(|name| name == column), "articles 缺少列 {column}");
-        }
-        let node_columns = connection
-            .prepare("PRAGMA table_info(topology_nodes)")
-            .expect("prepare pragma")
-            .query_map([], |row| row.get::<_, String>(1))
-            .expect("query columns")
-            .collect::<rusqlite::Result<Vec<_>>>()
-            .expect("collect columns");
-        assert!(node_columns.iter().any(|name| name == "family"), "topology_nodes 缺少列 family");
-        assert!(node_columns.iter().any(|name| name == "config_json"), "topology_nodes 缺少列 config_json");
-        let edge_columns = connection
-            .prepare("PRAGMA table_info(article_edges)")
-            .expect("prepare pragma")
-            .query_map([], |row| row.get::<_, String>(1))
-            .expect("query columns")
-            .collect::<rusqlite::Result<Vec<_>>>()
-            .expect("collect columns");
-        assert!(edge_columns.iter().any(|name| name == "relation_type"), "article_edges 缺少列 relation_type");
-        let (family, creation_method): (String, String) = connection
-            .query_row(
-                "SELECT family, creation_method FROM articles WHERE id = 'old-root'",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .expect("read legacy defaults");
-        assert_eq!(family, "笔记");
-        assert_eq!(creation_method, "手动");
-    }

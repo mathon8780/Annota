@@ -332,11 +332,9 @@ fn diagnose_workspace(
         },
     });
 
-    let transaction_state = TransactionJournal::new(
-        layout.root().to_path_buf(),
-        layout.database_path(),
-    )
-    .inspect_state()?;
+    let transaction_state =
+        TransactionJournal::new(layout.root().to_path_buf(), layout.database_path())
+            .inspect_state()?;
     let transaction_clean = transaction_state.pending_operations == 0
         && transaction_state.journal_files == 0
         && transaction_state.operation_artifacts == 0;
@@ -405,11 +403,8 @@ impl ActiveWorkspace {
         let write_lock = WorkspaceWriteLock::acquire(&layout, &manifest)?;
         let topology = TopologyStore::open(layout.database_path())?;
         layout.synchronize_database_schema_version(&mut manifest)?;
-        let recovery = TransactionJournal::new(
-            layout.root().to_path_buf(),
-            layout.database_path(),
-        )
-        .recover_pending_operations()?;
+        let recovery = TransactionJournal::new(layout.root().to_path_buf(), layout.database_path())
+            .recover_pending_operations()?;
         let markdown = MarkdownStore::new(layout.root().to_path_buf(), layout.database_path());
         let diagnostic = diagnose_workspace(&layout, &manifest, &recovery)?;
         Ok(Self {

@@ -1,10 +1,5 @@
 use serde::Serialize;
-use std::{
-    fs,
-    io,
-    path::{Path, PathBuf},
-    sync::Mutex,
-};
+use std::{fs, path::PathBuf, sync::Mutex};
 use uuid::Uuid;
 
 use crate::transaction_journal::TransactionJournal;
@@ -63,19 +58,11 @@ impl MarkdownStore {
         if let Some(registered) = self.journal.resolve_document_path(document_id)? {
             return Ok(registered);
         }
-        let knowledge_point_id = knowledge_point_id
-            .ok_or_else(|| "创建 Markdown 文档时缺少知识点标识".to_string())?;
+        let knowledge_point_id =
+            knowledge_point_id.ok_or_else(|| "创建 Markdown 文档时缺少知识点标识".to_string())?;
         Self::validate_id(knowledge_point_id)?;
         let random = Uuid::new_v4().to_string().replace('-', "");
         Ok(format!("notes/{knowledge_point_id}/{random}.md"))
-    }
-
-    fn recover_legacy_backup_if_needed(path: &Path) -> io::Result<()> {
-        let backup = path.with_extension("md.bak");
-        if !path.exists() && backup.exists() {
-            fs::rename(backup, path)?;
-        }
-        Ok(())
     }
 
     pub fn load_or_create(
@@ -95,8 +82,6 @@ impl MarkdownStore {
             .parent()
             .ok_or_else(|| "Markdown 文档路径无效".to_string())?;
         fs::create_dir_all(parent).map_err(|error| format!("无法创建 Markdown 仓库：{error}"))?;
-        Self::recover_legacy_backup_if_needed(&path)
-            .map_err(|error| format!("无法恢复 Markdown 文档：{error}"))?;
         if !path.exists() {
             self.journal
                 .write_document(document_id, &relative_path, initial_content)
@@ -130,8 +115,6 @@ impl MarkdownStore {
             .parent()
             .ok_or_else(|| "Markdown 文档路径无效".to_string())?;
         fs::create_dir_all(parent).map_err(|error| format!("无法创建 Markdown 仓库：{error}"))?;
-        Self::recover_legacy_backup_if_needed(&path)
-            .map_err(|error| format!("无法恢复 Markdown 文档：{error}"))?;
         self.journal
             .write_document(document_id, &relative_path, content)
             .map_err(|error| format!("无法保存 Markdown 文档：{error}"))?;
@@ -242,15 +225,41 @@ mod tests {
     fn rejects_document_ids_that_can_escape_the_store() {
         let directory = TestDirectory::new("path");
         let store = test_store(&directory);
-        assert!(
-            store
-                .load_or_create("../outside", "text", Some("knowledge-1"))
-                .is_err()
+        assert!(store
+            .load_or_create("../outside", "text", Some("knowledge-1"))
+            .is_err());
+        assert!(store
+            .load_or_create("article-1", "text", Some("../outside"))
+            .is_err());
+    }
+
+    #[test]
+    fn routine_writes_do_not_rescan_unrelated_notes() {
+        let directory = TestDirectory::new("no-scan");
+        let store = test_store(&directory);
+        store
+            .save("article-1", "# 初始正文", Some("knowledge-1"))
+            .unwrap();
+        let notes = directory.0.join("notes/unrelated");
+        fs::create_dir_all(&notes).unwrap();
+        fs::write(notes.join("old.md.tmp-orphan"), "unrelated").unwrap();
+        let saved = store.save("article-1", "# 正文", None).unwrap();
+        assert_eq!(saved.content, "# 正文");
+        assert_eq!(
+            store.load_or_create("article-1", "", None).unwrap().content,
+            "# 正文"
         );
-        assert!(
-            store
-                .load_or_create("article-1", "text", Some("../outside"))
-                .is_err()
-        );
+    }
+
+    #[test]
+    fn first_write_checks_preexisting_orphan_artifacts() {
+        let directory = TestDirectory::new("startup-orphan");
+        let store = test_store(&directory);
+        let notes = directory.0.join("notes/unrelated");
+        fs::create_dir_all(&notes).unwrap();
+        fs::write(notes.join("old.md.tmp-orphan"), "unrelated").unwrap();
+        assert!(store
+            .save("article-1", "# 正文", Some("knowledge-1"))
+            .is_err());
     }
 }

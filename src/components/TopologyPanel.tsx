@@ -42,7 +42,7 @@ import {
   ZoomIn,
   ZoomOut
 } from "lucide-react";
-import type { ArticleNode } from "../types";
+import type { ArticleNode, TopologyCardPatch } from "../types";
 import {
   sortArticleChildren,
   sourceBlockIdsInDocumentOrder
@@ -99,6 +99,7 @@ interface TopologyPanelProps {
     color: string;
   }) => Promise<TopologyNodeRecord | null>;
   onUpdateManualNode: (node: TopologyNodeRecord) => Promise<void>;
+  onUpdateCard: (nodeId: string, patch: TopologyCardPatch) => Promise<void>;
   onUpdateNodeConfig: (
     nodeId: string,
     config: NodeLevelConfig | null
@@ -203,7 +204,6 @@ const TOPOLOGY_DEFAULT_SIZE = { width: 420, height: 322 };
 const TOPOLOGY_MIN_SIZE = { width: 280, height: 220 };
 const TOPOLOGY_MAX_SIZE = { width: 720, height: 560 };
 const TOPOLOGY_MAX_VIEWPORT_RATIO = { width: 0.62, height: 0.68 };
-const TOPOLOGY_LEGACY_REFERENCE_VIEWPORT = { width: 1888, height: 952 };
 const TOPOLOGY_SIZE_STORAGE_KEY = "annota:topology-size";
 const TOPOLOGY_NODE_WIDTH = 214;
 const TOPOLOGY_NODE_HEIGHT = 118;
@@ -263,22 +263,8 @@ const topologyNodeIcons: Record<GenerationTypeIconId, typeof Network> = {
   task: LoaderCircle
 };
 
-function parseStateJson(value: string | null | undefined) {
-  try {
-    const parsed = JSON.parse(value ?? "{}") as Record<string, unknown>;
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-/** 解析结构化内容 JSON(契约 content_json),兼容已解析对象/字符串/缺省。 */
-function parseContentJson(value: unknown): Record<string, unknown> {
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    return value as Record<string, unknown>;
-  }
-  if (typeof value === "string") return parseStateJson(value);
-  return {};
+function parseContentJson(value: Record<string, unknown> | null | undefined): Record<string, unknown> {
+  return value ?? {};
 }
 
 /** 读取契约中文键字符串值。 */
@@ -318,6 +304,14 @@ function checklistJsonItems(
     .filter((item) => item.text);
 }
 
+function interactionOnlyState(value: Record<string, unknown>): Record<string, unknown> {
+  const allowed = ["checked", "revealed", "mastered", "pinned", "verified", "response"];
+  return Object.fromEntries(
+    allowed.filter((key) => Object.prototype.hasOwnProperty.call(value, key))
+      .map((key) => [key, value[key]])
+  );
+}
+
 function interactionStatesByNode(graph: TopologyGraphRecord | null) {
   const interactionsByNode = new Map<
     string,
@@ -339,7 +333,7 @@ function interactionStatesByNode(graph: TopologyGraphRecord | null) {
         .reduce<Record<string, unknown>>(
           (state, interaction) => ({
             ...state,
-            ...parseStateJson(interaction.stateJson)
+            ...interactionOnlyState(interaction.stateJson)
           }),
           {}
         )
@@ -360,22 +354,6 @@ function checklistItemsFromText(value: string): string[] {
     .filter(Boolean);
 }
 
-function topologySummary(
-  node: TopologyDisplayNode,
-  state: Record<string, unknown>
-) {
-  const variant = node.nodeType.cardVariant;
-  if (variant === "checklist") {
-    const items = stringItems(state.items);
-    return items.length ? items.join("；") : node.summary;
-  }
-  if (variant === "flashcard" && typeof state.answer === "string") {
-    return state.answer;
-  }
-  if (typeof state.content === "string") return state.content;
-  return node.summary;
-}
-
 function splitBodyItems(value: string): string[] {
   return value
     .split(/\r?\n|[；;、]/)
@@ -393,8 +371,7 @@ function resolveGenerationModel(
     node.manual?.generationJson
   ];
   for (const source of generationSources) {
-    if (!source || typeof source !== "object" || Array.isArray(source)) continue;
-    const model = (source as Record<string, unknown>)["模型"];
+    const model = source?.["模型"];
     if (typeof model === "string" && model.trim()) return model.trim();
   }
   return modelBindingId;
@@ -414,10 +391,7 @@ export function resolveCardBody(
   const variant = node.nodeType.cardVariant;
   const summary = node.summary;
   const quote = node.article?.source?.quote ?? "";
-  const content =
-    typeof state.content === "string" && state.content.trim()
-      ? state.content.trim()
-      : node.stored?.content?.trim() ?? node.manual?.content?.trim() ?? "";
+  const content = node.stored?.content?.trim() ?? node.manual?.content?.trim() ?? "";
   const fallbackText = content || summary || "暂无内容";
   const contentJson = parseContentJson(
     node.article?.contentJson ?? node.stored?.contentJson ?? node.manual?.contentJson
@@ -478,10 +452,7 @@ export function resolveCardBody(
           }))
         };
       }
-      const rawItems = stringItems(state.items);
-      const items = rawItems.length
-        ? rawItems
-        : checklistItemsFromText(content || summary);
+      const items = checklistItemsFromText(content || summary);
       if (items.length) {
         return {
           kind: "checklist",
@@ -494,11 +465,7 @@ export function resolveCardBody(
       return { kind: "text", text: fallbackText };
     }
     case "flashcard": {
-      const answer =
-        cjValue(contentJson, "答案") ||
-        (typeof state.answer === "string" && state.answer.trim()
-          ? state.answer
-          : summary);
+      const answer = cjValue(contentJson, "答案") || summary;
       return answer ? { kind: "flash", answer } : { kind: "text", text: fallbackText };
     }
     case "terms": {
@@ -580,20 +547,7 @@ function resolveStoredNodeType(
   if (configured) return configured;
   const fallback = index.byId.get("note") ?? index.first;
   if (!fallback) throw new Error("没有可用的拓扑节点类型");
-  try {
-    const appearance = JSON.parse(node.appearanceJson) as Partial<GenerationTypeConfig>;
-    return {
-      ...fallback,
-      id: node.nodeType,
-      name: node.nodeType,
-      icon: appearance.icon ?? fallback.icon,
-      cardVariant: appearance.cardVariant ?? fallback.cardVariant,
-      color: appearance.color ?? fallback.color,
-      interactive: node.interactive
-    };
-  } catch {
-    return { ...fallback, id: node.nodeType, name: node.nodeType };
-  }
+  return fallback;
 }
 
 const NODE_DISPLAY_FIELD_LABELS: Readonly<Record<
@@ -820,9 +774,6 @@ function NodeConfigFields({
 }
 
 function topologyAvailableSize() {
-  if (typeof window === "undefined") {
-    return TOPOLOGY_LEGACY_REFERENCE_VIEWPORT;
-  }
   return {
     width: Math.max(TOPOLOGY_MIN_SIZE.width, window.innerWidth - 32),
     height: Math.max(TOPOLOGY_MIN_SIZE.height, window.innerHeight - 128)
@@ -872,9 +823,6 @@ function topologySizeFromPreference(preference: TopologySizePreference): Topolog
 }
 
 function readStoredTopologyPreference(): TopologySizePreference {
-  if (typeof window === "undefined") {
-    return topologyPreferenceFromSize(TOPOLOGY_DEFAULT_SIZE);
-  }
   try {
     const stored = JSON.parse(window.localStorage.getItem(TOPOLOGY_SIZE_STORAGE_KEY) ?? "null");
     if (
@@ -889,18 +837,6 @@ function readStoredTopologyPreference(): TopologySizePreference {
         widthRatio: stored.widthRatio,
         heightRatio: stored.heightRatio
       };
-    }
-    if (Number.isFinite(stored?.width) && Number.isFinite(stored?.height)) {
-      const migrated = {
-        version: 2,
-        widthRatio: stored.width / TOPOLOGY_LEGACY_REFERENCE_VIEWPORT.width,
-        heightRatio: stored.height / TOPOLOGY_LEGACY_REFERENCE_VIEWPORT.height
-      } satisfies TopologySizePreference;
-      window.localStorage.setItem(
-        TOPOLOGY_SIZE_STORAGE_KEY,
-        JSON.stringify(migrated)
-      );
-      return migrated;
     }
   } catch {
     // Invalid local preferences fall back to the stable default.
@@ -1317,6 +1253,7 @@ export function TopologyPanel({
   onCreateRoot,
   onCreateManualNode,
   onUpdateManualNode,
+  onUpdateCard,
   onUpdateNodeConfig,
   onRegenerateNode,
   onRemoveManualNode,
@@ -1354,14 +1291,6 @@ export function TopologyPanel({
         article
       };
       const state = interactionStates.get(article.id) ?? {};
-      displayNode.summary = topologySummary(displayNode, state);
-      if (
-        displayNode.nodeType.cardVariant === "flashcard" &&
-        typeof state.question === "string" &&
-        state.question.trim()
-      ) {
-        displayNode.title = state.question;
-      }
       displayNode.body = resolveCardBody(displayNode, state);
       values[article.id] = displayNode;
     });
@@ -1376,7 +1305,7 @@ export function TopologyPanel({
         manual: node.isManual ? node : undefined,
         stored: node
       };
-      displayNode.body = resolveCardBody(displayNode, parseStateJson(node.interactionStateJson));
+      displayNode.body = resolveCardBody(displayNode, node.interactionStateJson);
       values[node.id] = displayNode;
     });
     return values;
@@ -1453,7 +1382,6 @@ export function TopologyPanel({
   useEffect(() => {
     const cards = document.querySelectorAll<HTMLElement>(".topology-node-card");
     if (!cards.length) return;
-    if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver((entries) => {
       const updates: Record<string, number> = {};
       let changed = false;
@@ -1877,24 +1805,24 @@ export function TopologyPanel({
   };
 
   const openInteractiveEditor = (node: TopologyDisplayNode) => {
-    const state = interactionStates.get(node.id) ?? {};
-    const items = stringItems(state.items);
+    const body = node.body;
+    const contentJson = parseContentJson(node.article?.contentJson ?? node.stored?.contentJson);
     setInteractiveConfig(
-      normalizeNodeLevelConfig(node.stored?.configJson ?? node.manual?.configJson)
+      normalizeNodeLevelConfig(node.article?.configJson ?? node.stored?.configJson ?? node.manual?.configJson)
     );
     setInteractiveSummary(node.stored?.summary ?? node.summary);
     setNodeConfigMessage("");
     setInteractiveContent(
-      typeof state.content === "string" ? state.content : node.summary
+      body.kind === "text" ? body.text : body.kind === "quote" ? body.text : node.summary
     );
     setInteractiveItems(
-      items.length ? items : checklistItemsFromText(node.summary)
+      body.kind === "checklist" ? body.items.map((item) => item.text) : checklistItemsFromText(node.summary)
     );
     setInteractiveQuestion(
-      typeof state.question === "string" ? state.question : node.title
+      node.title
     );
     setInteractiveAnswer(
-      typeof state.answer === "string" ? state.answer : node.summary
+      cjValue(contentJson, "答案") || node.summary
     );
     setSelectedInteractiveId(node.id);
     setSelectedManualId(null);
@@ -1947,8 +1875,7 @@ export function TopologyPanel({
         summary:
           draftSummary.trim() ||
           draftContent.trim().replace(/\s+/g, " ").slice(0, 90),
-        configJson:
-          draftConfig === null ? undefined : JSON.stringify(draftConfig),
+        configJson: draftConfig ? { ...draftConfig } : null,
         ...changes
       });
     } finally {
@@ -1958,19 +1885,10 @@ export function TopologyPanel({
 
   const updateInteractionState = async (state: Record<string, unknown>) => {
     if (!selectedManualNode) return;
-    await updateSelectedManual({ interactionStateJson: JSON.stringify(state) });
+    await updateSelectedManual({ interactionStateJson: interactionOnlyState(state) });
   };
 
-  const selectedInteractionState = (() => {
-    try {
-      return JSON.parse(selectedManualNode?.interactionStateJson ?? "{}") as Record<
-        string,
-        unknown
-      >;
-    } catch {
-      return {};
-    }
-  })();
+  const selectedInteractionState = selectedManualNode?.interactionStateJson ?? {};
   const selectedGraphInteractionState = selectedInteractiveId
     ? interactionStates.get(selectedInteractiveId) ?? {}
     : {};
@@ -1993,30 +1911,46 @@ export function TopologyPanel({
     setEditorBusy(true);
     try {
       const variant = selectedInteractiveNode.nodeType.cardVariant;
-      const nextState: Record<string, unknown> = {
-        ...selectedGraphInteractionState
+      const contentJson = {
+        ...parseContentJson(
+          selectedInteractiveNode.article?.contentJson ??
+          selectedInteractiveNode.stored?.contentJson
+        )
       };
+      const patch: TopologyCardPatch = {};
       if (variant === "checklist") {
-        nextState.items = interactiveItems.map((item) => item.trim()).filter(Boolean);
+        const items = interactiveItems.map((item) => item.trim()).filter(Boolean);
+        contentJson["清单项"] = items.map((text) => ({ "文本": text, "已完成": false }));
+        patch.summary = items.join("；");
         const checked = new Set(
           Array.isArray(selectedGraphInteractionState.checked)
             ? (selectedGraphInteractionState.checked as number[])
             : []
         );
-        nextState.checked = [...checked].filter(
-          (index) => index >= 0 && index < (nextState.items as string[]).length
-        );
+        await onUpdateCard(selectedInteractiveNode.id, { ...patch, contentJson });
+        await onUpdateInteraction(selectedInteractiveNode.id, "topology-card", {
+          ...selectedGraphInteractionState,
+          checked: [...checked].filter((index) => index >= 0 && index < items.length)
+        });
       } else if (variant === "flashcard") {
-        nextState.question = interactiveQuestion.trim();
-        nextState.answer = interactiveAnswer.trim();
+        contentJson["答案"] = interactiveAnswer.trim();
+        await onUpdateCard(selectedInteractiveNode.id, {
+          title: interactiveQuestion.trim(),
+          summary: interactiveAnswer.trim(),
+          contentJson
+        });
       } else {
-        nextState.content = interactiveContent;
+        contentJson[variant === "highlight" || variant === "source" ? "引文" : "文本"] =
+          interactiveContent;
+        await onUpdateCard(selectedInteractiveNode.id, {
+          summary: interactiveContent.trim().replace(/\s+/g, " ").slice(0, 90),
+          content: interactiveContent,
+          contentJson
+        });
       }
-      await onUpdateInteraction(
-        selectedInteractiveNode.id,
-        "topology-card",
-        nextState
-      );
+      setNodeConfigMessage("Card 内容已保存。");
+    } catch (error) {
+      setNodeConfigMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setEditorBusy(false);
     }
@@ -2027,6 +1961,9 @@ export function TopologyPanel({
     setEditorBusy(true);
     try {
       await onUpdateNodeConfig(selectedInteractiveNode.id, interactiveConfig);
+      if (interactiveSummary !== selectedInteractiveNode.summary) {
+        await onUpdateCard(selectedInteractiveNode.id, { summary: interactiveSummary });
+      }
       setNodeConfigMessage("节点配置已保存。");
     } catch (error) {
       setNodeConfigMessage(error instanceof Error ? error.message : String(error));
@@ -2085,7 +2022,6 @@ export function TopologyPanel({
     else checked.add(index);
     void onUpdateInteraction(selectedInteractiveNode.id, "topology-card", {
       ...selectedGraphInteractionState,
-      items: interactiveItems,
       checked: [...checked]
     });
   };
@@ -2763,7 +2699,6 @@ export function TopologyPanel({
                           "topology-card",
                           {
                             ...selectedGraphInteractionState,
-                            items: nextItems,
                             checked: nextChecked
                           }
                         );
@@ -2807,8 +2742,6 @@ export function TopologyPanel({
                   "topology-card",
                   {
                     ...selectedGraphInteractionState,
-                    question: interactiveQuestion,
-                    answer: interactiveAnswer,
                     revealed: !selectedGraphInteractionState.revealed
                   }
                 )}

@@ -1,5 +1,23 @@
 import "@testing-library/jest-dom/vitest";
 
+// jsdom 不执行真实布局；观察器仅在测试环境补齐。
+if (typeof window !== "undefined") {
+  globalThis.ResizeObserver ??= class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+  globalThis.IntersectionObserver ??= class {
+    readonly root = null;
+    readonly rootMargin = "0px";
+    readonly thresholds = [0];
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+    takeRecords(): IntersectionObserverEntry[] { return []; }
+  };
+}
+
 const emptyRect = {
   bottom: 0,
   height: 0,
@@ -12,24 +30,24 @@ const emptyRect = {
   toJSON: () => ({})
 };
 
-Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+if (typeof Range !== "undefined") Object.defineProperty(Range.prototype, "getBoundingClientRect", {
   configurable: true,
   value: () => emptyRect
 });
 
-Object.defineProperty(Range.prototype, "getClientRects", {
+if (typeof Range !== "undefined") Object.defineProperty(Range.prototype, "getClientRects", {
   configurable: true,
   value: () => []
 });
 
-Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+if (typeof HTMLDialogElement !== "undefined") Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
   configurable: true,
   value() {
     this.setAttribute("open", "");
   }
 });
 
-Object.defineProperty(HTMLDialogElement.prototype, "close", {
+if (typeof HTMLDialogElement !== "undefined") Object.defineProperty(HTMLDialogElement.prototype, "close", {
   configurable: true,
   value() {
     this.removeAttribute("open");
@@ -37,7 +55,7 @@ Object.defineProperty(HTMLDialogElement.prototype, "close", {
   }
 });
 
-Object.defineProperty(window, "matchMedia", {
+if (typeof window !== "undefined") Object.defineProperty(window, "matchMedia", {
   writable: true,
   value: (query: string) => ({
     matches: false,

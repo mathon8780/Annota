@@ -1,4 +1,3 @@
-const LEGACY_MARKDOWN_SYNTAX_STORAGE_KEY = "annota:markdown-syntax.v2";
 export const MARKDOWN_SYNTAX_STORAGE_KEY = "annota:markdown-syntax.v3";
 
 export type MarkdownSyntaxId =
@@ -10,14 +9,14 @@ export type MarkdownSyntaxId =
   | "obsidian-comments"
   | "math-and-diagrams";
 
-export interface MarkdownSyntaxFeature {
+interface MarkdownSyntaxFeature {
   id: MarkdownSyntaxId;
   label: string;
   description: string;
   defaultEnabled: boolean;
 }
 
-export const markdownSyntaxFeatures: readonly MarkdownSyntaxFeature[] = [
+const markdownSyntaxFeatures: readonly MarkdownSyntaxFeature[] = [
   {
     id: "commonmark-structure",
     label: "标题与引用",
@@ -62,7 +61,7 @@ export const markdownSyntaxFeatures: readonly MarkdownSyntaxFeature[] = [
   }
 ];
 
-export function defaultMarkdownSyntaxIds() {
+function defaultMarkdownSyntaxIds() {
   return markdownSyntaxFeatures
     .filter((feature) => feature.defaultEnabled)
     .map((feature) => feature.id);
@@ -71,17 +70,13 @@ export function defaultMarkdownSyntaxIds() {
 export function loadMarkdownSyntaxIds(): MarkdownSyntaxId[] {
   if (typeof window === "undefined") return defaultMarkdownSyntaxIds();
   try {
-    const current = window.localStorage.getItem(MARKDOWN_SYNTAX_STORAGE_KEY);
-    const stored = current ?? window.localStorage.getItem(LEGACY_MARKDOWN_SYNTAX_STORAGE_KEY);
-    const parsed = JSON.parse(
-      stored ?? "null"
-    );
+    const stored = window.localStorage.getItem(MARKDOWN_SYNTAX_STORAGE_KEY);
+    const parsed = JSON.parse(stored ?? "null");
     if (!Array.isArray(parsed)) return defaultMarkdownSyntaxIds();
     const known = new Set(markdownSyntaxFeatures.map((feature) => feature.id));
     const ids = parsed.filter(
       (value): value is MarkdownSyntaxId => typeof value === "string" && known.has(value as MarkdownSyntaxId)
     );
-    if (current === null && !ids.includes("math-and-diagrams")) ids.push("math-and-diagrams");
     return ids;
   } catch {
     return defaultMarkdownSyntaxIds();

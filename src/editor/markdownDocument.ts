@@ -1,6 +1,6 @@
 import type { SelectionState } from "../types";
 
-export type MarkdownRangeKind = "heading" | "quote" | "paragraph";
+type MarkdownRangeKind = "heading" | "quote" | "paragraph";
 
 export interface MarkdownRange {
   id: string;

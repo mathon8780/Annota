@@ -1,6 +1,6 @@
 mod markdown_store;
-mod transaction_journal;
 mod topology_store;
+mod transaction_journal;
 mod window_size;
 mod workspace;
 mod workspace_runtime;
@@ -9,10 +9,8 @@ use markdown_store::MarkdownDocument;
 use std::path::PathBuf;
 use tauri::{LogicalSize, Manager, WindowEvent};
 use topology_store::{
-    LibraryLoadResult, LibraryMetadata, SyncMarkdownTopologyRequest, TopologyCollection,
-    TopologyGraph, TopologyInteraction, TopologyNode, TopologyRelation,
-    UpsertTopologyCollectionRequest, UpsertTopologyInteractionRequest, UpsertTopologyNodeRequest,
-    UpsertTopologyRelationRequest,
+    LibraryMetadata, TopologyGraph, TopologyInteraction, TopologyNode, TopologyRelation,
+    UpsertTopologyInteractionRequest, UpsertTopologyNodeRequest, UpsertTopologyRelationRequest,
 };
 use window_size::{WindowDimensions, WindowSizePersistence};
 use workspace_runtime::{WorkspaceCatalog, WorkspaceDiagnosticReport, WorkspaceRuntime};
@@ -123,17 +121,14 @@ fn save_markdown_document(
     content: String,
     knowledge_point_id: Option<String>,
 ) -> Result<MarkdownDocument, String> {
-    runtime.with_markdown(|store| {
-        store.save(&document_id, &content, knowledge_point_id.as_deref())
-    })
+    runtime.with_markdown(|store| store.save(&document_id, &content, knowledge_point_id.as_deref()))
 }
 
 #[tauri::command]
 fn load_library_metadata(
     runtime: tauri::State<'_, WorkspaceRuntime>,
-    legacy_metadata: Option<LibraryMetadata>,
-) -> Result<LibraryLoadResult, String> {
-    runtime.with_topology(|store| store.load_library_metadata(legacy_metadata))
+) -> Result<LibraryMetadata, String> {
+    runtime.with_topology(|store| store.load_library_metadata())
 }
 
 #[tauri::command]
@@ -207,42 +202,11 @@ fn diagnose_workspace(
 }
 
 #[tauri::command]
-fn list_topology_collections(
-    runtime: tauri::State<'_, WorkspaceRuntime>,
-) -> Result<Vec<TopologyCollection>, String> {
-    runtime.with_topology(|store| store.list_collections())
-}
-
-#[tauri::command]
-fn upsert_topology_collection(
-    runtime: tauri::State<'_, WorkspaceRuntime>,
-    request: UpsertTopologyCollectionRequest,
-) -> Result<TopologyCollection, String> {
-    runtime.with_topology(|store| store.upsert_collection(request))
-}
-
-#[tauri::command]
-fn sync_markdown_topology(
-    runtime: tauri::State<'_, WorkspaceRuntime>,
-    request: SyncMarkdownTopologyRequest,
-) -> Result<TopologyGraph, String> {
-    runtime.with_topology(|store| store.sync_markdown_topology(request))
-}
-
-#[tauri::command]
 fn load_topology_graph(
     runtime: tauri::State<'_, WorkspaceRuntime>,
     collection_id: String,
 ) -> Result<TopologyGraph, String> {
     runtime.with_topology(|store| store.load_graph(&collection_id))
-}
-
-#[tauri::command]
-fn delete_topology_collection(
-    runtime: tauri::State<'_, WorkspaceRuntime>,
-    collection_id: String,
-) -> Result<bool, String> {
-    runtime.with_topology(|store| store.delete_collection(&collection_id))
 }
 
 #[tauri::command]
@@ -283,14 +247,6 @@ fn upsert_topology_interaction(
     request: UpsertTopologyInteractionRequest,
 ) -> Result<TopologyInteraction, String> {
     runtime.with_topology(|store| store.upsert_interaction(request))
-}
-
-#[tauri::command]
-fn delete_topology_interaction(
-    runtime: tauri::State<'_, WorkspaceRuntime>,
-    interaction_id: String,
-) -> Result<bool, String> {
-    runtime.with_topology(|store| store.delete_interaction(&interaction_id))
 }
 
 #[derive(serde::Deserialize)]
@@ -675,17 +631,12 @@ pub fn run() {
             switch_workspace,
             remove_workspace,
             diagnose_workspace,
-            list_topology_collections,
-            upsert_topology_collection,
-            sync_markdown_topology,
             load_topology_graph,
-            delete_topology_collection,
             upsert_topology_node,
             delete_topology_node,
             upsert_topology_relation,
             delete_topology_relation,
             upsert_topology_interaction,
-            delete_topology_interaction,
             discover_models,
             generate_text
         ])

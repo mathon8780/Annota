@@ -68,7 +68,7 @@ describe("article node order", () => {
     expect(sortArticleChildren(root, articles, []).map((item) => item.id)).toEqual(["b", "a"]);
   });
 
-  it("infers legacy generated block order from stable block ids", () => {
+  it("keeps stored child order when source blocks have no persisted positions", () => {
     const root = article("root", { childIds: ["later", "earlier"] });
     const articles = {
       root,
@@ -81,8 +81,8 @@ describe("article node order", () => {
     };
     const blockIds = sourceBlockIdsInDocumentOrder(root, articles);
     expect(sortArticleChildren(root, articles, blockIds).map((item) => item.id)).toEqual([
-      "earlier",
-      "later"
+      "later",
+      "earlier"
     ]);
   });
 

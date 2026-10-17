@@ -24,7 +24,7 @@ export const appThemes: readonly AppThemeDefinition[] = [
   }
 ] as const;
 
-export function isAppThemeId(value: unknown): value is AppThemeId {
+function isAppThemeId(value: unknown): value is AppThemeId {
   return appThemes.some((theme) => theme.id === value);
 }
 

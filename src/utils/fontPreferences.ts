@@ -1,5 +1,5 @@
-export const FONT_PREFERENCES_STORAGE_KEY = "annota:font-preferences";
-export const SYSTEM_FONT_PREFIX = "system:";
+const FONT_PREFERENCES_STORAGE_KEY = "annota:font-preferences";
+const SYSTEM_FONT_PREFIX = "system:";
 
 export const interfaceFontOptions = [
   {
@@ -63,7 +63,7 @@ export interface FontPreferences {
   codeSize: (typeof codeFontSizes)[number];
 }
 
-export const defaultFontPreferences: FontPreferences = {
+const defaultFontPreferences: FontPreferences = {
   interfaceFamily: "noto-sans",
   readingFamily: "noto-sans",
   codeFamily: "cascadia",
@@ -126,7 +126,7 @@ export function loadFontPreferences(): FontPreferences {
   }
 }
 
-export function systemFontName(preference: string) {
+function systemFontName(preference: string) {
   return preference.startsWith(SYSTEM_FONT_PREFIX)
     ? preference.slice(SYSTEM_FONT_PREFIX.length)
     : null;
@@ -147,7 +147,7 @@ export function resolveFontStack(
   return options.find((option) => option.id === selectedId)?.stack ?? options[0].stack;
 }
 
-export function applyFontPreferences(preferences: FontPreferences) {
+function applyFontPreferences(preferences: FontPreferences) {
   const root = document.documentElement;
   const interfaceSize = preferences.interfaceSize;
 

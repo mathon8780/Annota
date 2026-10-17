@@ -2,7 +2,7 @@ export const CONTENT_ZOOM_STORAGE_KEY = "annota:reader-content-zoom.v1";
 export const CONTENT_ZOOM_DEFAULT = 1;
 export const CONTENT_ZOOM_MIN = 0.7;
 export const CONTENT_ZOOM_MAX = 1.8;
-export const CONTENT_ZOOM_STEP = 0.1;
+const CONTENT_ZOOM_STEP = 0.1;
 
 export function normalizeContentZoom(value: number) {
   if (!Number.isFinite(value)) return CONTENT_ZOOM_DEFAULT;

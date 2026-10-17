@@ -8,15 +8,6 @@ import {
 describe("syntaxRegistry", () => {
   beforeEach(() => window.localStorage.clear());
 
-  it("enables math and diagrams for existing v2 preferences", () => {
-    window.localStorage.setItem(
-      "annota:markdown-syntax.v2",
-      JSON.stringify(["inline-formatting"])
-    );
-
-    expect(loadMarkdownSyntaxIds()).toEqual(["inline-formatting", "math-and-diagrams"]);
-  });
-
   it("preserves an explicit v3 choice when saving and loading", () => {
     saveMarkdownSyntaxIds(["commonmark-structure"]);
 
@@ -24,5 +15,14 @@ describe("syntaxRegistry", () => {
       JSON.stringify(["commonmark-structure"])
     );
     expect(loadMarkdownSyntaxIds()).toEqual(["commonmark-structure"]);
+  });
+
+  it("ignores unknown entries in current preferences", () => {
+    window.localStorage.setItem(
+      MARKDOWN_SYNTAX_STORAGE_KEY,
+      JSON.stringify(["inline-formatting", "unknown-syntax"])
+    );
+
+    expect(loadMarkdownSyntaxIds()).toEqual(["inline-formatting"]);
   });
 });

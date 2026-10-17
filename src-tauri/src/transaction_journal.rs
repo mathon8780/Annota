@@ -7,6 +7,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{Read, Write},
     path::{Component, Path, PathBuf},
+    sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -36,6 +37,7 @@ pub struct TransactionJournal {
     database_path: PathBuf,
     transactions_dir: PathBuf,
     diagnostics_dir: PathBuf,
+    recovery_needed: AtomicBool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -120,7 +122,8 @@ fn hash_file(path: &Path) -> Result<Option<(String, i64)>, String> {
     if !path.is_file() {
         return Err(format!("operation 路径不是普通文件：{}", path.display()));
     }
-    let mut file = File::open(path).map_err(|error| format!("无法读取 {}：{error}", path.display()))?;
+    let mut file =
+        File::open(path).map_err(|error| format!("无法读取 {}：{error}", path.display()))?;
     let mut hasher = Sha256::new();
     let mut byte_length = 0_i64;
     let mut buffer = [0_u8; 64 * 1024];
@@ -179,6 +182,7 @@ impl TransactionJournal {
             database_path,
             transactions_dir: internal_dir.join("transactions"),
             diagnostics_dir: internal_dir.join("diagnostics"),
+            recovery_needed: AtomicBool::new(true),
         }
     }
 
@@ -188,7 +192,9 @@ impl TransactionJournal {
 
     fn absolute(&self, relative_path: &str) -> Result<PathBuf, String> {
         if !safe_relative_path(relative_path) {
-            return Err(format!("transaction journal 包含不安全路径：{relative_path}"));
+            return Err(format!(
+                "transaction journal 包含不安全路径：{relative_path}"
+            ));
         }
         Ok(self.workspace_root.join(relative_path))
     }
@@ -201,14 +207,10 @@ impl TransactionJournal {
     ) -> Result<(JournalRecord, PathBuf, PathBuf, PathBuf), String> {
         let operation_id = Uuid::new_v4().to_string();
         let target_relative = PathBuf::from(relative_path);
-        let staging_relative = append_file_suffix(
-            &target_relative,
-            &format!(".tmp-{operation_id}"),
-        )?;
-        let backup_relative = append_file_suffix(
-            &target_relative,
-            &format!(".bak-{operation_id}"),
-        )?;
+        let staging_relative =
+            append_file_suffix(&target_relative, &format!(".tmp-{operation_id}"))?;
+        let backup_relative =
+            append_file_suffix(&target_relative, &format!(".bak-{operation_id}"))?;
         let target_path = self.workspace_root.join(&target_relative);
         let staging_path = self.workspace_root.join(&staging_relative);
         let backup_path = self.workspace_root.join(&backup_relative);
@@ -379,7 +381,10 @@ impl TransactionJournal {
         backup_path: &Path,
     ) -> Result<(), String> {
         if !staging_path.is_file() {
-            return Err(format!("Markdown staging 不存在：{}", staging_path.display()));
+            return Err(format!(
+                "Markdown staging 不存在：{}",
+                staging_path.display()
+            ));
         }
         let staging_hash = hash_file(staging_path)?
             .ok_or_else(|| "Markdown staging 在校验过程中消失".to_string())?;
@@ -393,7 +398,9 @@ impl TransactionJournal {
                     return Err("目标 Markdown 已被外部修改，拒绝覆盖".to_string());
                 }
                 if backup_path.exists() {
-                    return Err("目标 Markdown 与 operation backup 同时存在，无法安全发布".to_string());
+                    return Err(
+                        "目标 Markdown 与 operation backup 同时存在，无法安全发布".to_string()
+                    );
                 }
                 fs::rename(target_path, backup_path).map_err(|error| {
                     format!("无法为 Markdown 发布创建 operation backup：{error}")
@@ -423,26 +430,33 @@ impl TransactionJournal {
         record: &JournalRecord,
         staging_path: &Path,
         backup_path: &Path,
-    ) {
+    ) -> bool {
+        let mut clean = true;
         for path in [
             staging_path.to_path_buf(),
             backup_path.to_path_buf(),
             self.journal_path(&record.operation_id),
         ] {
             if path.exists() {
-                let _ = fs::remove_file(path);
+                if fs::remove_file(path).is_err() {
+                    clean = false;
+                }
             }
         }
+        clean
     }
 
     fn ensure_recovered_clean(&self) -> Result<(), String> {
+        if !self.recovery_needed.load(Ordering::Acquire) {
+            return Ok(());
+        }
         let recovery = self.recover_pending_operations()?;
         if recovery.orphan_journals > 0 || recovery.orphan_artifacts > 0 {
             return Err(
-                "工作区存在未关联的 transaction journal 或 staging，请先运行诊断"
-                    .to_string(),
+                "工作区存在未关联的 transaction journal 或 staging，请先运行诊断".to_string(),
             );
         }
+        self.recovery_needed.store(false, Ordering::Release);
         Ok(())
     }
 
@@ -465,30 +479,34 @@ impl TransactionJournal {
         content: &str,
     ) -> Result<(), String> {
         self.ensure_recovered_clean()?;
-        let bytes = content.as_bytes();
-        let (mut record, target_path, staging_path, backup_path) =
-            self.operation_record(document_id, relative_path, bytes)?;
-        if let Some((hash, length)) = hash_file(&target_path)? {
-            if hash == record.content_hash && length == record.byte_length {
-                return self.reconcile_existing(
-                    document_id,
-                    &record.relative_path,
-                    bytes,
-                );
+        let result = (|| {
+            let bytes = content.as_bytes();
+            let (mut record, target_path, staging_path, backup_path) =
+                self.operation_record(document_id, relative_path, bytes)?;
+            if let Some((hash, length)) = hash_file(&target_path)? {
+                if hash == record.content_hash && length == record.byte_length {
+                    return self.reconcile_existing(document_id, &record.relative_path, bytes);
+                }
             }
+            let parent = target_path
+                .parent()
+                .ok_or_else(|| "Markdown 目标路径缺少父目录".to_string())?;
+            fs::create_dir_all(parent)
+                .map_err(|error| format!("无法创建 Markdown 目录：{error}"))?;
+            write_staging(&staging_path, bytes)?;
+            self.write_journal(&record)?;
+            self.insert_pending(&record)?;
+            self.publish_staging(&mut record, &target_path, &staging_path, &backup_path)?;
+            self.finalize(&record)?;
+            if !self.cleanup_completed(&record, &staging_path, &backup_path) {
+                self.recovery_needed.store(true, Ordering::Release);
+            }
+            Ok(())
+        })();
+        if result.is_err() {
+            self.recovery_needed.store(true, Ordering::Release);
         }
-        let parent = target_path
-            .parent()
-            .ok_or_else(|| "Markdown 目标路径缺少父目录".to_string())?;
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("无法创建 Markdown 目录：{error}"))?;
-        write_staging(&staging_path, bytes)?;
-        self.write_journal(&record)?;
-        self.insert_pending(&record)?;
-        self.publish_staging(&mut record, &target_path, &staging_path, &backup_path)?;
-        self.finalize(&record)?;
-        self.cleanup_completed(&record, &staging_path, &backup_path);
-        Ok(())
+        result
     }
 
     pub fn reconcile_document(
@@ -498,7 +516,11 @@ impl TransactionJournal {
         content: &str,
     ) -> Result<(), String> {
         self.ensure_recovered_clean()?;
-        self.reconcile_existing(document_id, relative_path, content.as_bytes())
+        let result = self.reconcile_existing(document_id, relative_path, content.as_bytes());
+        if result.is_err() {
+            self.recovery_needed.store(true, Ordering::Release);
+        }
+        result
     }
 
     fn load_pending(&self) -> Result<Vec<PendingOperation>, String> {
@@ -556,14 +578,10 @@ impl TransactionJournal {
         {
             return Err("pending 正文路径必须是 notes/ 下的 Markdown 文件".to_string());
         }
-        let expected_staging = append_file_suffix(
-            target,
-            &format!(".tmp-{}", pending.operation_id),
-        )?;
-        let expected_backup = append_file_suffix(
-            target,
-            &format!(".bak-{}", pending.operation_id),
-        )?;
+        let expected_staging =
+            append_file_suffix(target, &format!(".tmp-{}", pending.operation_id))?;
+        let expected_backup =
+            append_file_suffix(target, &format!(".bak-{}", pending.operation_id))?;
         let state_pair_is_valid = matches!(
             (pending.state.as_str(), journal.state.as_str()),
             ("prepared", "prepared") | ("prepared", "published") | ("published", "published")
@@ -586,7 +604,10 @@ impl TransactionJournal {
             && pending.staging_relative_path == slash_path(&expected_staging)
             && pending.backup_relative_path == slash_path(&expected_backup)
             && pending.content_hash.len() == 64
-            && pending.content_hash.bytes().all(|value| value.is_ascii_hexdigit())
+            && pending
+                .content_hash
+                .bytes()
+                .all(|value| value.is_ascii_hexdigit())
             && pending.byte_length >= 0
             && pending.target_revision >= 1;
         if !fields_match {
@@ -595,11 +616,7 @@ impl TransactionJournal {
         Ok(())
     }
 
-    fn archive_rollback(
-        &self,
-        record: &mut JournalRecord,
-        reason: &str,
-    ) -> Result<(), String> {
+    fn archive_rollback(&self, record: &mut JournalRecord, reason: &str) -> Result<(), String> {
         record.state = "rolledBack".to_string();
         record.updated_at = now()?;
         let mut connection = open_database(&self.database_path)?;
@@ -669,10 +686,9 @@ impl TransactionJournal {
                 let staging = hash_file(&staging_path)?;
                 let backup = hash_file(&backup_path)?;
 
-                if target
-                    .as_ref()
-                    .is_some_and(|value| value.0 == operation.content_hash && value.1 == operation.byte_length)
-                {
+                if target.as_ref().is_some_and(|value| {
+                    value.0 == operation.content_hash && value.1 == operation.byte_length
+                }) {
                     let staging_is_owned = match &staging {
                         None => true,
                         Some((hash, length)) => {
@@ -696,16 +712,10 @@ impl TransactionJournal {
                     return Ok(());
                 }
 
-                if staging
-                    .as_ref()
-                    .is_some_and(|value| value.0 == operation.content_hash && value.1 == operation.byte_length)
-                {
-                    self.publish_staging(
-                        &mut journal,
-                        &target_path,
-                        &staging_path,
-                        &backup_path,
-                    )?;
+                if staging.as_ref().is_some_and(|value| {
+                    value.0 == operation.content_hash && value.1 == operation.byte_length
+                }) {
+                    self.publish_staging(&mut journal, &target_path, &staging_path, &backup_path)?;
                     self.finalize(&journal)?;
                     self.cleanup_completed(&journal, &staging_path, &backup_path);
                     report.recovered_operations += 1;
@@ -742,7 +752,10 @@ impl TransactionJournal {
                     report.rolled_back_operations += 1;
                     return Ok(());
                 }
-                Err("无法从目标、staging 或 backup 证明 Markdown operation 的安全恢复路径".to_string())
+                Err(
+                    "无法从目标、staging 或 backup 证明 Markdown operation 的安全恢复路径"
+                        .to_string(),
+                )
             })();
             if let Err(error) = result {
                 self.preserve_failure(&operation.operation_id, &error);
@@ -789,7 +802,9 @@ impl TransactionJournal {
     pub fn inspect_state(&self) -> Result<JournalStateSummary, String> {
         let connection = open_database(&self.database_path)?;
         let pending_operations = connection
-            .query_row("SELECT COUNT(*) FROM pending_file_ops", [], |row| row.get::<_, i64>(0))
+            .query_row("SELECT COUNT(*) FROM pending_file_ops", [], |row| {
+                row.get::<_, i64>(0)
+            })
             .map_err(|error| format!("无法统计 pending Markdown operations：{error}"))?;
         Ok(JournalStateSummary {
             pending_operations: usize::try_from(pending_operations)
@@ -810,17 +825,17 @@ fn count_operation_artifacts(root: &Path) -> Result<usize, String> {
         for entry in fs::read_dir(&directory)
             .map_err(|error| format!("无法扫描 Markdown operation 残留：{error}"))?
         {
-            let entry = entry.map_err(|error| format!("无法读取 Markdown operation 残留：{error}"))?;
+            let entry =
+                entry.map_err(|error| format!("无法读取 Markdown operation 残留：{error}"))?;
             let path = entry.path();
             if path.is_dir() {
                 directories.push(path);
             } else if path.is_file() {
-                let name = path.file_name().and_then(|value| value.to_str()).unwrap_or("");
-                if name.contains(".md.tmp-")
-                    || name.contains(".md.bak-")
-                    || name.ends_with(".md.tmp")
-                    || name.ends_with(".md.bak")
-                {
+                let name = path
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("");
+                if name.contains(".md.tmp-") || name.contains(".md.bak-") {
                     count += 1;
                 }
             }

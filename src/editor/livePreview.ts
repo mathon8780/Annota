@@ -11,6 +11,7 @@ import {
   renderMermaidDiagram
 } from "./richPreview";
 import type { MarkdownSyntaxId } from "./syntaxRegistry";
+import { fencedCodeState } from "./fencedCode";
 
 type DecorationRange = ReturnType<Decoration["range"]>;
 
@@ -693,7 +694,7 @@ class TableWidget extends WidgetType {
       handle.append(dots);
     };
 
-    const addColumnHandle = (cell: HTMLTableCellElement, column: number) => {
+    const addColumnHandle = (column: number) => {
       const handle = document.createElement("button");
       handle.className = "cm-live-table-drag-handle cm-live-table-column-handle";
       handle.type = "button";
@@ -706,7 +707,7 @@ class TableWidget extends WidgetType {
       frame.append(handle);
     };
 
-    const addRowHandle = (cell: HTMLTableCellElement, row: number) => {
+    const addRowHandle = (row: number) => {
       const handle = document.createElement("button");
       handle.className = "cm-live-table-drag-handle cm-live-table-row-handle";
       handle.type = "button";
@@ -791,8 +792,8 @@ class TableWidget extends WidgetType {
           applyTable(nextRows);
         });
         element.append(editor);
-        if (header) addColumnHandle(element, index);
-        if (!header && index === 0) addRowHandle(element, row);
+        if (header) addColumnHandle(index);
+        if (!header && index === 0) addRowHandle(row);
         target.append(element);
       });
     };
@@ -1067,17 +1068,10 @@ class TaskCheckboxWidget extends WidgetType {
 
 function collectBlockLines(state: EditorState): BlockLines {
   const callouts = new Map<number, CalloutBlock>();
-  const code = new Set<number>();
+  const { blocks, code, fences } = state.field(fencedCodeState);
   const codeBlocks = new Map<number, CodeBlock>();
-  const fences = new Set<number>();
   const mathBlocks = new Map<number, MathBlock>();
   const tables = new Map<number, TableBlock>();
-  let openFence: {
-    language: string;
-    length: number;
-    marker: "`" | "~";
-    startLine: number;
-  } | null = null;
 
   const registerCodeBlock = (startLine: number, endLine: number, language: string) => {
     const firstLine = state.doc.line(startLine);
@@ -1102,36 +1096,7 @@ function collectBlockLines(state: EditorState): BlockLines {
     for (let line = startLine; line <= endLine; line += 1) codeBlocks.set(line, block);
   };
 
-  for (let lineNumber = 1; lineNumber <= state.doc.lines; lineNumber += 1) {
-    const text = state.doc.line(lineNumber).text;
-    const fence = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(text);
-    if (!openFence && fence) {
-      openFence = {
-        language: fence[2].trim().split(/\s+/)[0] ?? "",
-        marker: fence[1][0] as "`" | "~",
-        length: fence[1].length,
-        startLine: lineNumber
-      };
-      code.add(lineNumber);
-      fences.add(lineNumber);
-      continue;
-    }
-    if (!openFence) continue;
-    code.add(lineNumber);
-    if (
-      fence &&
-      fence[1][0] === openFence.marker &&
-      fence[1].length >= openFence.length &&
-      !fence[2].trim()
-    ) {
-      fences.add(lineNumber);
-      registerCodeBlock(openFence.startLine, lineNumber, openFence.language);
-      openFence = null;
-    }
-  }
-  if (openFence) {
-    registerCodeBlock(openFence.startLine, state.doc.lines, openFence.language);
-  }
+  blocks.forEach((block) => registerCodeBlock(block.startLine, block.endLine, block.language));
 
   const registerMathBlock = (startLine: number, endLine: number, expression: string) => {
     const firstLine = state.doc.line(startLine);
@@ -1587,6 +1552,9 @@ export function livePreviewExtension(
   enabledSyntaxIds: readonly MarkdownSyntaxId[]
 ): Extension {
   const enabledSyntax = new Set(enabledSyntaxIds);
+  let previousDoc: EditorState["doc"] | undefined;
+  let previousActiveLines = "";
+  let previousDecorations: ReturnType<typeof livePreviewDecorations> | undefined;
   const blockLinesState = StateField.define<BlockLines>({
     create: collectBlockLines,
     update(value, transaction) {
@@ -1594,15 +1562,27 @@ export function livePreviewExtension(
     }
   });
   return [
+    fencedCodeState,
     blockLinesState,
     EditorView.decorations.compute(
       [blockLinesState, "selection"],
-      (state) =>
-        livePreviewDecorations(
+      (state) => {
+        const activeLines = state.selection.ranges
+          .filter((range) => range.empty)
+          .map((range) => state.doc.lineAt(range.head).number)
+          .join(",");
+        if (state.doc === previousDoc && activeLines === previousActiveLines && previousDecorations) {
+          return previousDecorations;
+        }
+        previousDoc = state.doc;
+        previousActiveLines = activeLines;
+        previousDecorations = livePreviewDecorations(
           state,
           enabledSyntax,
           state.field(blockLinesState)
-        )
+        );
+        return previousDecorations;
+      }
     )
   ];
 }

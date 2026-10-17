@@ -1,296 +1,176 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import type { ArticleNode, Notebook } from "../types";
+import { jsonObject, type JsonObject } from "./json";
+import * as browser from "./browserTopologyAdapter";
 
 export interface TopologyCollectionRecord {
-  id: string;
-  title: string;
-  description: string;
-  createdAt: string;
-  updatedAt: string;
+  id: string; title: string; description: string; createdAt: string; updatedAt: string;
 }
-
 export interface TopologyNodeRecord {
-  id: string;
-  collectionId: string;
-  nodeType: string;
-  title: string;
-  summary: string;
-  contentMode: "markdown" | "database";
-  content: string | null;
-  documentId: string | null;
-  isRoot: boolean;
-  isManual: boolean;
-  enabled: boolean;
-  interactive: boolean;
-  interactionStateJson: string;
-  appearanceJson: string;
-  family?: string;
-  creationMethod?: string;
-  contentJson?: unknown;
-  anchorJson?: unknown;
-  generationJson?: unknown;
-  configJson?: unknown;
-  createdAt: string;
-  updatedAt: string;
+  id: string; collectionId: string; nodeType: string; title: string; summary: string;
+  contentMode: "markdown" | "database"; content: string | null; documentId: string | null;
+  isRoot: boolean; isManual: boolean; enabled: boolean; interactive: boolean;
+  interactionStateJson: JsonObject; appearanceJson: JsonObject;
+  family?: string; creationMethod?: string;
+  contentJson?: JsonObject | null; anchorJson?: JsonObject | null;
+  generationJson?: JsonObject | null; configJson?: JsonObject | null;
+  createdAt: string; updatedAt: string;
 }
-
 export interface TopologyRelationRecord {
-  id: string;
-  collectionId: string;
-  sourceNodeId: string;
-  targetNodeId: string;
-  relationType: string;
-  label: string;
-  directed: boolean;
-  metadataJson: string;
-  createdAt: string;
-  updatedAt: string;
+  id: string; collectionId: string; sourceNodeId: string; targetNodeId: string;
+  relationType: string; label: string; directed: boolean; metadataJson: JsonObject;
+  createdAt: string; updatedAt: string;
 }
-
 export interface TopologyInteractionRecord {
-  id: string;
-  nodeId: string;
-  interactionType: string;
-  title: string;
-  configJson: string;
-  stateJson: string;
-  enabled: boolean;
-  createdAt: string;
-  updatedAt: string;
+  id: string; nodeId: string; interactionType: string; title: string;
+  configJson: JsonObject; stateJson: JsonObject; enabled: boolean;
+  createdAt: string; updatedAt: string;
 }
-
 export interface TopologyGraphRecord {
-  collection: TopologyCollectionRecord;
-  nodes: TopologyNodeRecord[];
-  relations: TopologyRelationRecord[];
-  interactions: TopologyInteractionRecord[];
+  collection: TopologyCollectionRecord; nodes: TopologyNodeRecord[];
+  relations: TopologyRelationRecord[]; interactions: TopologyInteractionRecord[];
 }
+type JsonInput = JsonObject | null;
+export type UpsertTopologyNode = Omit<TopologyNodeRecord,
+  "createdAt" | "updatedAt" | "interactionStateJson" | "appearanceJson" |
+  "contentJson" | "anchorJson" | "generationJson" | "configJson"
+> & {
+  interactionStateJson: JsonInput; appearanceJson: JsonInput;
+  contentJson?: JsonInput; anchorJson?: JsonInput; generationJson?: JsonInput; configJson?: JsonInput;
+};
+export type UpsertTopologyRelation = Omit<TopologyRelationRecord,
+  "createdAt" | "updatedAt" | "metadataJson"
+> & { metadataJson: JsonInput };
+export type UpsertTopologyInteraction = Omit<TopologyInteractionRecord,
+  "createdAt" | "updatedAt" | "configJson" | "stateJson"
+> & { configJson: JsonInput; stateJson: JsonInput };
+export type WireNode = Omit<UpsertTopologyNode,
+  "interactionStateJson" | "appearanceJson" | "contentJson" | "anchorJson" | "generationJson" | "configJson"
+> & {
+  interactionStateJson: string | JsonInput; appearanceJson: string | JsonInput;
+  contentJson?: string | JsonInput; anchorJson?: string | JsonInput;
+  generationJson?: string | JsonInput; configJson?: string | JsonInput;
+  createdAt: string; updatedAt: string;
+};
+export type WireRelation = Omit<UpsertTopologyRelation, "metadataJson"> & {
+  metadataJson: string | JsonInput; createdAt: string; updatedAt: string;
+};
+export type WireInteraction = Omit<UpsertTopologyInteraction, "configJson" | "stateJson"> & {
+  configJson: string | JsonInput; stateJson: string | JsonInput;
+  createdAt: string; updatedAt: string;
+};
+type WireGraph = {
+  collection: TopologyCollectionRecord; nodes: WireNode[];
+  relations: WireRelation[]; interactions: WireInteraction[];
+};
 
-export type UpsertTopologyNode = Omit<TopologyNodeRecord, "createdAt" | "updatedAt">;
-export type UpsertTopologyRelation = Omit<
-  TopologyRelationRecord,
-  "createdAt" | "updatedAt"
->;
-export type UpsertTopologyInteraction = Omit<
-  TopologyInteractionRecord,
-  "createdAt" | "updatedAt"
->;
-
-export interface SyncMarkdownTopologyRequest {
-  collection: {
-    id: string;
-    title: string;
-    description: string;
-  };
-  nodes: UpsertTopologyNode[];
-  relations: UpsertTopologyRelation[];
+function decodeJson(value: unknown, field: string): JsonObject {
+  if (value === null || value === undefined || value === "") return {};
+  let decoded = value;
+  if (typeof value === "string") {
+    try { decoded = JSON.parse(value); }
+    catch { throw new Error(`${field} 包含无效 JSON`); }
+  }
+  if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) {
+    throw new Error(`${field} 必须是 JSON 对象`);
+  }
+  return jsonObject(decoded);
 }
-
-/** Rust 侧 JSON 字段为 TEXT;对象/数组统一序列化,字符串原样,空值透传。 */
-function toJsonString(value: unknown): string | null | undefined {
-  if (value === undefined) return undefined;
-  if (value === null) return null;
-  if (typeof value === "string") return value;
-  return JSON.stringify(value);
+function decodeOptional(value: unknown, field: string): JsonObject | null | undefined {
+  return value === null || value === undefined ? value : decodeJson(value, field);
 }
-
-function serializeNodeJson(
-  node: UpsertTopologyNode
-): UpsertTopologyNode {
+function decodeNode(node: WireNode): TopologyNodeRecord {
   return {
     ...node,
-    contentJson: toJsonString(node.contentJson),
-    anchorJson: toJsonString(node.anchorJson),
-    generationJson: toJsonString(node.generationJson),
-    configJson: toJsonString(node.configJson)
+    interactionStateJson: decodeJson(node.interactionStateJson, "interactionStateJson"),
+    appearanceJson: decodeJson(node.appearanceJson, "appearanceJson"),
+    contentJson: decodeOptional(node.contentJson, "contentJson"),
+    anchorJson: decodeOptional(node.anchorJson, "anchorJson"),
+    generationJson: decodeOptional(node.generationJson, "generationJson"),
+    configJson: decodeOptional(node.configJson, "configJson")
   };
 }
-
-interface BrowserState {
-  collections: Record<string, TopologyCollectionRecord>;
-  nodes: Record<string, TopologyNodeRecord>;
-  relations: Record<string, TopologyRelationRecord>;
-  interactions: Record<string, TopologyInteractionRecord>;
+function decodeRelation(relation: WireRelation): TopologyRelationRecord {
+  return { ...relation, metadataJson: decodeJson(relation.metadataJson, "metadataJson") };
 }
-
-const BROWSER_KEY = "annota.topology.sqlite-mock.v1";
-
-function emptyState(): BrowserState {
-  return { collections: {}, nodes: {}, relations: {}, interactions: {} };
-}
-
-function readState(): BrowserState {
-  if (typeof window === "undefined") return emptyState();
-  try {
-    const value = JSON.parse(window.localStorage.getItem(BROWSER_KEY) ?? "null") as Partial<BrowserState> | null;
-    return value && typeof value === "object"
-      ? {
-          collections: value.collections ?? {},
-          nodes: value.nodes ?? {},
-          relations: value.relations ?? {},
-          interactions: value.interactions ?? {}
-        }
-      : emptyState();
-  } catch {
-    return emptyState();
-  }
-}
-
-function writeState(state: BrowserState) {
-  window.localStorage.setItem(BROWSER_KEY, JSON.stringify(state));
-}
-
-function now() {
-  return new Date().toISOString();
-}
-
-function browserGraph(
-  state: BrowserState,
-  collectionId: string
-): TopologyGraphRecord {
-  const collection = state.collections[collectionId];
-  if (!collection) throw new Error("集合不存在");
-  const nodes = Object.values(state.nodes).filter(
-    (node) => node.collectionId === collectionId
-  );
-  const nodeIds = new Set(nodes.map((node) => node.id));
+function decodeInteraction(interaction: WireInteraction): TopologyInteractionRecord {
   return {
-    collection,
-    nodes,
-    relations: Object.values(state.relations).filter(
-      (relation) => relation.collectionId === collectionId
-    ),
-    interactions: Object.values(state.interactions).filter((item) =>
-      nodeIds.has(item.nodeId)
-    )
+    ...interaction,
+    configJson: decodeJson(interaction.configJson, "configJson"),
+    stateJson: decodeJson(interaction.stateJson, "stateJson")
   };
 }
-
-export async function syncMarkdownTopology(
-  request: SyncMarkdownTopologyRequest
-): Promise<TopologyGraphRecord> {
-  const serialized: SyncMarkdownTopologyRequest = {
-    ...request,
-    nodes: request.nodes.map(serializeNodeJson)
+function decodeGraph(graph: WireGraph): TopologyGraphRecord {
+  return {
+    collection: graph.collection, nodes: graph.nodes.map(decodeNode),
+    relations: graph.relations.map(decodeRelation), interactions: graph.interactions.map(decodeInteraction)
   };
-  if (isTauri()) return invoke("sync_markdown_topology", { request: serialized });
-
-  const state = readState();
-  const timestamp = now();
-  const previousCollection = state.collections[serialized.collection.id];
-  state.collections[serialized.collection.id] = {
-    ...serialized.collection,
-    createdAt: previousCollection?.createdAt ?? timestamp,
-    updatedAt: timestamp
-  };
-  serialized.nodes.forEach((node) => {
-    if (node.collectionId !== request.collection.id) {
-      throw new Error("拓扑节点必须属于当前集合");
-    }
-    if (node.contentMode !== "markdown" || node.isManual) {
-      throw new Error("批量同步只接受 Markdown 节点");
-    }
-    const previous = state.nodes[node.id];
-    state.nodes[node.id] = {
-      ...node,
-      createdAt: previous?.createdAt ?? timestamp,
-      updatedAt: timestamp
-    };
-  });
-  serialized.relations.forEach((relation) => {
-    if (relation.collectionId !== request.collection.id) {
-      throw new Error("拓扑关系必须属于当前集合");
-    }
-    if (relation.sourceNodeId === relation.targetNodeId) {
-      throw new Error("拓扑关系不能连接节点自身");
-    }
-    const previous = state.relations[relation.id];
-    state.relations[relation.id] = {
-      ...relation,
-      createdAt: previous?.createdAt ?? timestamp,
-      updatedAt: timestamp
-    };
-  });
-  writeState(state);
-  return browserGraph(state, serialized.collection.id);
 }
-
+export function decodeTopologyGraph(value: unknown): TopologyGraphRecord {
+  if (!value || typeof value !== "object") throw new Error("拓扑图数据无效");
+  const graph = value as WireGraph;
+  if (!graph.collection || !Array.isArray(graph.nodes) ||
+      !Array.isArray(graph.relations) || !Array.isArray(graph.interactions)) {
+    throw new Error("拓扑图数据结构无效");
+  }
+  return decodeGraph(graph);
+}
+function encodeNode(node: UpsertTopologyNode) {
+  return {
+    ...node,
+    interactionStateJson: JSON.stringify(node.interactionStateJson ?? {}),
+    appearanceJson: JSON.stringify(node.appearanceJson ?? {}),
+    contentJson: node.contentJson == null ? node.contentJson : JSON.stringify(node.contentJson),
+    anchorJson: node.anchorJson == null ? node.anchorJson : JSON.stringify(node.anchorJson),
+    generationJson: node.generationJson == null ? node.generationJson : JSON.stringify(node.generationJson),
+    configJson: node.configJson == null ? node.configJson : JSON.stringify(node.configJson)
+  };
+}
+function encodeRelation(relation: UpsertTopologyRelation) {
+  return { ...relation, metadataJson: JSON.stringify(relation.metadataJson ?? {}) };
+}
+function encodeInteraction(interaction: UpsertTopologyInteraction) {
+  return {
+    ...interaction,
+    configJson: JSON.stringify(interaction.configJson ?? {}),
+    stateJson: JSON.stringify(interaction.stateJson ?? {})
+  };
+}
+export function setBrowserLibraryMetadata(metadata: { notebooks: Notebook[]; articles: Record<string, ArticleNode> }) {
+  browser.setLibraryMetadata(metadata);
+}
 export async function loadTopologyGraph(collectionId: string): Promise<TopologyGraphRecord> {
-  if (isTauri()) return invoke("load_topology_graph", { collectionId });
-  const state = readState();
-  const collection = state.collections[collectionId];
-  if (!collection) throw new Error("集合不存在");
-  const nodes = Object.values(state.nodes).filter((node) => node.collectionId === collectionId);
-  const nodeIds = new Set(nodes.map((node) => node.id));
-  return {
-    collection,
-    nodes,
-    relations: Object.values(state.relations).filter(
-      (relation) => relation.collectionId === collectionId
-    ),
-    interactions: Object.values(state.interactions).filter((item) => nodeIds.has(item.nodeId))
-  };
+  const graph = isTauri()
+    ? await invoke<WireGraph>("load_topology_graph", { collectionId })
+    : browser.loadTopologyGraph(collectionId);
+  return decodeGraph(graph);
 }
-
-export async function upsertTopologyNode(
-  request: UpsertTopologyNode
-): Promise<TopologyNodeRecord> {
-  if (request.isManual && request.contentMode !== "database") {
-    throw new Error("手动节点不能关联 Markdown");
-  }
-  const serialized = serializeNodeJson(request);
-  if (isTauri()) return invoke("upsert_topology_node", { request: serialized });
-  const state = readState();
-  const previous = state.nodes[serialized.id];
-  const value = { ...serialized, createdAt: previous?.createdAt ?? now(), updatedAt: now() };
-  state.nodes[value.id] = value;
-  writeState(state);
-  return value;
+export async function upsertTopologyNode(request: UpsertTopologyNode): Promise<TopologyNodeRecord> {
+  if (request.isManual && request.contentMode !== "database") throw new Error("手动节点不能关联 Markdown");
+  const encoded = encodeNode(request);
+  const record = isTauri()
+    ? await invoke<WireNode>("upsert_topology_node", { request: encoded })
+    : browser.upsertTopologyNode(encoded);
+  return decodeNode(record);
 }
-
 export async function deleteTopologyNode(nodeId: string): Promise<boolean> {
-  if (isTauri()) return invoke("delete_topology_node", { nodeId });
-  const state = readState();
-  const existed = Boolean(state.nodes[nodeId]);
-  delete state.nodes[nodeId];
-  Object.values(state.relations).forEach((relation) => {
-    if (relation.sourceNodeId === nodeId || relation.targetNodeId === nodeId) {
-      delete state.relations[relation.id];
-    }
-  });
-  writeState(state);
-  return existed;
+  return isTauri() ? invoke("delete_topology_node", { nodeId }) : browser.deleteTopologyNode(nodeId);
 }
-
-export async function upsertTopologyRelation(
-  request: UpsertTopologyRelation
-): Promise<TopologyRelationRecord> {
+export async function upsertTopologyRelation(request: UpsertTopologyRelation): Promise<TopologyRelationRecord> {
   if (request.sourceNodeId === request.targetNodeId) throw new Error("拓扑关系不能连接节点自身");
-  if (isTauri()) return invoke("upsert_topology_relation", { request });
-  const state = readState();
-  const previous = state.relations[request.id];
-  const value = { ...request, createdAt: previous?.createdAt ?? now(), updatedAt: now() };
-  state.relations[value.id] = value;
-  writeState(state);
-  return value;
+  const encoded = encodeRelation(request);
+  const record = isTauri()
+    ? await invoke<WireRelation>("upsert_topology_relation", { request: encoded })
+    : browser.upsertTopologyRelation(encoded);
+  return decodeRelation(record);
 }
-
 export async function deleteTopologyRelation(relationId: string): Promise<boolean> {
-  if (isTauri()) return invoke("delete_topology_relation", { relationId });
-  const state = readState();
-  const existed = Boolean(state.relations[relationId]);
-  delete state.relations[relationId];
-  writeState(state);
-  return existed;
+  return isTauri() ? invoke("delete_topology_relation", { relationId }) : browser.deleteTopologyRelation(relationId);
 }
-
-export async function upsertTopologyInteraction(
-  request: UpsertTopologyInteraction
-): Promise<TopologyInteractionRecord> {
-  if (isTauri()) return invoke("upsert_topology_interaction", { request });
-  const state = readState();
-  const previous = state.interactions[request.id];
-  const value = { ...request, createdAt: previous?.createdAt ?? now(), updatedAt: now() };
-  state.interactions[value.id] = value;
-  writeState(state);
-  return value;
+export async function upsertTopologyInteraction(request: UpsertTopologyInteraction): Promise<TopologyInteractionRecord> {
+  const encoded = encodeInteraction(request);
+  const record = isTauri()
+    ? await invoke<WireInteraction>("upsert_topology_interaction", { request: encoded })
+    : browser.upsertTopologyInteraction(encoded);
+  return decodeInteraction(record);
 }

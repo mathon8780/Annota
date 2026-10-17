@@ -1,5 +1,5 @@
-export type ProviderTone = "cobalt" | "indigo" | "cyan" | "violet" | "slate";
-export type ProviderBrand =
+type ProviderTone = "cobalt" | "indigo" | "cyan" | "violet" | "slate";
+type ProviderBrand =
   | "chatgpt"
   | "gemini"
   | "kimi"
@@ -241,6 +241,8 @@ export function loadModelProviders() {
       );
       return {
         ...provider,
+        protocol: stored.protocol,
+        endpointPath: stored.endpointPath,
         apiKey: stored.apiKey,
         model: enabledModels.includes(stored.model)
           ? stored.model

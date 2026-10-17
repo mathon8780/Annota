@@ -242,6 +242,7 @@ const notebooks: Notebook[] = [
   {
     id: "notebook-ecs",
     rootId: "ecs-root",
+    rootIds: ["ecs-root"],
     title: articles["ecs-root"].title,
     summary: articles["ecs-root"].summary,
     description: articles["ecs-root"].summary,
@@ -254,6 +255,7 @@ const notebooks: Notebook[] = [
   {
     id: "notebook-cpp-polymorphism",
     rootId: "cpp-polymorphism-root",
+    rootIds: ["cpp-polymorphism-root"],
     title: articles["cpp-polymorphism-root"].title,
     summary: articles["cpp-polymorphism-root"].summary,
     description: articles["cpp-polymorphism-root"].summary,
@@ -266,6 +268,7 @@ const notebooks: Notebook[] = [
   {
     id: "notebook-cpp-vtable",
     rootId: "cpp-vtable-root",
+    rootIds: ["cpp-vtable-root"],
     title: articles["cpp-vtable-root"].title,
     summary: articles["cpp-vtable-root"].summary,
     description: articles["cpp-vtable-root"].summary,
@@ -278,6 +281,7 @@ const notebooks: Notebook[] = [
   {
     id: "notebook-cpp-virtual-destructor",
     rootId: "cpp-virtual-destructor-root",
+    rootIds: ["cpp-virtual-destructor-root"],
     title: articles["cpp-virtual-destructor-root"].title,
     summary: articles["cpp-virtual-destructor-root"].summary,
     description: articles["cpp-virtual-destructor-root"].summary,
@@ -290,6 +294,7 @@ const notebooks: Notebook[] = [
   {
     id: "notebook-cpp-template",
     rootId: "cpp-template-root",
+    rootIds: ["cpp-template-root"],
     title: articles["cpp-template-root"].title,
     summary: articles["cpp-template-root"].summary,
     description: articles["cpp-template-root"].summary,
@@ -302,6 +307,7 @@ const notebooks: Notebook[] = [
   {
     id: "notebook-attention",
     rootId: "attention-root",
+    rootIds: ["attention-root"],
     title: articles["attention-root"].title,
     summary: articles["attention-root"].summary,
     description: articles["attention-root"].summary,
@@ -314,6 +320,7 @@ const notebooks: Notebook[] = [
   {
     id: "notebook-llm",
     rootId: "llm-root",
+    rootIds: ["llm-root"],
     title: articles["llm-root"].title,
     summary: articles["llm-root"].summary,
     description: articles["llm-root"].summary,
@@ -326,6 +333,7 @@ const notebooks: Notebook[] = [
   {
     id: "notebook-graph",
     rootId: "graph-root",
+    rootIds: ["graph-root"],
     title: articles["graph-root"].title,
     summary: articles["graph-root"].summary,
     description: articles["graph-root"].summary,

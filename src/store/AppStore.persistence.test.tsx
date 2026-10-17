@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { PropsWithChildren } from "react";
 import type { AppData } from "../types";
 
@@ -54,7 +54,6 @@ const metadata: Pick<AppData, "notebooks" | "articles"> = {
       id: "notebook-1",
       rootId: "root-1",
       rootIds: ["root-1"],
-      knowledgePointIds: ["root-1"],
       title: "SQLite 资料库",
       summary: "",
       description: "",
@@ -88,8 +87,11 @@ const metadata: Pick<AppData, "notebooks" | "articles"> = {
 };
 
 function Probe() {
-  const { data } = useAppStore();
-  return <div>{data.notebooks.map((notebook) => notebook.title).join(",") || "empty"}</div>;
+  const { data, touchArticle } = useAppStore();
+  return <div>
+    {data.notebooks.map((notebook) => notebook.title).join(",") || "empty"}
+    <button onClick={() => touchArticle("root-1")}>更新文章</button>
+  </div>;
 }
 
 function renderStore({ children }: PropsWithChildren) {
@@ -106,10 +108,7 @@ beforeEach(() => {
 });
 
 it("hydrates desktop metadata before enabling SQLite saves", async () => {
-  let resolveLoad: (value: {
-    metadata: typeof metadata;
-    importedLegacy: boolean;
-  }) => void = () => {
+  let resolveLoad: (value: typeof metadata) => void = () => {
     throw new Error("load resolver was not initialized");
   };
   repositoryMocks.loadDesktopLibrary.mockImplementation(
@@ -118,30 +117,26 @@ it("hydrates desktop metadata before enabling SQLite saves", async () => {
         resolveLoad = resolve;
       })
   );
-  window.localStorage.setItem(
-    APP_DATA_STORAGE_KEY,
-    JSON.stringify({ ...metadata, jobs: [], currentNotebookId: null, currentArticleId: null })
-  );
-
   renderStore({ children: <Probe /> });
   expect(screen.getByRole("status")).toHaveTextContent("正在打开工作区资料库");
   await waitFor(() => {
-    expect(repositoryMocks.loadDesktopLibrary).toHaveBeenCalledWith(metadata);
+    expect(repositoryMocks.loadDesktopLibrary).toHaveBeenCalledWith();
   });
   expect(repositoryMocks.replaceDesktopLibrary).not.toHaveBeenCalled();
 
-  resolveLoad({ metadata, importedLegacy: true });
+  resolveLoad(metadata);
   expect(await screen.findByText("SQLite 资料库")).toBeInTheDocument();
+  expect(repositoryMocks.replaceDesktopLibrary).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "更新文章" }));
   await waitFor(() => {
-    expect(repositoryMocks.replaceDesktopLibrary).toHaveBeenCalledWith(metadata);
+    expect(repositoryMocks.replaceDesktopLibrary).toHaveBeenCalledWith(expect.objectContaining({
+      articles: expect.objectContaining({ "root-1": expect.objectContaining({ id: "root-1" }) })
+    }));
   });
   expect(repositoryMocks.replaceDesktopLibrary).not.toHaveBeenCalledWith({
     notebooks: [],
     articles: {}
   });
-  expect(
-    window.localStorage.getItem("annota.desktop.library.sqlite-v1.imported")
-  ).toBe("done");
 });
 
 it("does not enable saving when desktop hydration fails", async () => {
@@ -155,7 +150,6 @@ it("does not enable saving when desktop hydration fails", async () => {
 
 it("keeps localStorage as the browser-only fallback", async () => {
   repositoryMocks.isDesktopLibrary.mockReturnValue(false);
-  window.localStorage.setItem("annota:content-reset.single-markdown-v1", "done");
   window.localStorage.setItem(
     APP_DATA_STORAGE_KEY,
     JSON.stringify({ ...metadata, jobs: [], currentNotebookId: null, currentArticleId: null })

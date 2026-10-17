@@ -324,8 +324,7 @@ select:focus-visible,
 }
 
 .home-app,
-.reader-app,
-.settings-app {
+.reader-app {
   width: 100%;
   min-width: 0;
   height: 100%;
@@ -334,22 +333,6 @@ select:focus-visible,
     linear-gradient(var(--color-paper), var(--color-paper)),
     radial-gradient(circle, var(--color-rule) 1px, transparent 1px);
   background-size: auto, 24px 24px;
-}
-
-.settings-app {
-  display: grid;
-  grid-template-rows: 66px minmax(0, 1fr);
-  background: var(--color-paper-solid);
-}
-
-.settings-topbar {
-  min-width: 0;
-  padding: 0 clamp(var(--space-5), 3vw, var(--space-10));
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  align-items: center;
-  border-bottom: var(--rule-thin) solid var(--color-rule);
-  background: var(--color-paper-solid);
 }
 
 .settings-canvas {
@@ -538,17 +521,6 @@ select:focus-visible,
   color: var(--color-muted);
   font-size: var(--text-sm);
   line-height: 1.7;
-}
-
-.settings-preview-note {
-  margin-top: var(--space-8);
-  padding: var(--space-3) var(--space-4);
-  color: var(--color-ink-soft);
-  background: var(--color-accent-soft);
-  border-left: 3px solid var(--color-accent);
-  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-  font-size: var(--text-sm);
-  line-height: 1.6;
 }
 
 .shortcut-settings {
@@ -1391,26 +1363,6 @@ select:focus-visible,
   color: var(--color-ink-soft);
   font-size: var(--text-sm);
   font-weight: 560;
-}
-
-.settings-value-slot {
-  width: min(100%, 180px);
-  height: 34px;
-  justify-self: end;
-  background:
-    linear-gradient(90deg, var(--color-paper-soft), var(--color-paper-solid));
-  border: var(--rule-thin) solid var(--color-rule);
-  border-radius: var(--radius-sm);
-}
-
-.settings-value-slot.is-compact {
-  width: 48px;
-  height: 26px;
-  border-radius: var(--radius-pill);
-}
-
-.settings-value-slot.is-wide {
-  width: min(100%, 300px);
 }
 
 .workspace-settings {

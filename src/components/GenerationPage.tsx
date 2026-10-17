@@ -43,6 +43,7 @@ import {
   cloneGenerationType,
   explainDefaults,
   initialGenerationTypes,
+  isGenerationTypesHydrated,
   loadGenerationTypes,
   saveGenerationTypes,
   subscribeGenerationTypeHydration,
@@ -53,6 +54,7 @@ import {
   type TopologyCardVariant
 } from "../utils/generationConfig";
 import type { NodeFamily } from "../types";
+import { GENERATION_OUTPUT_SCHEMA } from "../utils/generationOutput";
 import {
   configuredModels,
   loadModelProviders,
@@ -240,14 +242,6 @@ const previewValues: Record<(typeof allowedVariables)[number], string> = {
   "generation.instruction": "〈本次附加要求〉",
   "output.language": "〈目标语言〉"
 };
-
-const outputSchema = `{
-  "title": "string",
-  "summary": "string",
-  "blocks": [
-    { "type": "heading | paragraph | quote", "text": "string" }
-  ]
-}`;
 
 function extractVariables(value: string) {
   return Array.from(value.matchAll(/{{\s*([a-zA-Z0-9_.]+)\s*}}/g)).map(
@@ -496,6 +490,7 @@ export function GenerationPage() {
   const [appearancePicker, setAppearancePicker] =
     useState<AppearancePicker>(null);
   const [liveStatus, setLiveStatus] = useState("");
+  const persistedTypesSnapshotRef = useRef(JSON.stringify(types));
   const [readerToolbarPreferences, setReaderToolbarPreferences] = useState(
     loadReaderToolbarPreferences
   );
@@ -507,11 +502,21 @@ export function GenerationPage() {
   );
 
   useEffect(() => {
-    saveGenerationTypes(types);
+    if (!isGenerationTypesHydrated()) return;
+    const snapshot = JSON.stringify(types);
+    if (snapshot === persistedTypesSnapshotRef.current) return;
+    void saveGenerationTypes(types).catch((error) => {
+      setLiveStatus(`节点类型保存失败：${error instanceof Error ? error.message : String(error)}`);
+    });
+    persistedTypesSnapshotRef.current = snapshot;
   }, [types]);
 
   useEffect(
-    () => subscribeGenerationTypeHydration(() => setTypes(loadGenerationTypes())),
+    () => subscribeGenerationTypeHydration(() => {
+      const hydrated = loadGenerationTypes();
+      persistedTypesSnapshotRef.current = JSON.stringify(hydrated);
+      setTypes(hydrated);
+    }),
     []
   );
 
@@ -1513,7 +1518,7 @@ export function GenerationPage() {
                     <div className="generation-protocol-layout">
                       <div className="generation-protocol-code">
                         <span>annota-node.schema.json</span>
-                        <pre>{outputSchema}</pre>
+                        <pre>{GENERATION_OUTPUT_SCHEMA}</pre>
                       </div>
                       <dl className="generation-protocol-fields">
                         <div>
@@ -1720,7 +1725,7 @@ export function GenerationPage() {
                 </dl>
               )}
               {previewTab === "schema" && (
-                <pre className="generation-code-block">{outputSchema}</pre>
+                <pre className="generation-code-block">{GENERATION_OUTPUT_SCHEMA}</pre>
               )}
             </div>
           </section>
